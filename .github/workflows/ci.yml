@@ -1,0 +1,181 @@
+name: CI
+
+# Ported from dawg. spark has no app code yet, so the `detect` job looks at
+# what exists and each job switches itself on as its piece lands:
+#   package.json              -> frontend checks
+#   Cargo.toml                -> Rust checks
+#   src-tauri/tauri.conf.json -> Windows build and the rolling "spark dev" update
+# Until then CI is green with nothing to check.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect stack
+    runs-on: ubuntu-latest
+    outputs:
+      node: ${{ steps.detect.outputs.node }}
+      rust: ${{ steps.detect.outputs.rust }}
+      tauri: ${{ steps.detect.outputs.tauri }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: detect
+        run: |
+          if [ -f package.json ]; then echo "node=true" >> "$GITHUB_OUTPUT"; fi
+          if [ -f Cargo.toml ]; then echo "rust=true" >> "$GITHUB_OUTPUT"; fi
+          if [ -f src-tauri/tauri.conf.json ]; then echo "tauri=true" >> "$GITHUB_OUTPUT"; fi
+          cat "$GITHUB_OUTPUT"
+
+  frontend:
+    name: Frontend checks
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  rust:
+    name: Rust checks and tests
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: swatinem/rust-cache@v2
+      - name: Install Tauri system dependencies
+        if: needs.detect.outputs.tauri == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+
+  windows:
+    name: Windows test build
+    needs: [detect, frontend, rust]
+    # frontend/rust may be skipped (not failed) while the stack is partial.
+    if: >-
+      always() && needs.detect.outputs.tauri == 'true' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: npm ci
+      - name: Rust tests on Windows
+        run: cargo test --workspace
+      - name: Decide whether to publish a dev build
+        id: publish
+        shell: bash
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          # Every push to dev becomes a "spark dev" update, once the signing key exists.
+          if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/dev ] && [ "$HAS_KEY" = true ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Stamp dev version
+        if: steps.publish.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          # x.y.z-dev.<run>: rises with every push, and turns the updater on in
+          # "spark dev" (see docs/release-setup.md, updates_enabled).
+          node -e '
+            const fs = require("fs");
+            const p = "src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.version = `${c.version}-dev.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log(c.version);
+          '
+      - name: Build "spark dev" installer
+        # The dev config uses its own app id and needs no signing key, so this
+        # works before the release secrets exist. Unsigned builds (PRs, main,
+        # no key) don't self-update.
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ "${{ steps.publish.outputs.enabled }}" = true ]; then
+            npm run build:dev -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            npm run build:dev
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spark-dev-installer
+          path: target/release/bundle/nsis/*.exe
+          retention-days: 14
+      - name: Publish to the dev-build prerelease
+        if: steps.publish.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          EXE=$(ls target/release/bundle/nsis/*-setup.exe | head -1)
+          mkdir -p publish
+          cp "$EXE" publish/spark-dev-setup.exe
+          cp "$EXE.sig" publish/spark-dev-setup.exe.sig
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/dev-build/spark-dev-setup.exe"
+          SUBJECT=$(git log -1 --pretty=format:%s)
+          VERSION="$VERSION" URL="$URL" SUBJECT="$SUBJECT" COMMIT="${GITHUB_SHA::7}" node -e '
+            const fs = require("fs");
+            const e = process.env;
+            fs.writeFileSync("publish/latest.json", JSON.stringify({
+              version: e.VERSION,
+              notes: e.SUBJECT,
+              // Extra field, for a "Restart to update" tooltip.
+              commit: e.COMMIT,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "windows-x86_64": {
+                  signature: fs.readFileSync("publish/spark-dev-setup.exe.sig", "utf8").trim(),
+                  url: e.URL,
+                },
+              },
+            }, null, 2));
+          '
+          NOTES="Rolling \"spark dev\" build of the latest push to dev ($VERSION, ${GITHUB_SHA::7}). Installs next to spark and updates itself on every push. Not a release."
+          if ! gh release view dev-build >/dev/null 2>&1; then
+            gh release create dev-build --prerelease --target "$GITHUB_SHA" \
+              --title "spark dev (rolling)" --notes "$NOTES"
+          fi
+          # Installer first, latest.json last, so a running copy never sees a
+          # version whose installer isn't up yet.
+          gh release upload dev-build publish/spark-dev-setup.exe publish/spark-dev-setup.exe.sig --clobber
+          gh release upload dev-build publish/latest.json --clobber
+          gh release edit dev-build --prerelease --notes "$NOTES"
