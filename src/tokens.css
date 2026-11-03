@@ -1,0 +1,64 @@
+/* spark design tokens: every colour, size, radius, gap and shadow the UI
+   uses. Components take values from here, never literals. Started from
+   dawg's tokens. */
+:root {
+  /* Surfaces, darkest to lightest. */
+  --page: #050505;
+  --bg-0: #0d0d0d;
+  --bg-1: #141414;
+  --bg-3: #191919;
+  --bg-4: #242424;
+
+  /* Lines. */
+  --line: #1e1e1e;
+  --line-strong: #262626;
+  --line-pop: #333333;
+  --white: #ffffff;
+
+  /* Text. */
+  --text: #ececec;
+  --text-dim: #a3a3a3;
+  --text-faint: #6b6b6b;
+  --accent: #e8e8e8;
+  --accent-ink: #0b0b0b;
+  /* The brand spark. */
+  --brand: #ffd23f;
+
+  /* State. */
+  --ok: #3fd46a;
+  --warn: #ffd23f;
+  --danger: #ff4d4d;
+  /* The window's close button on hover (as Windows draws it). */
+  --win-close: #c42b1c;
+
+  /* Type. Manrope everywhere, numbers included. */
+  --font: "Manrope Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: var(--font);
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 13px;
+  --fs-2xl: 18px;
+  --fw-medium: 500;
+  --fw-semi: 600;
+  --fw-bold: 700;
+  --nw: 500;
+
+  /* Corners. */
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-xl: 8px;
+
+  /* Gaps and padding. */
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+
+  /* Shadows. */
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}

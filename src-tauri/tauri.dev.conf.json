@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "spark dev",
+  "identifier": "com.sph3ricalpeter.spark.dev",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Sph3ricalPeter/spark/releases/download/dev-build/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

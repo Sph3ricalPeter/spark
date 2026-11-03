@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "spark",
+  "mainBinaryName": "spark",
+  "version": "0.0.1",
+  "identifier": "com.sph3ricalpeter.spark",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5178",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "spark",
+        "width": 1440,
+        "height": 860,
+        "minWidth": 960,
+        "minHeight": 560,
+        "decorations": false,
+        "shadow": true,
+        "theme": "Dark",
+        "backgroundColor": "#0d0d0d"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0MTJBQURCMEUxRjRCNEQKUldSTlN4OE8yNm9TeEJpUDFPZFpaTjZFa0RKS0lQUWkra2VlQjErajN6RTJ5Qmg1dXpsOFlwMnUK",
+      "endpoints": [
+        "https://github.com/Sph3ricalPeter/spark/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": ["nsis"],
+    "publisher": "Sph3ricalPeter",
+    "category": "DeveloperTool",
+    "shortDescription": "AI-native design tool for real React components",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

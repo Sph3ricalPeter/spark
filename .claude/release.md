@@ -1,12 +1,10 @@
 # Release config
 
 Read by the user-level `release` skill. Overrides its generic defaults.
-Ported from dawg; the parts marked **(once the app exists)** assume the
-Tauri + React + Rust layout dawg uses and need revisiting if spark's stack
-turns out different.
+Ported from dawg.
 
 ## Version
-**(once the app exists)** Lives in three files that must match:
+Lives in three files that must match:
 - `package.json` → `"version"`
 - `src-tauri/tauri.conf.json` → `"version"`: stamped on the installer and
   compared by the updater against `latest.json`. `release.yml` refuses a tag
