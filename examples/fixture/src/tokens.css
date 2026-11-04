@@ -1,0 +1,26 @@
+/* Fixture design tokens. Like dawg: components use these, never literals. */
+:root {
+  --bg-0: #0d0d0d;
+  --bg-1: #141414;
+  --bg-2: #1c1c1c;
+  --line: #262626;
+  --text: #ececec;
+  --text-dim: #a3a3a3;
+  --accent: #e8e8e8;
+  --accent-ink: #0b0b0b;
+  --track-drums: #e5734a;
+  --track-bass: #4a9fe5;
+  --track-keys: #9b6ae5;
+
+  --fs-sm: 11px;
+  --fs-md: 13px;
+  --fs-lg: 16px;
+
+  --gap-1: 4px;
+  --gap-2: 8px;
+  --gap-3: 12px;
+  --gap-4: 16px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+}

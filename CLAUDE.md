@@ -18,6 +18,16 @@ Zustand). Release and deploy are ported from dawg and described in
   and installs updates; `components/UpdateIndicator.tsx` is the title-bar
   button; `components/TitleBar.tsx` is the frameless window's title bar.
 
+- `packages/vite-plugin`: `spark-vite-plugin`, added to an app's
+  `vite.config.ts` to make it editable from inside itself (dev server only).
+  `tag.ts` adds `data-spark-src` / `data-spark-comp` to DOM elements and
+  `data-spark-call` to component call sites; `client.ts` is the overlay and
+  docked panel (Shadow DOM, no React; Alt+S); `index.ts` injects the client
+  and writes what it sends to `.spark/` in the app's root. Plan: the "Spark:
+  plan" Claude Doc.
+- `examples/fixture`: a small dawg-like app to develop Spark against
+  (`npm run fixture`, port 5179).
+
 ## Conventions
 
 - **No PRs, fast iteration**: commit and push straight to

@@ -1,0 +1,54 @@
+/* Shared building blocks. */
+.btn {
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--text-dim);
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.btn.small {
+  font-size: var(--fs-sm);
+  padding: 3px 8px;
+}
+
+.meter {
+  width: 6px;
+  height: 32px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+.meter > div {
+  width: 100%;
+  background: var(--text-dim);
+}
+
+.card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--gap-4);
+}
+.card h2 {
+  margin: 0 0 var(--gap-2);
+  font-size: var(--fs-lg);
+}

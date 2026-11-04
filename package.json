@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.spark.json",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:dev": "tauri build --config src-tauri/tauri.dev.conf.json"
+    "build:dev": "tauri build --config src-tauri/tauri.dev.conf.json",
+    "fixture": "vite --config examples/fixture/vite.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",

@@ -21,3 +21,6 @@ src-tauri/gen/
 # IDE / OS
 .vscode
 .DS_Store
+
+# Spark editor state in an app being edited
+.spark/

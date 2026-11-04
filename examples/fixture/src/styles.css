@@ -1,0 +1,65 @@
+/* Screen layout. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+  font-size: var(--fs-md);
+}
+#root {
+  height: 100%;
+}
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-bottom: 1px solid var(--line);
+}
+.toolbar .title {
+  font-weight: 600;
+  margin-right: auto;
+}
+.tracks {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-1);
+  padding: var(--gap-3);
+}
+.track {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: var(--gap-2) var(--gap-3);
+  background: var(--bg-1);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--track-color);
+}
+.track .name {
+  width: 120px;
+}
+.track .clip {
+  flex: 1;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--track-color);
+  opacity: 0.35;
+}
+.footer {
+  padding: var(--gap-3);
+  max-width: 420px;
+}
+.footer .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gap-2);
+  margin-top: var(--gap-3);
+}
