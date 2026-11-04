@@ -6,8 +6,8 @@
 //   index.html.
 // - Talks to the client over Vite's own HMR socket, so it works wherever hot
 //   reload works, including a Tauri window, and writes what the client sends
-//   into `.spark/` in the project root.
-import { mkdir, writeFile } from "node:fs/promises";
+//   into `.spark/` in the project root: selection.json and changes.json.
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
@@ -56,14 +56,23 @@ export default function spark(): Plugin {
 
     configureServer(server) {
       const dir = path.join(root, ".spark");
-      server.ws.on("spark:hello", (_data, client) => {
-        client.send("spark:ready", { root: path.basename(root) });
+      const save = async (name: string, data: unknown) => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, name), JSON.stringify(data, null, 2) + "\n");
+      };
+      server.ws.on("spark:hello", async (_data, client) => {
+        let changes = null;
+        try {
+          changes = JSON.parse(await readFile(path.join(dir, "changes.json"), "utf8"));
+        } catch {
+          // No changes yet.
+        }
+        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes });
       });
       // The current selection, for the MCP server's get_selection (milestone 3).
-      server.ws.on("spark:select", async (data) => {
-        await mkdir(dir, { recursive: true });
-        await writeFile(path.join(dir, "selection.json"), JSON.stringify(data, null, 2) + "\n");
-      });
+      server.ws.on("spark:select", (data) => save("selection.json", data));
+      // Every edit, at the level it was made: what Claude applies to the code.
+      server.ws.on("spark:changes", (data) => save("changes.json", data));
     },
   };
 }
