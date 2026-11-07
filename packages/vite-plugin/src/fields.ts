@@ -390,19 +390,6 @@ export function menuButton(
 
 export type Token = { name: string; value: string };
 
-/** "#rrggbb" for any CSS color the browser understands (alpha dropped), for <input type=color>. */
-function toHex(color: string): string {
-  const probe = document.createElement("canvas").getContext("2d");
-  if (!probe) return "#000000";
-  probe.fillStyle = "#000";
-  probe.fillStyle = color;
-  const v = probe.fillStyle;
-  if (v.startsWith("#")) return v;
-  const m = v.match(/\d+(\.\d+)?/g);
-  if (!m) return "#000000";
-  return "#" + m.slice(0, 3).map((x) => Math.round(Number(x)).toString(16).padStart(2, "0")).join("");
-}
-
 /** rgb()/rgba() as the shorter hex designers read (#ececec, #4f8cff80); anything else as is. */
 export function displayColor(value: string): string {
   const m = value.trim().match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i);
@@ -414,6 +401,158 @@ export function displayColor(value: string): string {
     if (a < 1) out += hex(a * 255);
   }
   return out;
+}
+
+/** A checkerboard under translucent colors, so alpha shows. */
+const CHECKER = "repeating-conic-gradient(#808080 0 25%, #c8c8c8 0 50%) 0 0 / 8px 8px";
+
+function paintSwatch(el: HTMLElement, color: string) {
+  el.style.background = `linear-gradient(${color}, ${color}), ${CHECKER}`;
+}
+
+/** Any CSS color as 0–255 RGB plus 0–1 alpha (the browser parses it). */
+function rgbaOf(color: string): [number, number, number, number] {
+  const c = document.createElement("canvas");
+  c.width = c.height = 1;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return [0, 0, 0, 1];
+  ctx.fillStyle = "#000";
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+  return [r, g, b, a / 255];
+}
+
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6;
+    return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1))));
+  };
+  return [f(5), f(3), f(1)];
+}
+
+function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
+  const [R, G, B] = [r / 255, g / 255, b / 255];
+  const max = Math.max(R, G, B);
+  const d = max - Math.min(R, G, B);
+  let hue = 0;
+  if (d) hue = max === R ? ((G - B) / d) % 6 : max === G ? (B - R) / d + 2 : (R - G) / d + 4;
+  return [(hue * 60 + 360) % 360, max ? d / max : 0, max];
+}
+
+function hexOf(r: number, g: number, b: number, a: number): string {
+  const x = (n: number) => Math.round(Math.min(255, Math.max(0, n))).toString(16).padStart(2, "0");
+  return "#" + x(r) + x(g) + x(b) + (a < 1 ? x(a * 255) : "");
+}
+
+/**
+ * Spark's color picker: saturation/brightness, hue and alpha, a hex field
+ * (#rrggbbaa when translucent) and an opacity %. Emits hex while dragging
+ * (`final` false) and on release or a typed value (`final` true).
+ */
+export function colorPicker(initial: string, onPick: (hex: string, final: boolean) => void): HTMLElement {
+  const [r0, g0, b0, a0] = rgbaOf(initial);
+  let [hue, sat, val] = rgbToHsv(r0, g0, b0);
+  let alpha = Math.round(a0 * 100) / 100;
+
+  const sv = h("div", { class: "cp-sv" });
+  const svKnob = h("div", { class: "cp-knob" });
+  sv.append(svKnob);
+  const hueBar = h("div", { class: "cp-bar cp-hue" });
+  const hueKnob = h("div", { class: "cp-thumb" });
+  hueBar.append(hueKnob);
+  const alphaBar = h("div", { class: "cp-bar cp-alpha" });
+  const alphaFill = h("div", { class: "cp-fill" });
+  const alphaKnob = h("div", { class: "cp-thumb" });
+  alphaBar.append(alphaFill, alphaKnob);
+  const hex = h("input", { class: "cp-hex", spellcheck: "false", title: "Hex (#rrggbbaa with alpha)" }) as HTMLInputElement;
+  const pct = h("input", { class: "cp-pct", title: "Opacity %" }) as HTMLInputElement;
+  keepKeys(hex);
+  keepKeys(pct);
+
+  const current = () => {
+    const [r, g, b] = hsvToRgb(hue, sat, val);
+    return hexOf(r, g, b, alpha);
+  };
+  const paint = (fields = true) => {
+    const [r, g, b] = hsvToRgb(hue, sat, val);
+    sv.style.background = `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), hsl(${hue} 100% 50%)`;
+    svKnob.style.left = `${sat * 100}%`;
+    svKnob.style.top = `${(1 - val) * 100}%`;
+    hueKnob.style.left = `${(hue / 360) * 100}%`;
+    alphaFill.style.background = `linear-gradient(to right, rgb(${r} ${g} ${b} / 0), rgb(${r} ${g} ${b}))`;
+    alphaKnob.style.left = `${alpha * 100}%`;
+    if (fields) {
+      hex.value = current();
+      pct.value = `${Math.round(alpha * 100)}%`;
+    }
+  };
+  const emit = (final: boolean) => {
+    paint();
+    onPick(current(), final);
+  };
+
+  /** Drag on an area: `at` gets the pointer's position in it as 0–1. */
+  const drag = (area: HTMLElement, at: (x: number, y: number) => void) => {
+    area.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      area.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => {
+        const r = area.getBoundingClientRect();
+        at(Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)));
+      };
+      move(e);
+      emit(false);
+      const onMove = (ev: PointerEvent) => {
+        move(ev);
+        emit(false);
+      };
+      const onUp = () => {
+        area.removeEventListener("pointermove", onMove);
+        area.removeEventListener("pointerup", onUp);
+        area.removeEventListener("pointercancel", onUp);
+        emit(true);
+      };
+      area.addEventListener("pointermove", onMove);
+      area.addEventListener("pointerup", onUp);
+      area.addEventListener("pointercancel", onUp);
+    });
+  };
+  drag(sv, (x, y) => {
+    sat = x;
+    val = 1 - y;
+  });
+  drag(hueBar, (x) => {
+    hue = Math.min(359.9, x * 360);
+  });
+  drag(alphaBar, (x) => {
+    alpha = Math.round(x * 100) / 100;
+  });
+
+  hex.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") hex.blur();
+  });
+  hex.addEventListener("change", () => {
+    const v = hex.value.trim();
+    const css = /^[0-9a-f]{3,8}$/i.test(v) ? `#${v}` : v;
+    if (!CSS.supports("color", css)) return paint();
+    const [r, g, b, a] = rgbaOf(css);
+    [hue, sat, val] = rgbToHsv(r, g, b);
+    alpha = Math.round(a * 100) / 100;
+    emit(true);
+  });
+  pct.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") pct.blur();
+  });
+  pct.addEventListener("change", () => {
+    const n = parseFloat(pct.value);
+    if (Number.isNaN(n)) return paint();
+    alpha = Math.min(100, Math.max(0, n)) / 100;
+    emit(true);
+  });
+
+  paint();
+  return h("div", { class: "cp" }, sv, hueBar, alphaBar, h("div", { class: "cp-fields" }, hex, pct));
 }
 
 let openPopover: HTMLElement | null = null;
@@ -437,10 +576,17 @@ function revealPopover(pop: HTMLElement) {
   const s = scroller.getBoundingClientRect();
   if (r.bottom > s.bottom) scroller.scrollTop += r.bottom - s.bottom + 8;
 }
+/** Runs once when the open popover closes (the color picker commits its edit then). */
+let onPopoverClose: (() => void) | null = null;
+
 export function closePopover(): boolean {
   if (!openPopover) return false;
   openPopover.remove();
   openPopover = null;
+  const done = onPopoverClose;
+  onPopoverClose = null;
+  // After whatever closed it (often a re-render) has finished.
+  if (done) setTimeout(done);
   return true;
 }
 
@@ -452,7 +598,7 @@ export function colorField(
   onValue: OnValue,
 ): HTMLElement {
   const swatch = h("button", { class: "swatch", title: "Pick a color", type: "button" });
-  swatch.style.background = computed;
+  paintSwatch(swatch, computed);
   const text = textField(displayColor(value), changed, onValue) as HTMLInputElement;
   const wrap = h("div", { class: "color" }, swatch, text);
 
@@ -467,7 +613,7 @@ export function colorField(
     pop.addEventListener("click", (ev) => ev.stopPropagation());
     const set = (v: string, css: string, final: boolean) => {
       text.value = v;
-      swatch.style.background = css;
+      paintSwatch(swatch, css);
       onValue(v, final);
     };
 
@@ -476,7 +622,7 @@ export function colorField(
       const grid = h("div", { class: "swatches" });
       for (const t of tokens) {
         const b = h("button", { class: `swatch${value === `var(${t.name})` ? " on" : ""}`, title: `${t.name}  ${t.value}` });
-        b.style.background = t.value;
+        paintSwatch(b, t.value);
         b.addEventListener("click", () => {
           set(`var(${t.name})`, t.value, true);
           closePopover();
@@ -486,14 +632,21 @@ export function colorField(
       pop.append(grid);
     }
 
-    pop.append(h("div", { class: "pop-title" }, "Custom"));
-    const picker = h("input", { type: "color", value: toHex(computed) }) as HTMLInputElement;
-    picker.addEventListener("input", () => set(picker.value, picker.value, false));
-    picker.addEventListener("change", () => set(picker.value, picker.value, true));
-    pop.append(picker);
+    // Picking previews live; the edit is saved when the popover closes (saving re-renders the panel).
+    let picked: string | null = null;
+    pop.append(
+      h("div", { class: "pop-title" }, "Custom"),
+      colorPicker(computed, (hex) => {
+        picked = hex;
+        set(hex, hex, false);
+      }),
+    );
 
     wrap.append(pop);
     openPopover = pop;
+    onPopoverClose = () => {
+      if (picked !== null) onValue(picked, true);
+    };
     revealPopover(pop);
   });
   return wrap;

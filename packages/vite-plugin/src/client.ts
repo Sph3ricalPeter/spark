@@ -644,7 +644,22 @@ const STYLE = `${THEME}
     }
     .pop-title { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin: 0 0 6px; }
     .swatches { display: grid; grid-template-columns: repeat(8, 22px); gap: 5px; margin-bottom: 10px; max-height: 160px; overflow: auto; }
-    input[type="color"] { width: 100%; height: 28px; padding: 2px; cursor: pointer; }
+    .cp { display: flex; flex-direction: column; gap: 8px; }
+    .cp-sv { position: relative; height: 140px; border-radius: var(--sp-r-sm); cursor: crosshair; touch-action: none; }
+    .cp-knob {
+      position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%;
+      border: 2px solid #fff; box-shadow: 0 0 0 1px #0008; pointer-events: none;
+    }
+    .cp-bar { position: relative; height: 12px; border-radius: 6px; cursor: pointer; touch-action: none; }
+    .cp-hue { background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+    .cp-alpha { background: repeating-conic-gradient(#808080 0 25%, #c8c8c8 0 50%) 0 0 / 8px 8px; }
+    .cp-fill { position: absolute; inset: 0; border-radius: inherit; }
+    .cp-thumb {
+      position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+      border: 2px solid #fff; box-shadow: 0 0 0 1px #0008; pointer-events: none;
+    }
+    .cp-fields { display: grid; grid-template-columns: 1fr 56px; gap: 6px; }
+    .cp-fields input { width: 100%; }
     .toast { color: var(--sp-warn); font-size: var(--sp-fs-sm); margin-top: 6px; }
     .row .k .link { font-size: inherit; }
     ${VARIABLES_STYLE}
