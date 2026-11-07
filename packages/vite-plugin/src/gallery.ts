@@ -54,7 +54,8 @@ const STYLE = `
   }
   .spark-gallery-file > h2 code { font: 11px ui-monospace, monospace; color: #6b7079; margin-left: 8px; }
   .spark-gallery-cases { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-  .spark-gallery-case > .spark-gallery-name { font: 500 11px/1 ${UI_FONT}; color: #8a8f98; margin: 0 0 6px; }
+  .spark-gallery-case > .spark-gallery-name { font: 500 11px/1 ${UI_FONT}; color: #8a8f98; margin: 0 0 6px; cursor: text; outline: none; }
+  .spark-gallery-case > .spark-gallery-name[contenteditable="plaintext-only"] { color: #fff; box-shadow: 0 1px 0 #4f8cff; }
   .spark-gallery-case > .spark-gallery-stage {
     padding: 24px; border: 1px dashed rgba(138, 143, 152, 0.35); border-radius: 8px; min-width: 120px;
   }
@@ -79,6 +80,13 @@ const STACK_W = 360;
 function words(name: string) {
   const s = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+/** "Very quiet" → "VeryQuiet": a case name as an export name, or "" if there's nothing to name. */
+function identifier(text: string) {
+  const parts = text.trim().split(/[^A-Za-z0-9_$]+/).filter(Boolean);
+  const id = parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+  return !id ? "" : /^[0-9]/.test(id) ? `_${id}` : id;
 }
 
 /** "/src/ui/Meter.spark.tsx" → "Meter". */
@@ -161,6 +169,44 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
     }
   }
 
+  /** A case's name: double-click to rename it (renames the export in its file). */
+  function CaseName({ file, name }: { file: string; name: string }) {
+    const commit = (el: HTMLElement) => {
+      const to = identifier(el.textContent ?? "");
+      if (to && to !== name) import.meta.hot?.send("spark:rename-case", { file: file.replace(/^\//, ""), from: name, to });
+      else el.textContent = words(name);
+    };
+    return h(
+      "div",
+      {
+        className: "spark-gallery-name",
+        title: "Double-click to rename",
+        onDoubleClick: (e: ReactNS.MouseEvent<HTMLDivElement>) => {
+          e.stopPropagation();
+          const el = e.currentTarget;
+          el.contentEditable = "plaintext-only";
+          el.focus();
+          getSelection()?.selectAllChildren(el);
+        },
+        onKeyDown: (e: ReactNS.KeyboardEvent<HTMLDivElement>) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            e.currentTarget.textContent = words(name);
+            e.currentTarget.blur();
+          }
+          e.stopPropagation();
+        },
+        onBlur: (e: ReactNS.FocusEvent<HTMLDivElement>) => {
+          e.currentTarget.contentEditable = "false";
+          commit(e.currentTarget);
+        },
+      },
+      words(name),
+    );
+  }
+
   const Wrapper = setup?.default ?? React.Fragment;
   const sections = Object.entries(files)
     .sort(([a], [b]) => fileTitle(a).localeCompare(fileTitle(b)))
@@ -179,7 +225,7 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
             h(
               "div",
               { key: name, className: "spark-gallery-case" },
-              h("div", { className: "spark-gallery-name" }, words(name)),
+              h(CaseName, { key: "name", file: path, name }),
               h("div", { className: "spark-gallery-stage" }, h(Boundary, null, h(Wrapper, null, h(Case)))),
             ),
           ),

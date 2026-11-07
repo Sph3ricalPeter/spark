@@ -232,6 +232,18 @@ export default function spark(): Plugin {
         await start("ask", askPrompt(data.request, data.selection, pending), pending.map((c) => c.id));
       });
       // The empty Components view: Claude writes the *.spark.tsx files.
+      // A component frame's case renamed in place (gallery.ts): rename its export.
+      server.ws.on("spark:rename-case", async (data: { file: string; from: string; to: string }) => {
+        const ident = /^[A-Za-z_$][\w$]*$/;
+        if (!/\.spark\.[jt]sx$/.test(data.file) || !ident.test(data.from) || !ident.test(data.to)) return;
+        const file = path.join(root, data.file);
+        if (path.relative(root, file).startsWith("..")) return;
+        const code = await readFile(file, "utf8");
+        const decl = new RegExp(`^(export\\s+(?:const|let|function)\\s+)${data.from}\\b`, "m");
+        // Only the declaration: the same word elsewhere may be a prop value ("Drums").
+        if (!decl.test(code) || new RegExp(`^export\\s+(?:const|let|function)\\s+${data.to}\\b`, "m").test(code)) return;
+        await writeFile(file, code.replace(decl, `$1${data.to}`));
+      });
       server.ws.on("spark:gallery-generate", () => start("ask", galleryPrompt(), []));
       server.ws.on("spark:stop", () => stop());
       server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: running() }));
