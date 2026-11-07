@@ -43,7 +43,9 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "Sph3ricalPeter",
     "category": "DeveloperTool",
     "shortDescription": "AI-native design tool for real React components",
@@ -58,6 +60,10 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "resources": {
+      "../packages/vite-plugin/src/*.ts": "plugin/src/",
+      "../packages/vite-plugin/assets/fonts/*": "plugin/assets/fonts/"
     }
   }
 }

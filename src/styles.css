@@ -278,12 +278,117 @@ button {
   place-items: center;
   background: var(--page);
 }
-.empty {
-  text-align: center;
-  color: var(--text-dim);
+/* launcher: open a project folder, or a recent one */
+.launcher {
+  width: min(560px, calc(100% - 2 * var(--sp-6)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
 }
-.empty h1 {
-  margin: 0 0 var(--sp-2);
+.launcher h1 {
+  margin: 0 0 var(--sp-3);
   font-size: var(--fs-2xl);
-  color: var(--text);
+}
+.launcher-head p {
+  margin: 0 0 var(--sp-5);
+  line-height: 1.5;
+}
+.launcher-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  background: var(--bg-1);
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--line-pop);
+  border-top-color: var(--brand);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.launcher-error {
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--danger);
+  border-radius: var(--r-xl);
+  background: var(--bg-1);
+}
+.launcher-error-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.launcher-error pre {
+  margin: var(--sp-3) 0 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  font: var(--fs-sm) / 1.5 ui-monospace, Consolas, monospace;
+  user-select: text;
+}
+.recent h2 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.recent ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.recent li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border-radius: var(--r-lg);
+}
+.recent li:hover {
+  background: var(--bg-1);
+}
+.recent-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--sp-4) var(--sp-5);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.recent-open:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.recent-name {
+  font-weight: var(--fw-semi);
+  font-size: var(--fs-lg);
+}
+.recent-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent li .tb {
+  margin-right: var(--sp-4);
+  visibility: hidden;
+}
+.recent li:hover .tb {
+  visibility: visible;
 }

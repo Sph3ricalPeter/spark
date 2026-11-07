@@ -1,3 +1,5 @@
+mod project;
+
 use serde::Serialize;
 use tauri::Manager;
 
@@ -43,8 +45,11 @@ fn app_info(app: tauri::AppHandle) -> AppInfo {
 pub fn run() {
     tauri::Builder::default()
         // First, so a second launch focuses the open window and exits.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // `spark <folder>` while Spark runs opens that project here.
+            if let Some(folder) = project::folder_arg(&args) {
+                project::open_in_background(app.clone(), folder);
+            } else if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
@@ -59,6 +64,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(project::Projects::default())
         .setup(|app| {
             if updates_enabled(app.handle()) {
                 app.handle()
@@ -71,7 +78,18 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_info])
-        .run(tauri::generate_context!())
-        .expect("error while running spark");
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            project::open_project,
+            project::check_project,
+            project::launch_folder
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building spark")
+        .run(|app, event| {
+            // Projects' dev servers don't outlive Spark.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<project::Projects>().stop_all();
+            }
+        });
 }

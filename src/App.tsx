@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getAppInfo, type AppInfo } from "@/lib/app-info";
 import { CHECK_INTERVAL_MS, DEV_CHECK_INTERVAL_MS, useUpdaterStore } from "@/stores/updater-store";
 import { TitleBar } from "@/components/TitleBar";
+import { Launcher } from "@/components/Launcher";
 
 export function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -25,10 +26,7 @@ export function App() {
     <div className="app">
       <TitleBar info={info} />
       <main className="canvas">
-        <div className="empty">
-          <h1>spark</h1>
-          <div>{info ? `v${info.version} · ${info.channel}` : ""}</div>
-        </div>
+        <Launcher />
       </main>
     </div>
   );

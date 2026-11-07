@@ -12,11 +12,17 @@ Zustand). Release and deploy are ported from dawg and described in
 
 - `src-tauri`: the app crate (`spark`). `lib.rs` has the release/dev channel
   logic (`updates_enabled`) and registers the updater only for builds that
-  may self-update.
+  may self-update. `project.rs` opens a project folder (launcher, or
+  `spark <folder>`): it copies the Vite plugin (bundled as the `plugin/`
+  resource) into `<project>/.spark/plugin`, starts the project's own Vite
+  with `.spark/vite.config.mjs` (the project's config plus the plugin), and
+  opens the dev server in a window of its own; closing it stops the server.
 - `src`: the UI. Design tokens in `src/tokens.css`, never literals in
   `src/styles.css` or components. `stores/updater-store.ts` checks, downloads
   and installs updates; `components/UpdateIndicator.tsx` is the title-bar
-  button; `components/TitleBar.tsx` is the frameless window's title bar.
+  button; `components/TitleBar.tsx` is the frameless window's title bar;
+  `components/Launcher.tsx` and `stores/projects-store.ts` are the main
+  window: open a folder, recent projects.
 
 - `packages/vite-plugin`: `spark-vite-plugin`, added to an app's
   `vite.config.ts` to make it editable from inside itself (dev server only).
