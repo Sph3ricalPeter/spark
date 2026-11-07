@@ -1,8 +1,10 @@
 // The panel's input widgets, Figma style.
 //
-// - number: drag the label (or the field's left edge) to scrub; Alt for fine
-//   steps, Shift for big ones; Arrow Up/Down nudge the same way. Typing any
-//   CSS value (auto, var(--x), 50%) still works.
+// - number: drag the label (or the field's left edge) to scrub; Alt drags
+//   slower for precision, Shift steps ×10; Arrow Up/Down nudge one step
+//   (Shift ×10). Steps are whole pixels (and %, deg, ms…); only em/rem and
+//   unitless values (opacity, line-height) step in decimals. Typing any CSS
+//   value (auto, var(--x), 50%, 13.5px) still works.
 // - select: a dropdown of a property's keyword values.
 // - color: a swatch that opens token swatches and a color picker.
 //
@@ -37,10 +39,32 @@ function parse(v: string): { n: number; unit: string } | null {
   return m ? { n: parseFloat(m[1]), unit: m[2] } : null;
 }
 
+/** Snap to the step's grid, so scrubbing 13.5px lands on 14px, not 14.5px. */
 function fmt(n: number, unit: string, step: number) {
   const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0;
-  return `${Number(n.toFixed(decimals))}${unit}`;
+  return `${Number((Math.round(n / step) * step).toFixed(decimals))}${unit}`;
 }
+
+/**
+ * The smallest step for a value in `unit`: whole units for px and the like;
+ * decimals only where a whole unit is a big jump (em, rem) or the value has
+ * no unit (opacity, line-height, flex-grow), which use the field's own step.
+ */
+function stepFor(unit: string, fieldStep: number) {
+  if (unit === "em" || unit === "rem") return 0.05;
+  if (unit === "") return fieldStep;
+  return 1;
+}
+
+/** `n` moved by `delta`, landing on the step grid (13.5px + 1 is 14px, − 1 is 13px). */
+function nudge(n: number, delta: number, one: number) {
+  const v = (n + delta) / one;
+  return (delta > 0 ? Math.floor(v + 1e-9) : Math.ceil(v - 1e-9)) * one;
+}
+
+/** Pixels of drag per step: Alt slows the drag, it never makes the step smaller. */
+const PX_PER_STEP = 2;
+const PX_PER_STEP_FINE = 8;
 
 export type NumberOpts = {
   /** The computed value, to scrub from when the typed one isn't a plain number (auto, var(--x)). */
@@ -59,7 +83,7 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
   const step = opts.step ?? 1;
   const unitDefault = opts.unit ?? "px";
   const input = h("input", { value, spellcheck: "false" }) as HTMLInputElement;
-  const grip = h("span", { class: "grip", title: "Drag to change · Alt: fine · Shift: ×10" }, opts.label ?? "↔");
+  const grip = h("span", { class: "grip", title: "Drag to change · Alt: slower · Shift: ×10" }, opts.label ?? "↔");
   const wrap = h("label", { class: `num${opts.changed ? " changed" : ""}` }, grip, input);
   keepKeys(input);
 
@@ -78,8 +102,10 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     } else if (k.key === "ArrowUp" || k.key === "ArrowDown") {
       k.preventDefault();
       const { n, unit } = current();
-      const s = step * (k.altKey ? 0.1 : 1) * (k.shiftKey ? 10 : 1);
-      input.value = fmt(clamp(n + (k.key === "ArrowUp" ? s : -s)), unit || unitDefault, s);
+      const u = unit || unitDefault;
+      const one = stepFor(u, step);
+      const s = one * (k.shiftKey ? 10 : 1);
+      input.value = fmt(clamp(nudge(n, k.key === "ArrowUp" ? s : -s, one)), u, one);
       onValue(input.value, true);
     }
   });
@@ -95,10 +121,21 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     const start = current();
     const x0 = p.clientX;
     let last = input.value;
+    const u = start.unit || unitDefault;
+    const one = stepFor(u, step);
+    // Steps accumulate from each move, so pressing or releasing Alt or Shift
+    // mid-drag changes the rate from there on without a jump.
+    let n = start.n;
+    let px = x0;
+    let carry = 0;
     const move = (ev: PointerEvent) => {
-      const s = step * (ev.altKey ? 0.1 : 1) * (ev.shiftKey ? 10 : 1);
-      const n = clamp(start.n + (ev.clientX - x0) * s);
-      last = fmt(n, start.unit || unitDefault, s);
+      carry += (ev.clientX - px) / (ev.altKey ? PX_PER_STEP_FINE : PX_PER_STEP);
+      px = ev.clientX;
+      const steps = Math.trunc(carry);
+      if (!steps) return;
+      carry -= steps;
+      n = clamp(nudge(n, steps * one * (ev.shiftKey ? 10 : 1), one));
+      last = fmt(n, u, one);
       if (last !== input.value) {
         input.value = last;
         onValue(last, false);

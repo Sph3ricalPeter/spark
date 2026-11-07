@@ -9,9 +9,9 @@
 //   Arrow Up selects the parent; Esc steps out one level at a time
 //   (popover, text edit, selection), and from nothing selected back to view;
 // - the selection has handles: drag them to resize (Shift keeps the ratio
-//   on a corner, Alt for fine steps);
+//   on a corner, Alt drags slower; sizes stay whole pixels);
 // - double-click text to edit it in place; Enter or Esc keeps the edit.
-// The panel's fields scrub (drag the ↔ grip, Alt fine, Shift ×10), colors
+// The panel's fields scrub (drag the ↔ grip, Alt slower, Shift ×10; whole px), colors
 // open token swatches and a picker, keyword properties are dropdowns.
 //
 // Edits are previewed live and recorded as changes (see changes.ts), which
@@ -101,7 +101,7 @@ const FIELDS: { group: string; fields: Field[] }[] = [
       { prop: "font-size", kind: "number", min: 0 },
       { prop: "font-weight", kind: "select", options: ["100", "200", "300", "400", "500", "600", "700", "800", "900"] },
       { prop: "line-height", kind: "number", step: 0.1, unit: "", min: 0 },
-      { prop: "letter-spacing", kind: "number", step: 0.1 },
+      { prop: "letter-spacing", kind: "number" },
       { prop: "text-align", kind: "select", options: ["start", "left", "center", "right", "end", "justify"] },
       { prop: "text-transform", kind: "select", options: ["none", "uppercase", "lowercase", "capitalize"] },
     ],
