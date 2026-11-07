@@ -285,6 +285,17 @@ function toHex(color: string): string {
 }
 
 let openPopover: HTMLElement | null = null;
+/** Show `pop` inside `parent` as the one open popover (toggles off when it's already this parent's). */
+export function showPopover(parent: HTMLElement, pop: HTMLElement): boolean {
+  const mine = openPopover?.parentElement === parent;
+  closePopover();
+  if (mine) return false;
+  pop.addEventListener("click", (e) => e.stopPropagation());
+  parent.append(pop);
+  openPopover = pop;
+  pop.scrollIntoView({ block: "nearest" });
+  return true;
+}
 export function closePopover(): boolean {
   if (!openPopover) return false;
   openPopover.remove();

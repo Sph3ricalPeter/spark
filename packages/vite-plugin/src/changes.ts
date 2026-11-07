@@ -233,7 +233,9 @@ export function preview(c: Change) {
 }
 
 function setOnRule(c: Change, value: string) {
-  const rule = c.level === "token" ? tokenRule(c.property, skip)?.rule : c.selector ? findRule(c.file, c.selector, skip) : null;
+  // A new variable (from "") isn't defined anywhere yet: it goes in the rule it was added to.
+  const rule =
+    (c.level === "token" ? tokenRule(c.property, skip)?.rule : null) ?? (c.level !== "instance" && c.selector ? findRule(c.file, c.selector, skip) : null);
   if (!rule) return;
   if (value) rule.style.setProperty(c.property, value);
   else rule.style.removeProperty(c.property);

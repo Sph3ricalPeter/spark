@@ -7,7 +7,7 @@
 // uses the variable follows. The preview changes that rule in the CSSOM, the
 // same thing the code change will do.
 import { eachRule } from "./css.ts";
-import { colorField, h, numberField, textField, type OnValue, type Token } from "./fields.ts";
+import { closePopover, colorField, h, numberField, showPopover, textField, type OnValue, type Token } from "./fields.ts";
 
 export type VarKind = "color" | "size" | "other";
 
@@ -91,6 +91,8 @@ export type VariablesDeps = {
   /** The pending value Spark has for a variable, if it was edited. */
   pendingValue: (name: string) => string | undefined;
   edit: (v: Variable, value: string, final: boolean) => void;
+  /** Add a new variable to a rule. False when it can't be (bad name, taken). */
+  create: (name: string, value: string, target: VarTarget) => boolean;
   /** Select the first element a rule matches (switches to the inspector). */
   selectRule: (selector: string) => boolean;
   shortFile: (file: string | null) => string;
@@ -100,12 +102,37 @@ export type VariablesDeps = {
 const expanded = new Set<string>();
 let filter = "";
 
+/** A rule a new variable can go in. */
+export type VarTarget = { selector: string; file: string | null };
+
+/** Rules that can hold variables: :root/html rules and any rule that already defines some,
+ * the one with the most variables first (the app's tokens file, usually). */
+export function variableTargets(skip: (n: Node) => boolean): VarTarget[] {
+  const seen = new Map<string, VarTarget & { count: number; root: boolean }>();
+  eachRule(skip, (rule, file) => {
+    const root = ROOT.test(rule.selectorText);
+    const count = declarations(rule).filter(([p]) => p.startsWith("--")).length;
+    if (!root && count === 0) return;
+    const key = `${file} ${rule.selectorText}`;
+    const prev = seen.get(key);
+    seen.set(key, { selector: rule.selectorText, file, count: (prev?.count ?? 0) + count, root });
+  });
+  return [...seen.values()].sort((a, b) => Number(b.root) - Number(a.root) || b.count - a.count).map(({ selector, file }) => ({ selector, file }));
+}
+
+/** A value to make a variable from, opened from an inspector field; `then` swaps the field to the new var(). */
+let draft: { value: string; name: string; then?: (name: string) => void } | null = null;
+export function draftVariable(value: string, name: string, then?: (name: string) => void) {
+  draft = { value, name, then };
+}
+
 const GROUPS: Record<VarKind, string> = { color: "Colors", size: "Sizes", other: "Other" };
 
 export function renderVariables(into: HTMLElement, deps: VariablesDeps) {
   const vars = collectVariables(deps.skip);
+  into.append(newVariableForm(vars, deps));
   if (vars.length === 0) {
-    into.append(h("div", { class: "empty" }, "This app's stylesheets don't define any CSS variables (custom properties like --radius-sm)."));
+    into.append(h("div", { class: "empty" }, "This app's stylesheets don't define any CSS variables yet (custom properties like --radius-sm)."));
     return;
   }
   const colors: Token[] = vars.filter((v) => v.kind === "color").map((v) => ({ name: v.name, value: deps.pendingValue(v.name) ?? v.resolved }));
@@ -235,5 +262,139 @@ export const VARIABLES_STYLE = `
     .var-def { color: #8a8f98; margin-bottom: 2px; }
     .var-use { padding: 1px 0; word-break: break-word; }
     .resolved { color: #8a8f98; font: 11px ui-monospace, monospace; }
+    .var-new { margin: 0 0 10px; padding: 6px 8px; background: #1d1f23; border-radius: 4px; }
+    .var-new summary { color: #8fb4ff; text-transform: none; letter-spacing: 0; font-size: 12px; }
+    .var-new[open] summary { margin-bottom: 6px; }
+    .hint.bad { color: #e5534b; }
+    .with-var { display: flex; gap: 4px; align-items: flex-start; position: relative; }
+    .with-var > :first-child { flex: 1; min-width: 0; }
+    .varbtn { flex: none; width: 22px; height: 22px; padding: 0; font: 600 10px ui-monospace, monospace; color: #8a8f98; }
+    .varbtn.bound { color: #8fb4ff; border-color: #8fb4ff55; }
+    .varbtn:hover { color: #fff; }
+    .var-pop { width: 260px; top: 26px; }
+    .var-pop input { margin-bottom: 6px; }
+    .var-opts { max-height: 220px; overflow: auto; }
+    .var-opt { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none; background: transparent; padding: 3px 4px; }
+    .var-opt:hover, .var-opt.on { background: #2a2d33; }
+    .var-opt .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid #44474e; flex: none; }
+    .var-opt .nm { font: 11px ui-monospace, monospace; color: #fff; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-opt .vl { font: 11px ui-monospace, monospace; color: #8a8f98; flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-act { color: #8fb4ff; }
     .resolved-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
     `;
+
+/** "New variable": name, value and the rule it goes in. Open when there's a draft from the inspector. */
+function newVariableForm(vars: Variable[], deps: VariablesDeps): HTMLElement {
+  const targets = variableTargets(deps.skip);
+  const d = draft;
+  draft = null;
+  const box = h("details", { class: "var-new" }) as HTMLDetailsElement;
+  box.open = !!d;
+  box.append(h("summary", {}, "+ New variable"));
+  if (targets.length === 0) {
+    box.append(h("div", { class: "empty" }, "No :root rule to put it in. Add one to a stylesheet first."));
+    return box;
+  }
+  const name = h("input", { placeholder: "--name", spellcheck: "false", value: d?.name ?? "" }) as HTMLInputElement;
+  const value = h("input", { placeholder: "value, e.g. 6px or #ff8800", spellcheck: "false", value: d?.value ?? "" }) as HTMLInputElement;
+  const where = h("select", { title: "The rule it goes in" }) as HTMLSelectElement;
+  targets.forEach((t, i) => where.append(h("option", { value: String(i) }, `${t.selector} · ${deps.shortFile(t.file)}`)));
+  const msg = h("div", { class: "hint" });
+  const add = h("button", { class: "on" }, d?.then ? "Create and use" : "Create");
+  const taken = new Set(vars.map((v) => v.name));
+
+  const submit = () => {
+    let n = name.value.trim();
+    if (n && !n.startsWith("--")) n = "--" + n.replace(/^-+/, "");
+    const v = value.value.trim();
+    msg.textContent = "";
+    if (!/^--[a-zA-Z_][\w-]*$/.test(n)) msg.textContent = "A name like --radius-lg: letters, digits, - and _.";
+    else if (taken.has(n)) msg.textContent = `${n} already exists.`;
+    else if (!v) msg.textContent = "Give it a value.";
+    else if (!deps.create(n, v, targets[Number(where.value)])) msg.textContent = "Couldn't add it to that rule.";
+    else {
+      d?.then?.(n);
+      return;
+    }
+    msg.classList.add("bad");
+  };
+  for (const input of [name, value]) {
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if ((e as KeyboardEvent).key === "Enter") submit();
+    });
+    input.addEventListener("keyup", (e) => e.stopPropagation());
+  }
+  add.addEventListener("click", submit);
+  box.append(
+    h("div", { class: "row" }, h("span", { class: "k" }, "Name"), h("div", { class: "field" }, name)),
+    h("div", { class: "row" }, h("span", { class: "k" }, "Value"), h("div", { class: "field" }, value)),
+    h("div", { class: "row" }, h("span", { class: "k" }, "Goes in"), h("div", { class: "field" }, where)),
+    h("div", { class: "row" }, h("span", { class: "k" }), add),
+    msg,
+  );
+  if (d) setTimeout(() => (d.name ? value : name).focus());
+  return box;
+}
+
+export type VarPickOpts = {
+  /** Which variables fit the field: colors for a color field, sizes for a number field, any for text. */
+  kind: VarKind | null;
+  /** The field's current value. */
+  value: string;
+  skip: (n: Node) => boolean;
+  pendingValue: (name: string) => string | undefined;
+  /** Bind the field to var(name). */
+  use: (name: string) => void;
+  /** Make a variable from the field's value (opens the New variable form). */
+  create: () => void;
+  /** Put the resolved value back in place of the var() (unbind). */
+  unbind?: () => void;
+};
+
+/** The "var" button next to a field: use an existing variable, or create one from the value. */
+export function varButton(field: HTMLElement, o: VarPickOpts): HTMLElement {
+  const bound = varsIn(o.value)[0] ?? null;
+  const btn = h("button", { class: `varbtn${bound ? " bound" : ""}`, title: bound ? `Uses ${bound}: change or unlink` : "Use a variable, or make one from this value" }, "{ }");
+  const wrap = h("div", { class: "with-var" }, field, btn);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const pop = h("div", { class: "popover var-pop" });
+    const all = collectVariables(o.skip).filter((v) => !o.kind || v.kind === o.kind);
+    const q = h("input", { placeholder: `Search ${all.length} ${o.kind === "color" ? "color" : o.kind === "size" ? "size" : ""} variables`.replace("  ", " "), spellcheck: "false" }) as HTMLInputElement;
+    const list = h("div", { class: "var-opts" });
+    const pick = (fn: () => void) => () => {
+      closePopover();
+      fn();
+    };
+    const literal = o.value && !bound;
+    const actions: HTMLElement[] = [];
+    if (literal) actions.push(h("button", { class: "var-opt var-act", click: pick(o.create) }, h("span", { class: "nm" }, `+ New variable from ${o.value}`)));
+    else actions.push(h("button", { class: "var-opt var-act", click: pick(o.create) }, h("span", { class: "nm" }, "+ New variable")));
+    if (bound && o.unbind) actions.push(h("button", { class: "var-opt var-act", click: pick(o.unbind) }, h("span", { class: "nm" }, `Unlink ${bound} (keep its value)`)));
+    const fill = () => {
+      const t = q.value.trim().toLowerCase();
+      list.replaceChildren(...actions);
+      for (const v of all) {
+        const val = o.pendingValue(v.name) ?? (v.resolved || v.authored);
+        if (t && !`${v.name} ${val}`.toLowerCase().includes(t)) continue;
+        const dot = h("span", { class: "dot" });
+        if (v.kind === "color") dot.style.background = val;
+        else dot.style.visibility = "hidden";
+        list.append(
+          h("button", { class: `var-opt${v.name === bound ? " on" : ""}`, title: `var(${v.name})`, click: pick(() => o.use(v.name)) }, dot, h("span", { class: "nm" }, v.name), h("span", { class: "vl" }, val)),
+        );
+      }
+    };
+    q.addEventListener("input", fill);
+    q.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if ((ev as KeyboardEvent).key === "Enter") (list.querySelector(".var-opt:not(.var-act)") as HTMLElement | null)?.click();
+    });
+    q.addEventListener("keyup", (ev) => ev.stopPropagation());
+    fill();
+    pop.append(q, list);
+    if (showPopover(wrap, pop)) q.focus();
+  });
+  return wrap;
+}

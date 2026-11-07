@@ -3,6 +3,7 @@ import type { Change } from "./changes.ts";
 
 const HOW = `How to read a change:
 - level "token": set the design token \`property\` to \`to\` where it's defined (\`file\`, rule \`selector\`).
+  \`from\` "" means it's a new variable: add it to that rule, next to the related ones.
 - level "component": in \`file\`, set \`property\` to \`to\` in the CSS rule \`selector\`.
 - level "instance": an override. \`element\` is the DOM element that was edited (\`src\` is file:line:col of its JSX,
   \`comp\` the component it's written in). \`instance.path\` lists its owners from that component up to the root, each

@@ -34,12 +34,12 @@ import {
   type ChangeLog,
   type PathEntry,
 } from "./changes.ts";
-import { authored, matchedRules, tokenRule, tokensUsed } from "./css.ts";
+import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
-import { renderVariables, resolvedLine, VARIABLES_STYLE, type Variable } from "./variables.ts";
+import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
 import type { RuleRef } from "./css.ts";
 
@@ -692,6 +692,17 @@ function editRule(ref: RuleRef, prop: string, from: string, value: string, final
   return true;
 }
 
+/** Add a new variable to a rule (recorded as a token change from ""). */
+function createVariable(name: string, value: string, target: VarTarget): boolean {
+  if (!CSS.supports(name, value)) return false;
+  const file = rel(target.file);
+  if (!findRule(file, target.selector, skip)) return false;
+  const element = selected ? elementInfo(selected) : { src: null, comp: null, tag: "", classes: [] };
+  record({ level: "token", property: name, from: "", to: value, file, selector: target.selector, element, instance: null });
+  changed();
+  return true;
+}
+
 function changed() {
   remember();
   save();
@@ -995,6 +1006,27 @@ function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement
   return h("div", { class: "row" }, k, h("div", { class: "field" }, field, below));
 }
 
+/** A field with the "{ }" button: bind it to a variable, make one from its value, or unlink. */
+function withVar(field: HTMLElement, kind: VarKind | null, value: string, computed: string, set: (v: string) => void): HTMLElement {
+  const pendingValue = (name: string) => allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name)?.to;
+  const el = selected;
+  return varButton(field, {
+    kind,
+    value,
+    skip,
+    pendingValue,
+    use: (name) => set(`var(${name})`),
+    unbind: () => set(computed.trim().replace(/(\.\d\d)\d+/g, "$1")),
+    create: () => {
+      draftVariable(value.includes("var(") ? "" : value || computed.trim(), "", (name) => {
+        if (el?.isConnected) select(el);
+        set(`var(${name})`);
+      });
+      setView("variables");
+    },
+  });
+}
+
 function renderVariablesView() {
   const scroll = body.scrollTop;
   const pendingValue = (name: string) => allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name)?.to;
@@ -1002,6 +1034,7 @@ function renderVariablesView() {
     skip,
     pendingValue,
     edit: (v: Variable, value: string, final: boolean) => editToken(selected, v.name, value, final),
+    create: createVariable,
     selectRule: (selector) => {
       let el: Element | undefined;
       try {
@@ -1129,7 +1162,12 @@ function render() {
           computeds.push(cs.getPropertyValue(prop).trim());
           quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)));
         }
-        body.append(row(f.prop, quad, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable)));
+        const sideProps = SIDES.map((side) => `${f.prop}-${side}`);
+        const same = values.every((v) => v === values[0]) ? values[0] : "";
+        const quadVar = withVar(quad, "size", same, computeds[0], (v) => {
+          sideProps.forEach((p, i) => edit(el, p, v, i === sideProps.length - 1));
+        });
+        body.append(row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable)));
         continue;
       }
       const { value, changed } = valueOf(f.prop);
@@ -1139,6 +1177,10 @@ function render() {
       else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
       else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
       else field = textField(value, changed, onValue(f.prop));
+      if (f.kind !== "select") {
+        const prop = f.prop;
+        field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
+      }
       const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
       body.append(row(f.prop, field, notes.length ? h("div", {}, ...notes) : null));
     }
