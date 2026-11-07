@@ -489,8 +489,19 @@ function setOpen(v: boolean) {
 }
 
 /** Edit mode (true) or view mode (false). Entering edit mode opens the panel; view mode drops the selection. */
+/**
+ * Drop the app's keyboard focus. A button clicked in view mode keeps focus,
+ * and the next key (Tab into edit mode, Esc) makes the browser draw its
+ * focus ring on it, which looks like an edit border and Esc can't clear.
+ */
+function blurApp() {
+  const a = document.activeElement;
+  if (a instanceof HTMLElement && a !== document.body && !host.contains(a) && a !== editing) a.blur();
+}
+
 function setPicking(v: boolean) {
   picking = v;
+  if (v) blurApp();
   editBtn.classList.toggle("on", v);
   viewBtn.classList.toggle("on", !v);
   if (v && !open) setOpen(true);
@@ -507,6 +518,7 @@ editBtn.addEventListener("click", () => setPicking(true));
 
 /** One step out on Esc: popover, then selection, then edit mode. True when something closed. */
 function escapeStep(): boolean {
+  blurApp();
   if (closePopover()) return true;
   if (selected) {
     select(null);
@@ -595,6 +607,7 @@ function jumpToVariable(name: string) {
 }
 
 function select(el: Element | null) {
+  blurApp();
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
   markTab();
@@ -1409,6 +1422,12 @@ document.addEventListener(
       e.stopPropagation();
       setPicking(!picking);
       return;
+    }
+    // View mode: the app gets Esc, then a clicked button or link lets go of
+    // focus, so the browser's focus ring doesn't stay on it. Text fields keep it.
+    if (e.key === "Escape" && !picking) {
+      const a = document.activeElement;
+      if (a instanceof HTMLElement && !a.isContentEditable && !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) setTimeout(blurApp);
     }
     // Typing in the panel: its fields handle their own keys.
     if (!open || e.composedPath().includes(host) || e.composedPath().includes(panelHost)) return;
