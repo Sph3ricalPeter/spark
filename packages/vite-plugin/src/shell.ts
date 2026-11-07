@@ -11,7 +11,7 @@
 // Every frame runs its own Spark client; the board keeps them in step: one
 // mode, one open panel (the selected frame's), one change list, one undo
 // history. Clicking in a frame selects it; Tab (or View in the bar) puts the
-// selected frame in view mode: the camera focuses it and the others dim.
+// selected frame in view mode: the others dim (the camera stays put).
 //
 // The canvas zooms and pans on its own: Ctrl+wheel or a pinch zooms at the
 // pointer, Ctrl +/- steps, Ctrl 0 is 100% on the selected frame; wheel over
@@ -362,12 +362,10 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
     focusFrame(f);
     apply();
   });
-  // A dimmed frame (view mode) takes the click itself: select and focus it.
+  // A dimmed frame (view mode) takes the click itself: select it, where it is.
   el.addEventListener("pointerdown", (e) => {
     if ((e as PointerEvent).button !== 0 || !el.classList.contains("dim")) return;
     selectFrame(f);
-    focusFrame(f);
-    apply();
   });
   stage.append(el);
   iframe.src = kind === "app" ? appUrl() : componentUrl(file);
