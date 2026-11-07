@@ -20,7 +20,7 @@
 // anywhere. The browser's own page zoom never kicks in, so the panel and the
 // bar stay put.
 import { installFont } from "./fonts.ts";
-import { THEME } from "./theme.ts";
+import { THEME, icon } from "./theme.ts";
 import { h } from "./fields.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import caseFiles from "/@spark/cases";
@@ -193,7 +193,13 @@ root.append(
     }
     .ftitle:active { cursor: grabbing; }
     .ftitle .meta { font: var(--sp-fs-xs) var(--sp-mono); font-weight: 400; color: var(--sp-text-faint, var(--sp-text-dim)); opacity: .75; }
-    .frame.selected .ftitle .name { color: var(--sp-accent); }
+    .ftitle .icon { vertical-align: 0; }
+    .frame.selected .ftitle { color: var(--sp-accent); }
+    .frame.component .ftitle { color: color-mix(in srgb, var(--sp-component) 75%, transparent); }
+    .frame.component.selected .ftitle { color: var(--sp-component); }
+    .edit-mode .frame.component.selected iframe {
+      box-shadow: 0 0 0 calc(1px / var(--z, 1)) color-mix(in srgb, var(--sp-component) 55%, transparent), 0 12px 40px #0008;
+    }
     .ftitle button {
       height: 16px; min-width: 16px; padding: 0 4px; border: none; background: transparent; color: var(--sp-text-dim);
       font-size: 13px; line-height: 1; visibility: hidden;
@@ -349,7 +355,9 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
   iframe.setAttribute("data-spark-frame", "");
   const name = h("span", { class: "name" });
   const meta = h("span", { class: "meta" });
-  const title = h("div", { class: "ftitle" }, name, meta);
+  // App frames run the real app at a chosen size; component frames render
+  // cases with mock data and hug them. Each kind has its own icon and color.
+  const title = h("div", { class: "ftitle" }, icon(kind === "app" ? "app-window" : "component", 12), name, meta);
   const el = h("div", { class: `frame ${kind}` }, title, iframe);
   const f: Frame = { id, kind, file, x: 0, y: 0, w: kind === "app" ? 1280 : 320, h: kind === "app" ? 720 : 160, preset: "custom", placed: false, el, name, meta, iframe, ...at };
   if (kind === "app") {

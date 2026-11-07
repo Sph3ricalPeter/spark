@@ -37,6 +37,8 @@ export const THEME = `
     --sp-text-dim: #8a8f98;
     --sp-text-strong: #fff;
     --sp-accent: #4f8cff;
+    /* Components (Figma's purple): component frames on the board. */
+    --sp-component: #a77bff;
     --sp-link: #8fb4ff;
     --sp-warn: #d9a441;
     --sp-danger: #e5534b;
@@ -54,6 +56,7 @@ const ICONS = {
     "M8.916 4.674a1 1 0 0 0 0 1.414l2.377 2.376a1 1 0 0 0 1.414 0l2.377-2.376a1 1 0 0 0 0-1.414l-2.377-2.377a1 1 0 0 0-1.414 0z",
   ],
   x: ["M18 6 6 18", "m6 6 12 12"],
+  "app-window": ["M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", "M10 4v4", "M2 8h20", "M6 4v4"],
   "rotate-ccw": ["M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5"],
   braces: [
     "M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1",
