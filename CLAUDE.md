@@ -40,6 +40,11 @@ Zustand). Release and deploy are ported from dawg and described in
   `runner.ts` runs the local `claude -p` for "Implement changes" and the
   Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
+  `gallery.ts` is the Components view (App / Components in the canvas bar,
+  `?spark=components`): every `*.spark.tsx` next to a component exports one
+  function per case, rendered alone with the app's global CSS and React;
+  an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
+  fakes for `invoke`; the empty view has Claude write the files;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
   shadow root's :host: Manrope via `fonts.ts`, served from `assets/fonts`,
   a 4-step font scale, 3 radii, a spacing scale, colors) plus inlined Lucide

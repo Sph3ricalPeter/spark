@@ -114,6 +114,10 @@ root.append(
     button { cursor: pointer; min-width: 26px; }
     button:hover, select:hover { border-color: var(--sp-line-strong); }
     button.on { background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); }
+    .views { display: inline-flex; }
+    .views button { border-radius: 0; }
+    .views button:first-child { border-radius: var(--sp-r-sm) 0 0 var(--sp-r-sm); }
+    .views button:last-child { border-radius: 0 var(--sp-r-sm) var(--sp-r-sm) 0; border-left: none; }
     button:disabled { opacity: .4; cursor: default; }
     select { padding: 0 4px; max-width: 220px; }
     input { width: 62px; font: var(--sp-fs-sm) var(--sp-mono); text-align: center; }
@@ -209,9 +213,41 @@ let toggleMode: ((edit: boolean) => void) | null = null;
 islandView.addEventListener("click", () => toggleMode?.(false));
 islandEdit.addEventListener("click", () => toggleMode?.(true));
 
+// App or Components view (gallery.ts): which page the frame shows.
+const VIEW_PARAM = "spark";
+const appBtn = h("button", { title: "The app" }, "App");
+const compsBtn = h("button", { title: "Every component on its own, with mock data from *.spark.tsx files" }, "Components");
+const viewSeg = h("span", { class: "views" }, appBtn, compsBtn);
+function frameUrl() {
+  try {
+    const href = frame.contentWindow?.location.href;
+    if (href && href !== "about:blank") return new URL(href);
+  } catch {
+    // Off-origin: fall back to the shell's address.
+  }
+  return new URL(location.href);
+}
+function showView(components: boolean) {
+  const url = frameUrl();
+  if (components) url.searchParams.set(VIEW_PARAM, "components");
+  else url.searchParams.delete(VIEW_PARAM);
+  history.replaceState(history.state, "", url.href);
+  frame.src = url.href;
+  markView();
+}
+function markView() {
+  const on = new URL(location.href).searchParams.get(VIEW_PARAM) === "components";
+  appBtn.classList.toggle("on", !on);
+  compsBtn.classList.toggle("on", on);
+}
+appBtn.addEventListener("click", () => showView(false));
+compsBtn.addEventListener("click", () => showView(true));
+
 const bar = h(
   "div",
   { class: "bar" },
+  viewSeg,
+  h("span", { class: "sep" }),
   presetSel,
   prevBtn,
   nextBtn,
@@ -553,7 +589,10 @@ window.__sparkShell = api;
 function syncLocation() {
   try {
     const loc = frame.contentWindow?.location;
-    if (loc && loc.href !== "about:blank" && loc.href !== location.href) history.replaceState(history.state, "", loc.href);
+    if (loc && loc.href !== "about:blank" && loc.href !== location.href) {
+      history.replaceState(history.state, "", loc.href);
+      markView();
+    }
     const title = frame.contentDocument?.title;
     if (title && title !== document.title) document.title = title;
   } catch {
@@ -609,3 +648,4 @@ document.documentElement.append(host);
 apply();
 if (!fill()) resized();
 frame.src = location.href;
+markView();

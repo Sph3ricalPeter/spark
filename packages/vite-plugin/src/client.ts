@@ -148,6 +148,8 @@ function componentName(type: unknown): string | null {
 function ownersOf(el: Element): Owner[] {
   const owners: Owner[] = [];
   for (let f = fiberOf(el); f && owners.length < 12; f = f.return) {
+    // The Components view's own wrappers (gallery.ts) aren't part of the app.
+    if ((f.type as { sparkInternal?: boolean } | null)?.sparkInternal) break;
     const name = componentName(f.type);
     if (!name) continue;
     const call = f.memoizedProps?.["data-spark-call"];

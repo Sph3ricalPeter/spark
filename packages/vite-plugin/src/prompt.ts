@@ -91,3 +91,25 @@ ${RULES.replace("- Change only what the changes ask for.", "- Change only what t
 
 End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdicts(pending.map((c) => c.id))}` : ""}`;
 }
+
+/** Write the Components view's case files (gallery.ts) for the project's components. */
+export function galleryPrompt(): string {
+  return `You are working on this React app from Spark, a visual editor running on top of it. Its Components view renders
+every component on its own, with mock data, from \`*.spark.tsx\` files. Write those files.
+
+- Find the app's reusable presentational components (where the project keeps its components). Skip pages, the app
+  root, providers and anything that only makes sense wired to live state.
+- For each one, add \`<Component>.spark.tsx\` next to it. Every exported function is one case: a component that
+  renders it alone with realistic props, for example
+  \`export const Primary = () => <Button variant="primary">Export</Button>;\`
+  Cover its meaningful variants and states in 2 to 5 cases. Export nothing else from the file.
+- If a component needs a provider, a router or app-wide CSS that the app's entry (e.g. \`src/main.tsx\`) doesn't import, put it in a
+  \`spark.setup.tsx\` at the project root: its default export is a wrapper component \`({ children })\`. If
+  components call Tauri's \`invoke\`, export \`tauri\` from it too: an object of command name to a function
+  \`(args) => mockResult\`.
+- Don't change the components themselves.
+
+${RULES.replace("- Change only what the changes ask for.", "- Only add these files.")}
+
+End with a one-sentence summary of what you wrote.`;
+}
