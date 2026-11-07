@@ -81,6 +81,10 @@ type Frame = {
   preset: string;
   /** A component frame the user moved; the others follow the app frames. */
   placed: boolean;
+  /** Component frames: cases in a row or a column ("auto": a column for wide ones). */
+  layout: Layout;
+  /** Component frames: the cases are in a column right now. */
+  stacked: boolean;
   el: HTMLElement;
   name: HTMLElement;
   meta: HTMLElement;
@@ -88,7 +92,8 @@ type Frame = {
 };
 
 type SavedApp = { id: string; x: number; y: number; w: number; h: number; preset: string };
-type Saved = { apps: SavedApp[]; placed: Record<string, { x: number; y: number }>; selected: string };
+type Layout = "auto" | "row" | "column";
+type Saved = { apps: SavedApp[]; placed: Record<string, { x: number; y: number }>; selected: string; layouts?: Record<string, Layout> };
 
 let frames: Frame[] = [];
 let selectedId = "app-1";
@@ -118,6 +123,7 @@ function save() {
     apps: frames.filter((f) => f.kind === "app").map(({ id, x, y, w, h, preset }) => ({ id, x, y, w, h, preset })),
     placed: Object.fromEntries(frames.filter((f) => f.kind === "component" && f.placed).map((f) => [f.file, { x: f.x, y: f.y }])),
     selected: selectedId,
+    layouts: Object.fromEntries(frames.filter((f) => f.layout !== "auto").map((f) => [f.file, f.layout])),
   };
   try {
     localStorage.setItem(STORE, JSON.stringify(s));
@@ -206,6 +212,7 @@ root.append(
     }
     .ftitle:hover button { visibility: visible; }
     .ftitle button:hover { color: var(--sp-text-strong); }
+    .ftitle button.flip { font: 500 var(--sp-fs-xs)/1 var(--sp-font); color: inherit; opacity: .8; }
     /* Covers the frames while panning, so the drag isn't lost into an app. */
     .shield { position: absolute; inset: 0; display: none; }
     .panning .shield, .space .shield { display: block; }
@@ -338,10 +345,11 @@ function appUrl() {
   return url.href;
 }
 
-function componentUrl(file: string) {
+function componentUrl(file: string, layout: Layout = "auto") {
   const url = new URL(location.pathname, location.origin);
   url.searchParams.set("spark", "components");
   url.searchParams.set("file", file);
+  if (layout !== "auto") url.searchParams.set("layout", layout);
   return url.href;
 }
 
@@ -359,7 +367,7 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
   // cases with mock data and hug them. Each kind has its own icon and color.
   const title = h("div", { class: "ftitle" }, icon(kind === "app" ? "app-window" : "component", 12), name, meta);
   const el = h("div", { class: `frame ${kind}` }, title, iframe);
-  const f: Frame = { id, kind, file, x: 0, y: 0, w: kind === "app" ? 1280 : 320, h: kind === "app" ? 720 : 160, preset: "custom", placed: false, el, name, meta, iframe, ...at };
+  const f: Frame = { id, kind, file, x: 0, y: 0, w: kind === "app" ? 1280 : 320, h: kind === "app" ? 720 : 160, preset: "custom", placed: false, layout: "auto", stacked: false, el, name, meta, iframe, ...at };
   if (kind === "app") {
     if (id !== "app-1") {
       const close = h("button", { title: "Remove this frame" }, "×");
@@ -371,6 +379,10 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
   } else {
     iframe.title = `${fileTitle(file)} cases`;
     meta.textContent = file.replace(/^\//, "");
+    const flip = h("button", { class: "flip", title: "Cases in a row or stacked in a column" });
+    flip.addEventListener("pointerdown", (e) => e.stopPropagation());
+    flip.addEventListener("click", () => setLayout(f, f.stacked ? "row" : "column"));
+    title.append(flip);
   }
   title.addEventListener("pointerdown", (e) => moveFrame(f, e as PointerEvent));
   // A dimmed frame (view mode) takes the click itself: select it, where it is.
@@ -379,8 +391,22 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
     selectFrame(f);
   });
   stage.append(el);
-  iframe.src = kind === "app" ? appUrl() : componentUrl(file);
+  iframe.src = kind === "app" ? appUrl() : componentUrl(file, f.layout);
   return f;
+}
+
+/** Cases in a row or a column, for this component frame from now on. */
+function setLayout(f: Frame, layout: Layout) {
+  f.layout = layout;
+  const win = f.iframe.contentWindow as (Window & { __sparkLayout?: (v: string) => void }) | null;
+  try {
+    win?.__sparkLayout?.(layout);
+    // A reload of the frame keeps it.
+    win?.history.replaceState(win.history.state, "", componentUrl(f.file, layout));
+  } catch {
+    // Off-origin: the next load picks it up from the saved board.
+  }
+  save();
 }
 
 function selected(): Frame {
@@ -454,7 +480,8 @@ function syncComponents(files: string[]) {
   for (const file of want) {
     if (frames.some((f) => f.kind === "component" && f.file === file)) continue;
     const p = placed[file];
-    frames.push(makeFrame("component", `c:${file}`, file, p ? { x: p.x, y: p.y, placed: true } : {}));
+    const layout = loaded.layouts?.[file] ?? "auto";
+    frames.push(makeFrame("component", `c:${file}`, file, { layout, ...(p ? { x: p.x, y: p.y, placed: true } : {}) }));
   }
   if (!frames.some((f) => f.id === selectedId)) selectedId = frames[0].id;
   apply();
@@ -910,9 +937,12 @@ const api: ShellApi = {
     history = [json];
     step = 0;
   },
-  contentSize(win, w, hh) {
+  contentSize(win, w, hh, stacked) {
     const f = frameOf(win);
     if (!f || f.kind !== "component") return;
+    f.stacked = !!stacked;
+    const flip = f.el.querySelector(".flip");
+    if (flip) flip.textContent = f.stacked ? "↕ Stacked" : "↔ Row";
     const nw = Math.max(80, Math.ceil(w));
     const nh = Math.max(40, Math.ceil(hh));
     if (nw === f.w && nh === f.h) return;

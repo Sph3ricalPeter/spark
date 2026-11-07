@@ -60,8 +60,8 @@ export type ShellApi = {
   step(dir: -1 | 1, from: Window): unknown[] | null;
   /** The list was loaded or Claude applied changes: the history starts over from it. */
   resetHistory(changes: unknown[]): void;
-  /** A component frame's content size, so the frame hugs it. */
-  contentSize(win: Window, w: number, h: number): void;
+  /** A component frame's content size, so the frame hugs it; `stacked`: its cases are in a column. */
+  contentSize(win: Window, w: number, h: number, stacked?: boolean): void;
 };
 
 declare global {

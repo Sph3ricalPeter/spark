@@ -46,6 +46,7 @@ const STYLE = `
   .spark-gallery.one { min-height: 0; width: max-content; padding: 24px; }
   .spark-gallery.one .spark-gallery-file { margin: 0; }
   .spark-gallery.one .spark-gallery-cases { flex-wrap: nowrap; }
+  .spark-gallery.one.stack .spark-gallery-cases { flex-direction: column; }
   .spark-gallery.one .spark-gallery-empty { margin: 0; }
   .spark-gallery-file { margin: 0 0 40px; }
   .spark-gallery-file > h2 {
@@ -70,6 +71,9 @@ const STYLE = `
   }
   .spark-gallery-empty button:disabled { opacity: 0.6; cursor: default; }
 `;
+
+/** A component frame stacks its cases when one is wider than this. */
+const STACK_W = 360;
 
 /** "QuietLevel" → "Quiet level". */
 function words(name: string) {
@@ -125,11 +129,21 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
     el.className = one ? "spark-gallery one" : "spark-gallery";
     document.body.append(el);
     if (one) {
-      // The board sizes the frame to the cases (with the page's own margin around them).
-      new ResizeObserver(() => {
+      // Cases sit in a row, or stack in a column: "auto" stacks wide ones
+      // (a case wider than STACK_W), the board's toggle picks one for good.
+      let layout = params.get("layout") ?? "auto";
+      const arrange = () => {
+        const widest = Math.max(0, ...Array.from(el.querySelectorAll(".spark-gallery-case"), (c) => c.getBoundingClientRect().width));
+        el.classList.toggle("stack", layout === "column" || (layout === "auto" && widest > STACK_W));
+        // The board sizes the frame to the cases (with the page's own margin around them).
         const r = el.getBoundingClientRect();
-        window.parent.__sparkShell?.contentSize(window, r.right + r.left, r.bottom + r.top);
-      }).observe(el);
+        window.parent.__sparkShell?.contentSize(window, r.right + r.left, r.bottom + r.top, el.classList.contains("stack"));
+      };
+      new ResizeObserver(arrange).observe(el);
+      (window as unknown as { __sparkLayout?: (v: string) => void }).__sparkLayout = (v) => {
+        layout = v;
+        arrange();
+      };
     }
     g.__sparkGallery = createRoot(el);
   }
