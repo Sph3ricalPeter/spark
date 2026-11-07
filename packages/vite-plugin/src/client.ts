@@ -257,12 +257,20 @@ const STYLE = `
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .ask {
-      position: fixed; display: none; width: 300px; pointer-events: auto; padding: 8px;
+      position: fixed; display: none; align-items: center; gap: 2px; width: 320px; box-sizing: border-box;
+      pointer-events: auto; padding: 3px 3px 3px 10px;
       background: #1b1c20; border: 1px solid #33363c; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
       color: #d6d8dc; font: 12px/1.4 system-ui, sans-serif;
     }
-    .ask input { width: 100%; box-sizing: border-box; padding: 6px 8px; }
-    .ask-row { display: flex; gap: 6px; margin-top: 6px; }
+    .ask:focus-within { border-color: ${ACCENT}; }
+    .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; }
+    .ask .ib {
+      display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+      border: none; background: none; color: #8a8f98; border-radius: 5px;
+    }
+    .ask .ib:hover { background: #2a2c31; color: #fff; }
+    .ask .ib.send { background: ${ACCENT}; color: #fff; }
+    .ask .icon { display: inline-flex; }
     .seg button { border-radius: 0; }
     .seg button:first-child { border-radius: 4px 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
@@ -414,28 +422,27 @@ askInput.addEventListener("keydown", (e) => {
     sendAsk();
   } else if (e.key === "Escape") askInput.blur();
 });
-const askBox = h(
-  "div",
-  { class: "ask" },
-  askInput,
-  h(
-    "div",
-    { class: "ask-row" },
-    h(
-      "button",
-      {
-        title: "Have Claude extract the selection into its own component",
-        click: () => {
-          askInput.value = "Extract this into its own component called ";
-          askInput.focus();
-        },
-      },
-      "Make component",
-    ),
-    h("span", { class: "grow" }),
-    h("button", { class: "on", click: () => sendAsk() }, "Ask"),
-  ),
+/** A small inline SVG icon (h() makes HTML elements only). */
+function icon(paths: string) {
+  const span = h("span", { class: "icon" });
+  span.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+  return span;
+}
+const makeBtn = h(
+  "button",
+  {
+    class: "ib",
+    title: "Make component: have Claude extract this into its own component",
+    click: () => {
+      askInput.value = "Extract this into its own component called ";
+      askInput.focus();
+    },
+  },
+  // Four diamonds: the usual "component" mark.
+  icon('<path d="M8 1.5 10 3.5 8 5.5 6 3.5Z"/><path d="M8 10.5 10 12.5 8 14.5 6 12.5Z"/><path d="M3.5 6 5.5 8 3.5 10 1.5 8Z"/><path d="M12.5 6 14.5 8 12.5 10 10.5 8Z"/>'),
 );
+const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, icon('<path d="M8 13V3"/><path d="M3.5 7.5 8 3l4.5 4.5"/>'));
+const askBox = h("div", { class: "ask" }, askInput, makeBtn, sendBtn);
 shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
@@ -919,7 +926,11 @@ function sendAsk() {
   askInput.blur();
 }
 
-/** The ask box sits just under the selection (or above it near the bottom). */
+/**
+ * The ask box sits above the selection (over its tag label), centered on it;
+ * below it when there's no room. In the zoomed canvas it keeps its screen
+ * size (frame.ts scales it by 1/zoom about the edge that touches the element).
+ */
 function placeAsk() {
   const show = open && picking && !!selected && selected.isConnected && !editing && !resizing && !isRunning();
   if (!show) {
@@ -927,13 +938,25 @@ function placeAsk() {
     return;
   }
   const r = selected!.getBoundingClientRect();
-  askBox.style.display = "block";
+  askBox.style.display = "flex";
+  const z = parseFloat(getComputedStyle(askBox).getPropertyValue("--z")) || 1;
   const w = askBox.offsetWidth;
   const hgt = askBox.offsetHeight;
-  const maxLeft = window.innerWidth - (!shell ? PANEL_W : 0) - w - 8;
-  askBox.style.left = `${Math.max(4, Math.min(r.left, maxLeft))}px`;
-  const below = r.bottom + 8;
-  askBox.style.top = `${below + hgt < window.innerHeight ? below : Math.max(4, r.top - hgt - 28)}px`;
+  const gap = 6 / z;
+  // The tag label is above the element when there's room (see label()).
+  const tagH = tagLabel.offsetHeight;
+  const top = r.top > 22 ? r.top - 20 + tagH - tagH / z : r.top;
+  const right = window.innerWidth - (!shell ? PANEL_W : 0);
+  const half = w / 2 / z;
+  const cx = Math.max(half + 4, Math.min(r.left + r.width / 2, right - half - 4));
+  askBox.style.left = `${cx - w / 2}px`;
+  if (top - gap - hgt / z >= 4) {
+    askBox.style.transformOrigin = "50% 100%";
+    askBox.style.top = `${top - gap - hgt}px`;
+  } else {
+    askBox.style.transformOrigin = "50% 0";
+    askBox.style.top = `${Math.min(r.bottom + gap, window.innerHeight - hgt / z - 4)}px`;
+  }
 }
 
 function renderRun() {
