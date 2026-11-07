@@ -178,7 +178,10 @@ root.append(
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--sp-line), 0 12px 40px #0008;
     }
     .frame.component iframe { background: transparent; }
-    .edit-mode .frame.selected iframe { box-shadow: 0 0 0 calc(2px / var(--z, 1)) var(--sp-accent), 0 12px 40px #0008; }
+    /* The selected frame: a faint ring, so it never reads as a selected element. */
+    .edit-mode .frame.selected iframe {
+      box-shadow: 0 0 0 calc(1px / var(--z, 1)) color-mix(in srgb, var(--sp-accent) 45%, transparent), 0 12px 40px #0008;
+    }
     .frame.dim { opacity: .35; cursor: pointer; }
     .frame.dim iframe { pointer-events: none; }
     .moving .frame iframe { pointer-events: none; }
@@ -216,10 +219,13 @@ root.append(
       font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text); border: 1px solid var(--sp-line-strong);
       border-bottom-width: 2px; border-radius: var(--sp-r-sm); padding: 2px 5px;
     }
-    /* Edit mode frames the canvas in the accent color. */
-    .edit-mode .canvas::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 2px var(--sp-accent);
+    /* Edit mode: a soft glow in from the canvas edges, unlike any selection outline. */
+    .canvas::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .2s;
+      box-shadow: inset 0 0 48px 0 color-mix(in srgb, var(--sp-accent) 30%, transparent),
+        inset 0 0 12px 0 color-mix(in srgb, var(--sp-accent) 22%, transparent);
     }
+    .edit-mode .canvas::after { opacity: 1; }
     `,
   ),
 );
