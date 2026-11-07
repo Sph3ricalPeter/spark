@@ -157,8 +157,8 @@ function shorthandSets(rule: CSSStyleRule, prop: string): boolean {
 export const INHERITED = new Set(["color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-align", "text-transform"]);
 
 export const PAGE_STYLE = `
-    h3.page-rule { display: flex; gap: 8px; align-items: baseline; text-transform: none; letter-spacing: 0; font: 600 11px ui-monospace, monospace; color: #fff; }
-    h3.page-rule .empty { font-weight: 400; font-family: ui-sans-serif, system-ui, sans-serif; }
+    h3.page-rule { display: flex; gap: 8px; align-items: baseline; text-transform: none; letter-spacing: 0; font: 600 var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); }
+    h3.page-rule .empty { font-weight: 400; font-family: var(--sp-font); }
     .page-add .k input { width: 100%; }
-    .inherited { color: #8a8f98; font-size: 11px; margin-top: 2px; }
+    .inherited { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-top: 2px; }
     `;

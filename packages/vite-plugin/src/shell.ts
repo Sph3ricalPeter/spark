@@ -11,6 +11,8 @@
 // "Fill" makes the frame follow the window like a normal page.
 //
 // The client in the frame mounts its panel here (see mode.ts).
+import { installFont } from "./fonts.ts";
+import { THEME } from "./theme.ts";
 import { h } from "./fields.ts";
 import type { ShellApi } from "./mode.ts";
 
@@ -88,38 +90,38 @@ function save() {
 const host = document.createElement("spark-shell");
 host.style.cssText = "all: initial; position: fixed; inset: 0; z-index: 2147483646;";
 const root = host.attachShadow({ mode: "open" });
+installFont();
 
-const ACCENT = "#4f8cff";
 root.append(
   h(
     "style",
     {},
-    `
+    `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
     .bar {
       position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px;
       display: flex; align-items: center; gap: 6px; padding: 0 10px;
-      background: #16171a; color: #d6d8dc; border-bottom: 1px solid #2a2c31;
-      font: 12px/1 ui-sans-serif, system-ui, sans-serif; user-select: none;
+      background: var(--sp-bg); color: var(--sp-text); border-bottom: 1px solid var(--sp-line);
+      font: var(--sp-fs-md)/1 var(--sp-font); user-select: none;
       overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
     }
     .docked .bar, .docked .canvas { right: ${PANEL_W}px; }
     button, select, input {
-      font: inherit; color: inherit; background: #23252a; border: 1px solid #33363c;
-      border-radius: 4px; height: 26px; padding: 0 8px; flex: none;
+      font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
+      border-radius: var(--sp-r-sm); height: 26px; padding: 0 8px; flex: none;
     }
     button { cursor: pointer; min-width: 26px; }
-    button:hover, select:hover { border-color: #44474e; }
-    button.on { background: ${ACCENT}; border-color: ${ACCENT}; color: #fff; }
+    button:hover, select:hover { border-color: var(--sp-line-strong); }
+    button.on { background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); }
     button:disabled { opacity: .4; cursor: default; }
     select { padding: 0 4px; max-width: 220px; }
-    input { width: 62px; font: 11px ui-monospace, monospace; text-align: center; }
-    input:focus, select:focus { outline: 1px solid ${ACCENT}; border-color: ${ACCENT}; }
-    .x { color: #8a8f98; }
-    .sep { width: 1px; height: 18px; background: #2a2c31; flex: none; margin: 0 4px; }
+    input { width: 62px; font: var(--sp-fs-sm) var(--sp-mono); text-align: center; }
+    input:focus, select:focus { outline: 1px solid var(--sp-accent); border-color: var(--sp-accent); }
+    .x { color: var(--sp-text-dim); }
+    .sep { width: 1px; height: 18px; background: var(--sp-line); flex: none; margin: 0 4px; }
     .grow { flex: 1; min-width: 8px; }
-    .zoom { width: 52px; text-align: center; font: 11px ui-monospace, monospace; color: #fff; flex: none; }
+    .zoom { width: 52px; text-align: center; font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); flex: none; }
     .canvas {
       position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: hidden;
       background-color: #0e0f11;
@@ -130,13 +132,13 @@ root.append(
     .canvas.space { cursor: grab; }
     .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
     iframe {
-      display: block; border: 0; background: #fff;
-      box-shadow: 0 0 0 1px #2a2c31, 0 12px 40px #0008;
+      display: block; border: 0; background: var(--sp-text-strong);
+      box-shadow: 0 0 0 1px var(--sp-line), 0 12px 40px #0008;
     }
     .fill iframe { box-shadow: none; }
     .size {
       position: absolute; left: 0; top: 0; transform-origin: 0 100%;
-      color: #8a8f98; font: 11px ui-monospace, monospace; white-space: nowrap; pointer-events: none;
+      color: var(--sp-text-dim); font: var(--sp-fs-sm) var(--sp-mono); white-space: nowrap; pointer-events: none;
     }
     .fill .size { display: none; }
     /* Covers the frame while panning, so the drag isn't lost into the app. */
@@ -146,21 +148,21 @@ root.append(
        and it never covers the app. */
     .island {
       display: none; flex: none; align-items: center; gap: 8px; padding: 2px 6px 2px 2px; height: 32px;
-      background: #16171aee; border: 1px solid #2a2c31; border-radius: 999px;
-      box-shadow: 0 6px 20px #0008; font: 12px/1 ui-sans-serif, system-ui, sans-serif; color: #8a8f98;
+      background: #16171aee; border: 1px solid var(--sp-line); border-radius: 999px;
+      box-shadow: 0 6px 20px #0008; font: var(--sp-fs-md)/1 var(--sp-font); color: var(--sp-text-dim);
       user-select: none;
     }
     .island.ready { display: flex; }
     .island button { border-radius: 999px; height: 26px; font-weight: 600; padding: 0 14px; border-color: transparent; background: transparent; }
-    .island button.on { background: #fff; color: #16171a; }
-    .island.edit button.on { background: ${ACCENT}; color: #fff; }
+    .island button.on { background: var(--sp-text-strong); color: var(--sp-bg); }
+    .island.edit button.on { background: var(--sp-accent); color: var(--sp-text-strong); }
     .island kbd {
-      font: 10px ui-monospace, monospace; color: #b9bdc5; border: 1px solid #33363c;
-      border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px;
+      font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text); border: 1px solid var(--sp-line-strong);
+      border-bottom-width: 2px; border-radius: var(--sp-r-sm); padding: 2px 5px;
     }
     /* Edit mode frames the canvas in the accent color. */
     .edit-mode .canvas::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 2px ${ACCENT};
+      content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 2px var(--sp-accent);
     }
     `,
   ),

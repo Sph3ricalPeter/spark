@@ -104,6 +104,19 @@ export default function spark(): Plugin {
     },
 
     configureServer(server) {
+      // Spark's UI font (fonts.ts), bundled so it works offline.
+      server.middlewares.use("/@spark/fonts", (req, res, next) => {
+        const name = path.basename((req.url ?? "").split("?")[0]);
+        if (!/^manrope-[\w-]+\.woff2$/.test(name)) return next();
+        readFile(path.join(here, "..", "assets", "fonts", name)).then(
+          (buf) => {
+            res.setHeader("Content-Type", "font/woff2");
+            res.setHeader("Cache-Control", "max-age=31536000, immutable");
+            res.end(buf);
+          },
+          () => next(),
+        );
+      });
       const dir = path.join(root, ".spark");
       const save = async (name: string, data: unknown) => {
         await mkdir(dir, { recursive: true });

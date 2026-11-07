@@ -7,6 +7,7 @@
 // uses the variable follows. The preview changes that rule in the CSSOM, the
 // same thing the code change will do.
 import { eachRule } from "./css.ts";
+import { icon } from "./theme.ts";
 import { closePopover, colorField, h, numberField, showPopover, textField, type OnValue, type Token } from "./fields.ts";
 
 export type VarKind = "color" | "size" | "other";
@@ -246,40 +247,40 @@ export function resolvedLine(value: string, computed: string, jump: (name: strin
 }
 
 export const VARIABLES_STYLE = `
-    .tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid #2a2c31; }
-    .tabs button { border: none; border-radius: 4px 4px 0 0; background: transparent; color: #8a8f98; padding: 4px 10px 6px; }
-    .tabs button.on { background: #23252a; color: #fff; }
-    .var-filter { margin-bottom: 4px; font-family: ui-sans-serif, system-ui, sans-serif; }
+    .tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--sp-line); }
+    .tabs button { border: none; border-radius: var(--sp-r-sm) 4px 0 0; background: transparent; color: var(--sp-text-dim); padding: 4px 10px 6px; }
+    .tabs button.on { background: var(--sp-field); color: var(--sp-text-strong); }
+    .var-filter { margin-bottom: 4px; font-family: var(--sp-font); }
     .var { padding: 6px 0; border-bottom: 1px solid #1f2125; }
     .var.flash { background: #4f8cff22; margin: 0 -12px; padding: 6px 12px; transition: background .6s; }
     .var-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-width: 0; }
-    .var-name { font: 600 11px ui-monospace, monospace; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-name { font: 600 var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .var-head .resolved { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .var-uses { margin-left: auto; padding: 0 6px; font-size: 10px; color: #8fb4ff; background: transparent; border-color: #2a2c31; }
-    .var-uses.none { color: #8a8f98; }
-    .var-list { font-size: 11px; }
-    .var-list:not(:empty) { margin-top: 6px; padding: 4px 8px; background: #1d1f23; border-radius: 4px; }
-    .var-def { color: #8a8f98; margin-bottom: 2px; }
+    .var-uses { margin-left: auto; padding: 0 6px; font-size: var(--sp-fs-xs); color: var(--sp-link); background: transparent; border-color: var(--sp-line); }
+    .var-uses.none { color: var(--sp-text-dim); }
+    .var-list { font-size: var(--sp-fs-sm); }
+    .var-list:not(:empty) { margin-top: 6px; padding: 4px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
+    .var-def { color: var(--sp-text-dim); margin-bottom: 2px; }
     .var-use { padding: 1px 0; word-break: break-word; }
-    .resolved { color: #8a8f98; font: 11px ui-monospace, monospace; }
-    .var-new { margin: 0 0 10px; padding: 6px 8px; background: #1d1f23; border-radius: 4px; }
-    .var-new summary { color: #8fb4ff; text-transform: none; letter-spacing: 0; font-size: 12px; }
+    .resolved { color: var(--sp-text-dim); font: var(--sp-fs-sm) var(--sp-mono); }
+    .var-new { margin: 0 0 10px; padding: 6px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
+    .var-new summary { color: var(--sp-link); text-transform: none; letter-spacing: 0; font-size: var(--sp-fs-md); }
     .var-new[open] summary { margin-bottom: 6px; }
-    .hint.bad { color: #e5534b; }
+    .hint.bad { color: var(--sp-danger); }
     .with-var { display: flex; gap: 4px; align-items: flex-start; position: relative; }
     .with-var > :first-child { flex: 1; min-width: 0; }
-    .varbtn { flex: none; width: 22px; height: 22px; padding: 0; font: 600 10px ui-monospace, monospace; color: #8a8f98; }
-    .varbtn.bound { color: #8fb4ff; border-color: #8fb4ff55; }
-    .varbtn:hover { color: #fff; }
+    .varbtn { flex: none; width: 22px; height: 22px; padding: 0; color: var(--sp-text-dim); }
+    .varbtn.bound { color: var(--sp-link); border-color: #8fb4ff55; }
+    .varbtn:hover { color: var(--sp-text-strong); }
     .var-pop { width: 260px; top: 26px; }
     .var-pop input { margin-bottom: 6px; }
     .var-opts { max-height: 220px; overflow: auto; }
     .var-opt { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none; background: transparent; padding: 3px 4px; }
     .var-opt:hover, .var-opt.on { background: #2a2d33; }
-    .var-opt .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid #44474e; flex: none; }
-    .var-opt .nm { font: 11px ui-monospace, monospace; color: #fff; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .var-opt .vl { font: 11px ui-monospace, monospace; color: #8a8f98; flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .var-act { color: #8fb4ff; }
+    .var-opt .dot { width: 12px; height: 12px; border-radius: var(--sp-r-sm); border: 1px solid var(--sp-line-strong); flex: none; }
+    .var-opt .nm { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-opt .vl { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-dim); flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-act { color: var(--sp-link); }
     .resolved-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
     `;
 
@@ -355,7 +356,7 @@ export type VarPickOpts = {
 /** The "var" button next to a field: use an existing variable, or create one from the value. */
 export function varButton(field: HTMLElement, o: VarPickOpts): HTMLElement {
   const bound = varsIn(o.value)[0] ?? null;
-  const btn = h("button", { class: `varbtn${bound ? " bound" : ""}`, title: bound ? `Uses ${bound}: change or unlink` : "Use a variable, or make one from this value" }, "{ }");
+  const btn = h("button", { class: `varbtn${bound ? " bound" : ""}`, title: bound ? `Uses ${bound}: change or unlink` : "Use a variable, or make one from this value" }, icon("braces", 13));
   const wrap = h("div", { class: "with-var" }, field, btn);
   btn.addEventListener("click", (e) => {
     e.stopPropagation();

@@ -40,6 +40,10 @@ Zustand). Release and deploy are ported from dawg and described in
   `runner.ts` runs the local `claude -p` for "Implement changes" and the
   Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
+  `theme.ts` is Spark's own design system (`--sp-*` variables on each
+  shadow root's :host: Manrope via `fonts.ts`, served from `assets/fonts`,
+  a 4-step font scale, 3 radii, a spacing scale, colors) plus inlined Lucide
+  icons; style Spark's UI with those, not literals;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Plan: the "Spark:

@@ -16,6 +16,8 @@
 //
 // Edits are previewed live and recorded as changes (see changes.ts), which
 // the dev server saves to .spark/changes.json.
+import { installFont } from "./fonts.ts";
+import { icon as lucide, THEME } from "./theme.ts";
 import {
   allChanges,
   initChanges,
@@ -211,143 +213,143 @@ function openInEditor(loc: string) {
 const host = document.createElement("spark-root");
 host.style.cssText = "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
 const shadow = host.attachShadow({ mode: "open" });
-const STYLE = `
+const STYLE = `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
     .box { position: fixed; pointer-events: none; display: none; }
-    .hover { outline: 1px dashed ${ACCENT}; background: ${ACCENT}14; }
-    .selected { outline: 2px solid ${ACCENT}; }
+    .hover { outline: 1px dashed var(--sp-accent); background: ${ACCENT}14; }
+    .selected { outline: 2px solid var(--sp-accent); }
     .tag {
       position: fixed; display: none; pointer-events: none;
-      font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
-      background: ${ACCENT}; color: #fff; padding: 3px 6px; border-radius: 3px; white-space: nowrap;
+      font: 600 var(--sp-fs-sm)/1 var(--sp-font);
+      background: var(--sp-accent); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
     }
     .panel {
       position: fixed; top: 0; right: 0; bottom: 0; width: ${PANEL_W}px;
       display: none; flex-direction: column; pointer-events: auto;
-      background: #16171a; color: #d6d8dc; border-left: 1px solid #2a2c31;
-      font: 12px/1.45 ui-sans-serif, system-ui, sans-serif;
+      background: var(--sp-bg); color: var(--sp-text); border-left: 1px solid var(--sp-line);
+      font: var(--sp-fs-md)/1.45 var(--sp-font);
     }
     .panel.open { display: flex; }
     header {
       display: flex; align-items: center; gap: 8px; padding: 10px 12px;
-      border-bottom: 1px solid #2a2c31; font-weight: 600; color: #fff;
+      border-bottom: 1px solid var(--sp-line); font-weight: 600; color: var(--sp-text-strong);
     }
-    header .grow { flex: 1; color: #8a8f98; font-weight: 400; }
+    header .grow { flex: 1; color: var(--sp-text-dim); font-weight: 400; }
     button, select, input {
-      font: inherit; color: inherit; background: #23252a; border: 1px solid #33363c;
-      border-radius: 4px; padding: 3px 8px;
+      font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
+      border-radius: var(--sp-r-sm); padding: 3px 8px;
     }
     button { cursor: pointer; }
-    button.on { background: ${ACCENT}; border-color: ${ACCENT}; color: #fff; }
+    button.on { background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); }
     .seg { display: inline-flex; }
     .grow { flex: 1; }
     .changes-head { display: flex; align-items: center; gap: 8px; }
     .changes-head h3 { margin: 0; }
     button:disabled { opacity: 0.5; cursor: default; }
-    .run { display: none; padding: 10px 12px; border-top: 1px solid #2a2c31; }
-    .run-head { display: flex; align-items: center; gap: 8px; color: #fff; font-weight: 600; }
+    .run { display: none; padding: 10px 12px; border-top: 1px solid var(--sp-line); }
+    .run-head { display: flex; align-items: center; gap: 8px; color: var(--sp-text-strong); font-weight: 600; }
     .run-sum { margin-top: 6px; white-space: pre-wrap; }
     .run-err { margin-top: 6px; color: #ff8a80; white-space: pre-wrap; }
-    .run-log { margin-top: 6px; color: #8a8f98; font-family: ui-monospace, monospace; font-size: 11px; }
+    .run-log { margin-top: 6px; color: var(--sp-text-dim); font-family: var(--sp-mono); font-size: var(--sp-fs-sm); }
     .run-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .spin {
-      width: 10px; height: 10px; border-radius: 50%; border: 2px solid #33363c; border-top-color: ${ACCENT};
+      width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--sp-line-strong); border-top-color: var(--sp-accent);
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .ask {
       position: fixed; display: none; align-items: center; gap: 2px; width: 320px; box-sizing: border-box;
       pointer-events: auto; padding: 3px 3px 3px 10px;
-      background: #1b1c20; border: 1px solid #33363c; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
-      color: #d6d8dc; font: 12px/1.4 system-ui, sans-serif;
+      background: #1b1c20; border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.4);
+      color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
     }
-    .ask:focus-within { border-color: ${ACCENT}; }
+    .ask:focus-within { border-color: var(--sp-accent); }
     .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; }
     .ask .ib {
       display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
-      border: none; background: none; color: #8a8f98; border-radius: 5px;
+      border: none; background: none; color: var(--sp-text-dim); border-radius: 5px;
     }
-    .ask .ib:hover { background: #2a2c31; color: #fff; }
-    .ask .ib.send { background: ${ACCENT}; color: #fff; }
+    .ask .ib:hover { background: var(--sp-line); color: var(--sp-text-strong); }
+    .ask .ib.send { background: var(--sp-accent); color: var(--sp-text-strong); }
     .ask .icon { display: inline-flex; }
     .seg button { border-radius: 0; }
-    .seg button:first-child { border-radius: 4px 0 0 4px; }
+    .seg button:first-child { border-radius: var(--sp-r-sm) 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
     select { width: 100%; padding: 4px 6px; }
-    input { width: 100%; font: 11px ui-monospace, monospace; padding: 3px 6px; }
-    input:focus, select:focus { outline: 1px solid ${ACCENT}; border-color: ${ACCENT}; }
-    input.changed { border-color: #d9a441; }
-    input.bad { border-color: #e5534b; }
+    input { width: 100%; font: var(--sp-fs-sm) var(--sp-mono); padding: 3px 6px; }
+    input:focus, select:focus { outline: 1px solid var(--sp-accent); border-color: var(--sp-accent); }
+    input.changed { border-color: var(--sp-warn); }
+    input.bad { border-color: var(--sp-danger); }
     .body { flex: 1; overflow: auto; padding: 12px; }
-    .footer { border-top: 1px solid #2a2c31; padding: 10px 12px; max-height: 40%; overflow: auto; }
-    .empty { color: #8a8f98; }
-    h3 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8a8f98; }
+    .footer { border-top: 1px solid var(--sp-line); padding: 10px 12px; max-height: 40%; overflow: auto; }
+    .empty { color: var(--sp-text-dim); }
+    h3 { margin: 16px 0 6px; font-size: var(--sp-fs-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--sp-text-dim); }
     h3:first-child { margin-top: 0; }
-    .title { font: 600 13px ui-monospace, monospace; color: #fff; word-break: break-all; }
-    .link { color: #8fb4ff; cursor: pointer; font-family: ui-monospace, monospace; font-size: 11px; word-break: break-all; }
+    .title { font: 600 var(--sp-fs-lg) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
+    .link { color: var(--sp-link); cursor: pointer; font-family: var(--sp-mono); font-size: var(--sp-fs-sm); word-break: break-all; }
     .link:hover { text-decoration: underline; }
     .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
-    .row .k { color: #8a8f98; width: 112px; flex: none; }
-    .row .v { font-family: ui-monospace, monospace; font-size: 11px; word-break: break-all; }
-    .hint { color: #8a8f98; font-size: 11px; margin-top: 4px; }
+    .row .k { color: var(--sp-text-dim); width: 112px; flex: none; }
+    .row .v { font-family: var(--sp-mono); font-size: var(--sp-fs-sm); word-break: break-all; }
+    .hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-top: 4px; }
     .owner { padding: 3px 0; }
-    .owner b { color: #fff; font-weight: 600; margin-right: 6px; }
+    .owner b { color: var(--sp-text-strong); font-weight: 600; margin-right: 6px; }
     details { margin-top: 12px; }
-    summary { cursor: pointer; color: #8a8f98; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-    .rule { margin: 6px 0; padding: 6px 8px; background: #1d1f23; border-radius: 4px; }
-    .rule .sel { font: 600 11px ui-monospace, monospace; color: #fff; }
-    .rule .file { color: #8a8f98; font-size: 11px; }
-    .rule pre { margin: 4px 0 0; white-space: pre-wrap; font: 11px/1.5 ui-monospace, monospace; color: #b9bdc5; }
-    .change { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid #23252a; }
+    summary { cursor: pointer; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); text-transform: uppercase; letter-spacing: .06em; }
+    .rule { margin: 6px 0; padding: 6px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
+    .rule .sel { font: 600 var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); }
+    .rule .file { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+    .rule pre { margin: 4px 0 0; white-space: pre-wrap; font: var(--sp-fs-sm)/1.5 var(--sp-mono); color: var(--sp-text); }
+    .change { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--sp-field); }
     .change .what { flex: 1; min-width: 0; }
-    .change .lvl { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #d9a441; }
-    .change .where { color: #8a8f98; font-size: 11px; word-break: break-word; margin-bottom: 4px; }
+    .change .lvl { font-size: var(--sp-fs-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--sp-warn); }
+    .change .where { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); word-break: break-word; margin-bottom: 4px; }
     .change.here { background: ${ACCENT}14; margin: 0 -12px; padding: 5px 12px; }
-    .change code { font: 11px ui-monospace, monospace; color: #fff; word-break: break-all; }
+    .change code { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
     .change button { padding: 0 6px; }
     .fab {
       position: fixed; right: 12px; bottom: 12px; pointer-events: auto;
-      background: ${ACCENT}; border-color: ${ACCENT}; color: #fff; font-weight: 600;
+      background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); font-weight: 600;
     }
     .fab.hidden { display: none; }
     .handle {
       position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; display: none;
-      background: #fff; border: 1px solid ${ACCENT}; pointer-events: auto;
+      background: var(--sp-text-strong); border: 1px solid var(--sp-accent); pointer-events: auto;
     }
     .handle[data-dir="n"], .handle[data-dir="s"] { cursor: ns-resize; }
     .handle[data-dir="e"], .handle[data-dir="w"] { cursor: ew-resize; }
     .handle[data-dir="ne"], .handle[data-dir="sw"] { cursor: nesw-resize; }
     .handle[data-dir="nw"], .handle[data-dir="se"] { cursor: nwse-resize; }
-    .box.editing { outline: 2px solid #d9a441; }
+    .box.editing { outline: 2px solid var(--sp-warn); }
     .row .field { flex: 1; min-width: 0; }
     .num {
       display: flex; align-items: center; min-width: 0;
-      background: #23252a; border: 1px solid #33363c; border-radius: 4px;
+      background: var(--sp-field); border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-sm);
     }
-    .num:focus-within { border-color: ${ACCENT}; }
-    .num.changed, select.changed, input.changed { border-color: #d9a441; }
+    .num:focus-within { border-color: var(--sp-accent); }
+    .num.changed, select.changed, input.changed { border-color: var(--sp-warn); }
     .num .grip {
-      flex: none; padding: 0 5px; color: #8a8f98; font-size: 10px; cursor: ew-resize; user-select: none;
+      flex: none; padding: 0 5px; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); cursor: ew-resize; user-select: none;
     }
-    .num .grip:hover { color: #fff; }
+    .num .grip:hover { color: var(--sp-text-strong); }
     .num input { border: none; background: transparent; padding-left: 0; min-width: 0; }
     .num input:focus { outline: none; }
     .num select.unit {
-      flex: none; width: auto; border: none; background: transparent; color: #8a8f98;
-      padding: 0 4px 0 2px; font: 10px ui-monospace, monospace; cursor: pointer;
+      flex: none; width: auto; border: none; background: transparent; color: var(--sp-text-dim);
+      padding: 0 4px 0 2px; font: var(--sp-fs-xs) var(--sp-mono); cursor: pointer;
       appearance: none; -webkit-appearance: none; text-align: right;
     }
-    .num select.unit:hover { color: #fff; }
-    .num select.unit:focus { outline: none; color: #fff; }
+    .num select.unit:hover { color: var(--sp-text-strong); }
+    .num select.unit:focus { outline: none; color: var(--sp-text-strong); }
     /* A keyword stands in for the number. */
-    .num.kw input { color: #b9bdc5; font-style: italic; }
+    .num.kw input { color: var(--sp-text); font-style: italic; }
     /* The keyword is already in the input: the dropdown shrinks to a caret. */
     .num.kw select.unit {
       width: 16px; color: transparent;
       background: no-repeat center / 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%238fb4ff'/%3E%3C/svg%3E");
     }
-    .num.kw select.unit option, .num.kw select.unit optgroup { color: #d6d8dc; }
+    .num.kw select.unit option, .num.kw select.unit optgroup { color: var(--sp-text); }
     /* Four sides share a row: their unit shows while you edit one. */
     .quad .num select.unit { display: none; }
     .quad .num:focus-within select.unit { display: block; }
@@ -356,17 +358,17 @@ const STYLE = `
     .color { display: flex; gap: 6px; position: relative; }
     .swatch {
       width: 22px; height: 22px; padding: 0; flex: none; cursor: pointer;
-      border: 1px solid #44474e; border-radius: 4px;
+      border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-sm);
     }
-    .swatch.on { outline: 2px solid ${ACCENT}; outline-offset: 1px; }
+    .swatch.on { outline: 2px solid var(--sp-accent); outline-offset: 1px; }
     .popover {
       position: absolute; top: 28px; right: 0; z-index: 5; width: 236px; padding: 8px;
-      background: #1d1f23; border: 1px solid #33363c; border-radius: 6px; box-shadow: 0 8px 24px #0009;
+      background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-md); box-shadow: 0 8px 24px #0009;
     }
-    .pop-title { color: #8a8f98; font-size: 11px; margin: 0 0 6px; }
+    .pop-title { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin: 0 0 6px; }
     .swatches { display: grid; grid-template-columns: repeat(8, 22px); gap: 5px; margin-bottom: 10px; max-height: 160px; overflow: auto; }
     input[type="color"] { width: 100%; height: 28px; padding: 2px; cursor: pointer; }
-    .toast { color: #d9a441; font-size: 11px; margin-top: 6px; }
+    .toast { color: var(--sp-warn); font-size: var(--sp-fs-sm); margin-top: 6px; }
     .row .k .link { font-size: inherit; }
     ${VARIABLES_STYLE}
     ${PAGE_STYLE}`;
@@ -402,7 +404,7 @@ function markTab() {
 const panel = h(
   "div",
   { class: "panel" },
-  h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
+  h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, lucide("x"))),
   h("nav", { class: "tabs" }, tabs.inspect, tabs.page, tabs.variables),
   body,
   runBox,
@@ -973,7 +975,7 @@ function renderRun() {
         "div",
         { class: "run-head" },
         h("span", { class: "grow" }, run.error ? "Couldn't run Claude" : run.done?.ok ? "Done" : "Claude stopped"),
-        h("button", { title: "Dismiss", click: () => ((run = null), renderRun()) }, "×"),
+        h("button", { title: "Dismiss", click: () => ((run = null), renderRun()) }, lucide("x")),
       );
   const parts: (HTMLElement | false)[] = [head];
   if (run.error) parts.push(h("div", { class: "run-err" }, run.error));
@@ -1318,7 +1320,7 @@ function renderChanges() {
               changed();
             },
           },
-          "↺",
+          lucide("rotate-ccw", 13),
         ),
       ),
     );
@@ -1465,6 +1467,7 @@ keyTarget.addEventListener("keydown", panelKeys, true);
 // Start
 
 document.head.append(dockStyle);
+installFont();
 document.documentElement.append(host);
 if (shell) {
   shell.mount(panelHost);
