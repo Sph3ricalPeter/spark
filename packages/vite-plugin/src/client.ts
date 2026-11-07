@@ -36,6 +36,7 @@ import { authored, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
+import { renderVariables, resolvedLine, VARIABLES_STYLE, type Variable } from "./variables.ts";
 
 const PANEL_W = 340;
 const ACCENT = "#4f8cff";
@@ -309,7 +310,8 @@ const STYLE = `
     .swatches { display: grid; grid-template-columns: repeat(8, 22px); gap: 5px; margin-bottom: 10px; max-height: 160px; overflow: auto; }
     input[type="color"] { width: 100%; height: 28px; padding: 2px; cursor: pointer; }
     .toast { color: #d9a441; font-size: 11px; margin-top: 6px; }
-    `;
+    .row .k .link { font-size: inherit; }
+    ${VARIABLES_STYLE}`;
 shadow.append(h("style", {}, STYLE));
 
 
@@ -326,10 +328,15 @@ const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
 const body = h("div", { class: "body" });
 const footer = h("div", { class: "footer" });
+/** What the body shows: the selection's inspector, or the app's variables. */
+type View = "inspect" | "variables";
+let view: View = "inspect";
+const tabs = { inspect: h("button", { class: "on", click: () => setView("inspect") }, "Inspect"), variables: h("button", { click: () => setView("variables") }, "Variables") };
 const panel = h(
   "div",
   { class: "panel" },
   h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
+  h("nav", { class: "tabs" }, tabs.inspect, tabs.variables),
   body,
   footer,
 );
@@ -464,8 +471,30 @@ function hover(el: Element | null) {
   label(el ?? selected);
 }
 
+function setView(v: View) {
+  if (view === v) return;
+  view = v;
+  tabs.inspect.classList.toggle("on", v === "inspect");
+  tabs.variables.classList.toggle("on", v === "variables");
+  body.scrollTop = 0;
+  render();
+}
+
+/** Show a variable in the Variables view. */
+function jumpToVariable(name: string) {
+  setView("variables");
+  const row = body.querySelector(`[data-var="${CSS.escape(name)}"]`) as HTMLElement | null;
+  if (!row) return;
+  row.scrollIntoView({ block: "center" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 900);
+}
+
 function select(el: Element | null) {
   if (editing) stopTextEdit(true);
+  if (el) view = "inspect";
+  tabs.inspect.classList.toggle("on", view === "inspect");
+  tabs.variables.classList.toggle("on", view === "variables");
   selected = el;
   place(selectBox, el);
   placeHandles();
@@ -544,13 +573,15 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
   return true;
 }
 
-function editToken(el: Element, name: string, value: string, final: boolean): boolean {
+/** Edit a variable where it's defined. `el` is the selection the edit was made from, if any. */
+function editToken(el: Element | null, name: string, value: string, final: boolean): boolean {
   value = value.trim();
   const ref = tokenRule(name, skip);
   if (!ref || !value) return false;
   const prev = allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name);
   const from = prev?.from ?? ref.rule.style.getPropertyValue(name).trim();
-  record({ level: "token", property: name, from, to: value, file: rel(ref.file), selector: ref.selector, element: elementInfo(el), instance: null });
+  const element = el ? elementInfo(el) : { src: null, comp: null, tag: "", classes: [] };
+  record({ level: "token", property: name, from, to: value, file: rel(ref.file), selector: ref.selector, element, instance: null });
   if (final) changed();
   return true;
 }
@@ -680,14 +711,44 @@ function locLink(loc: string | null) {
   return h("span", { class: "link", title: "Open in editor", click: () => openInEditor(loc) }, loc);
 }
 
-function row(name: string, field: HTMLElement) {
-  return h("div", { class: "row" }, h("span", { class: "k", title: name }, name), h("div", { class: "field" }, field));
+function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement | null) {
+  const k = typeof name === "string" ? h("span", { class: "k", title: name }, name) : h("span", { class: "k" }, name);
+  return h("div", { class: "row" }, k, h("div", { class: "field" }, field, below));
+}
+
+function renderVariablesView() {
+  const scroll = body.scrollTop;
+  const pendingValue = (name: string) => allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name)?.to;
+  renderVariables(body, {
+    skip,
+    pendingValue,
+    edit: (v: Variable, value: string, final: boolean) => editToken(selected, v.name, value, final),
+    selectRule: (selector) => {
+      let el: Element | undefined;
+      try {
+        el = Array.from(document.querySelectorAll(selector)).find((x) => !skip(x));
+      } catch {
+        return false;
+      }
+      if (!el) return false;
+      // Selecting is an edit-mode thing.
+      if (!picking) setPicking(true);
+      select(el.closest("[data-spark-src]") ?? el);
+      return true;
+    },
+    shortFile,
+  });
+  body.scrollTop = scroll;
 }
 
 function render() {
   renderChanges();
   closePopover();
   body.replaceChildren();
+  if (view === "variables") {
+    renderVariablesView();
+    return;
+  }
   if (!selected) {
     body.append(
       h(
@@ -742,12 +803,16 @@ function render() {
     for (const f of fields) {
       if (f.kind === "sides") {
         const quad = h("div", { class: "quad" });
+        const values: string[] = [];
+        const computeds: string[] = [];
         for (const side of SIDES) {
           const prop = `${f.prop}-${side}`;
           const { value, changed } = valueOf(prop);
+          values.push(value);
+          computeds.push(cs.getPropertyValue(prop).trim());
           quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined }, onValue(prop)));
         }
-        body.append(row(f.prop, quad));
+        body.append(row(f.prop, quad, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable)));
         continue;
       }
       const { value, changed } = valueOf(f.prop);
@@ -757,14 +822,14 @@ function render() {
       else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
       else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
       else field = textField(value, changed, onValue(f.prop));
-      body.append(row(f.prop, field));
+      body.append(row(f.prop, field, resolvedLine(value, computed, jumpToVariable)));
     }
   }
 
   // Tokens this element uses
   const tokens = tokensUsed(el, rules);
   if (tokens.length) {
-    body.append(h("h3", {}, "Tokens"), h("div", { class: "hint" }, "Changing a token changes everything that uses it."));
+    body.append(h("h3", {}, "Tokens"), h("div", { class: "hint" }, "Changing a token changes everything that uses it. Click a name to see all variables."));
     const rootCs = getComputedStyle(document.documentElement);
     for (const t of tokens) {
       const c = pending.find((x) => x.level === "token" && x.property === t);
@@ -779,7 +844,7 @@ function render() {
         : isNum
           ? numberField(value, { computed: value, unit: value.replace(/^-?\d*\.?\d+/, ""), changed: !!c, step: /^-?\d*\.\d/.test(value) ? 0.1 : 1 }, onToken)
           : textField(value, !!c, onToken);
-      body.append(row(t, field));
+      body.append(row(h("span", { class: "link", title: `${t}: show in Variables`, click: () => jumpToVariable(t) }, t), field));
     }
   }
 

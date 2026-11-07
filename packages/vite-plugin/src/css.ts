@@ -8,7 +8,7 @@ export type RuleRef = {
   file: string | null;
 };
 
-function eachRule(skip: (n: Node) => boolean, fn: (rule: CSSStyleRule, file: string | null) => void) {
+export function eachRule(skip: (n: Node) => boolean, fn: (rule: CSSStyleRule, file: string | null) => void) {
   const walk = (rules: CSSRuleList, file: string | null) => {
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
