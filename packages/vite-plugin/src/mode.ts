@@ -43,6 +43,10 @@ export type ShellApi = {
   register(hooks: ClientHooks): void;
   /** Is this frame the active one (its panel shows, the shell's keys go to it)? */
   isActive(win: Window): boolean;
+  /** This frame's selection came or went (the chat pins hide while another frame has one). */
+  setSelected?(win: Window, has: boolean): void;
+  /** Is an element selected in a frame other than this one? */
+  selectedElsewhere?(win: Window): boolean;
   /** The panel was opened or closed (in the active frame): all frames follow, the canvas docks. */
   setDocked(docked: boolean): void;
   /** Ctrl+wheel or a pinch over the app, at a point in the app's own coordinates. */

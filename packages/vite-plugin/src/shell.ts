@@ -891,6 +891,8 @@ function activeHooks() {
 
 /** Show this frame's panel, and drop the selection in the one before. */
 let activeWin: Window | null = null;
+/** The frame with an element selected, if any (one at a time). */
+let selWin: Window | null = null;
 function activate(win: Window) {
   if (activeWin && activeWin !== win) clients.get(activeWin)?.deselect();
   activeWin = win;
@@ -934,6 +936,13 @@ const api: ShellApi = {
   },
   isActive(win) {
     return selected().iframe.contentWindow === win;
+  },
+  setSelected(win, has) {
+    if (has) selWin = win;
+    else if (selWin === win) selWin = null;
+  },
+  selectedElsewhere(win) {
+    return !!selWin && selWin !== win && clients.has(selWin);
   },
   setDocked(v) {
     if (v === docked) return;

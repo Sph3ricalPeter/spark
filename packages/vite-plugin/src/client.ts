@@ -421,9 +421,10 @@ const ASK_STYLE = `
     .ask-tag {
       flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 150px; height: 22px; padding: 0 7px 0 6px;
       border-radius: var(--sp-r-sm); white-space: nowrap; cursor: default;
-      background: color-mix(in srgb, var(--sp-accent) 16%, transparent); color: var(--sp-link); font: 600 var(--sp-fs-sm)/1 var(--sp-font);
+      /* --role: the selection's color (ROLE_COLOR), so the chip matches its box on the canvas. */
+      background: color-mix(in srgb, var(--role, var(--sp-accent)) 18%, transparent); color: color-mix(in srgb, var(--role, var(--sp-accent)) 55%, #fff);
+      font: 600 var(--sp-fs-sm)/1 var(--sp-font);
     }
-    .ask-tag.comp { background: color-mix(in srgb, var(--sp-component) 18%, transparent); color: color-mix(in srgb, var(--sp-component) 55%, #fff); }
     .ask-tag .nm { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     .ask-tag .in { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--sp-text-dim); font-weight: 500; }
     .ask-main input {
@@ -1052,6 +1053,7 @@ function select(el: Element | null) {
   placeHandles();
   label(el);
   render();
+  shell?.setSelected?.(window, !!el);
   placePins();
   if (el) import.meta.hot?.send("spark:select", snapshot(el));
 }
@@ -1539,8 +1541,11 @@ function refreshPins() {
   placePins();
 }
 function placePins() {
+  // Pins stay out of the way of a selection: with one (here or in another frame), only the
+  // selected element's own pin shows.
+  const none = !selected && !shell?.selectedElsewhere?.(window);
   for (const p of pins) {
-    const visible = p.el.isConnected && p.el !== selected;
+    const visible = p.el.isConnected && (none || p.el === selected);
     p.node.style.display = visible ? "inline-flex" : "none";
     p.node.classList.toggle("busy", isRunning() && !!runChat && chats.find((c) => c.id === runChat)?.key === p.key);
     if (!visible) continue;
@@ -1620,7 +1625,7 @@ function keepSelection(now: number) {
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   const n = askName(el, path);
   const r = el.getBoundingClientRect();
-  askTag.className = `ask-tag${n.comp ? " comp" : ""}`;
+  askTag.style.setProperty("--role", ROLE_COLOR[roleOf(el)]);
   askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
   askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
   const key = chatKey(el, path);
