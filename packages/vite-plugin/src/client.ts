@@ -27,7 +27,9 @@ import {
   overridesOn,
   pathFor,
   renderOverrides,
+  restore,
   revert,
+  snapshot as snapshotChanges,
   type Change,
   type ChangeLog,
   type PathEntry,
@@ -649,9 +651,54 @@ function editToken(el: Element | null, name: string, value: string, final: boole
 }
 
 function changed() {
+  remember();
+  save();
+}
+
+function save() {
   const log: ChangeLog = { version: 1, changes: [...allChanges()] };
   import.meta.hot?.send("spark:changes", log);
   render();
+}
+
+// --- Undo and redo -----------------------------------------------------------
+// Every saved edit is a step: style, text, resize, reorder, delete, variables,
+// scope changes and reverts. Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in edit mode (in
+// view mode the keys belong to the app). The history starts over when the
+// list is loaded or Claude applies changes, so undo never brings back an
+// edit that's already in the code.
+
+const MAX_STEPS = 200;
+let history: Change[][] = [snapshotChanges()];
+let step = 0;
+
+function remember() {
+  const now = snapshotChanges();
+  if (JSON.stringify(now) === JSON.stringify(history[step])) return;
+  history = [...history.slice(0, step + 1), now].slice(-MAX_STEPS);
+  step = history.length - 1;
+}
+
+function resetHistory() {
+  history = [snapshotChanges()];
+  step = 0;
+}
+
+function undoRedo(dir: -1 | 1) {
+  const to = step + dir;
+  if (to < 0 || to >= history.length) return;
+  if (editing) stopTextEdit(true);
+  step = to;
+  restore(history[step]);
+  save();
+}
+
+/** Ctrl+Z → -1; Ctrl+Shift+Z or Ctrl+Y → 1. */
+function undoKey(e: KeyboardEvent): -1 | 1 | 0 {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return 0;
+  if (e.code === "KeyZ") return e.shiftKey ? 1 : -1;
+  if (e.code === "KeyY" && !e.shiftKey) return 1;
+  return 0;
 }
 
 // --- Resize handles --------------------------------------------------------
@@ -765,6 +812,32 @@ function stopTextEdit(keep: boolean) {
   placeHandles();
 }
 
+/**
+ * Delete (or Backspace) in edit mode: remove the selection from the design.
+ * Like any override it starts on this instance only; the Changes list can
+ * apply it upstream (every instance) or revert it. The selection moves to
+ * the parent.
+ */
+function removeSelected() {
+  const el = selected;
+  if (!el) return;
+  const path = instancePath(el);
+  record({
+    level: "instance",
+    property: "removed",
+    from: "",
+    to: "removed",
+    file: null,
+    selector: null,
+    element: elementInfo(el),
+    instance: { component: path[0]?.name ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
+  });
+  select(el.parentElement?.closest("[data-spark-src]") ?? null);
+  changed();
+}
+
+const isDelete = (e: KeyboardEvent) => (e.key === "Delete" || e.key === "Backspace") && !e.altKey && !e.ctrlKey && !e.metaKey;
+
 // ---------------------------------------------------------------------------
 // Claude: "Implement changes" and "Ask Claude" run the local claude CLI on the
 // dev server (runner.ts); progress comes back as spark:run events.
@@ -856,6 +929,7 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
 import.meta.hot?.on("spark:log", (log: ChangeLog) => {
   load(log.changes);
   renderOverrides();
+  resetHistory();
   render();
 });
 import.meta.hot?.on("spark:run-state", (s: { running: boolean }) => {
@@ -1039,7 +1113,7 @@ function scopeSelect(c: Change): HTMLElement {
   const sel = h("select", { title: "Where this change lives" }) as HTMLSelectElement;
   for (const o of scopeChoices(path)) sel.append(h("option", { value: String(o.scope), selected: o.scope === (c.instance?.scope ?? null) }, o.label));
   const el = coveredElements(c)[0];
-  const rules = el && c.property !== "text" && c.property !== "children-order" ? matchedRules(el, skip) : [];
+  const rules = el && !["text", "children-order", "removed"].includes(c.property) ? matchedRules(el, skip) : [];
   for (const [i, m] of [...rules.entries()].reverse()) sel.append(h("option", { value: `rule:${i}` }, `Move to CSS rule ${m.selector} · ${shortFile(m.file)}`));
   sel.addEventListener("change", () => {
     if (sel.value.startsWith("rule:")) {
@@ -1068,8 +1142,14 @@ function renderChanges() {
     return;
   }
   const here = new Set(selected ? overridesOn(selected).map((c) => c.id) : []);
-  for (const c of pending) {
-    const what = c.property === "text" ? `text: "${c.from}" → "${c.to}"` : `${c.property}: ${c.from || "unset"} → ${c.to}`;
+  // Newest first: the change you just made is at the top.
+  for (const c of [...pending].sort((a, b) => b.at.localeCompare(a.at))) {
+    const what =
+      c.property === "text"
+        ? `text: "${c.from}" → "${c.to}"`
+        : c.property === "removed"
+          ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
+          : `${c.property}: ${c.from || "unset"} → ${c.to}`;
     const kind = c.level === "instance" ? (c.instance?.scope ?? null) === null ? "override" : "applied upstream" : c.level === "component" ? "css rule" : "token";
     footer.append(
       h(
@@ -1184,6 +1264,15 @@ document.addEventListener(
         e.preventDefault();
         e.stopPropagation();
       }
+    } else if (undoKey(e) && picking && !textEntry(e)) {
+      // In a field, Ctrl+Z undoes its own typing.
+      e.preventDefault();
+      e.stopPropagation();
+      undoRedo(undoKey(e) as -1 | 1);
+    } else if (isDelete(e) && picking && selected && !textEntry(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      removeSelected();
     } else if (e.key === "ArrowUp" && picking && selected) {
       const parent = selected.parentElement?.closest("[data-spark-src]");
       if (parent) {
@@ -1202,6 +1291,15 @@ const panelKeys = (e: Event) => {
   if ((k.altKey && k.code === "KeyE") || (plainTab(k) && !textEntry(k))) {
     k.preventDefault();
     setPicking(!picking);
+  } else if (undoKey(k) && !textEntry(k)) {
+    // Outside the app (panel, bar) undo is always Spark's.
+    k.preventDefault();
+    k.stopPropagation();
+    undoRedo(undoKey(k) as -1 | 1);
+  } else if (isDelete(k) && picking && selected && !textEntry(k)) {
+    k.preventDefault();
+    k.stopPropagation();
+    removeSelected();
   } else if (k.key === "Escape") {
     const t = k.composedPath()[0] as HTMLElement | undefined;
     // Esc in a field leaves the field; otherwise it steps out like in the app.
@@ -1260,6 +1358,7 @@ import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes:
   root = info.root;
   status.textContent = info.name;
   if (info.changes) load(info.changes.changes);
+  resetHistory();
   render();
 });
 import.meta.hot?.send("spark:hello", {});

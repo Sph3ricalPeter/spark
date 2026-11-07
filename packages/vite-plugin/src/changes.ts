@@ -34,8 +34,9 @@ export type Change = {
   /** "instance": an override, see `instance.scope`. "component": a CSS rule. "token": a design token. */
   level: Level;
   /** The CSS property, the token's name for a token change, "text" for an
-   * element's text content, or "children-order" for children dragged into a
-   * new order (see `children`). */
+   * element's text content, "children-order" for children dragged into a
+   * new order (see `children`), or "removed" for an element deleted from the
+   * design (`from` "", `to` "removed"). */
   property: string;
   /** The value before Spark touched it ("" when it wasn't set). */
   from: string;
@@ -205,6 +206,27 @@ export function load(list: Change[]) {
   for (const c of changes) if (c.status === "pending") preview(c);
 }
 
+/** A copy of the list, for undo. */
+export function snapshot(): Change[] {
+  return changes.map((c) => structuredClone(c));
+}
+
+/**
+ * Go back (or forward) to a snapshot: take every current preview off, then
+ * put the snapshot's on. Used by undo and redo.
+ */
+export function restore(list: Change[]) {
+  for (const c of [...changes].reverse()) {
+    if (c.status !== "pending") continue;
+    if (c.level === "instance") {
+      if (c.property === "text") for (const el of coveredElements(c)) setText(el, c.from);
+    } else setOnRule(c, c.from);
+  }
+  changes = list.map((c) => structuredClone(c));
+  for (const c of changes) if (c.status === "pending" && c.level !== "instance") setOnRule(c, c.to);
+  renderOverrides();
+}
+
 export function preview(c: Change) {
   if (c.level === "instance") renderOverrides();
   else setOnRule(c, c.to);
@@ -237,6 +259,11 @@ export function renderOverrides() {
   for (const c of overrides) {
     if (c.property === "text") {
       for (const [el, ids] of marks) if (lastText(ids) === c.id) setText(el, c.to);
+      continue;
+    }
+    if (c.property === "removed") {
+      // Hidden, not unmounted: React keeps its DOM, and reverting brings it back.
+      css += `[data-spark-o~="${c.id}"] { display: none !important; }\n`;
       continue;
     }
     if (c.property === "children-order") {

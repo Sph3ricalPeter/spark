@@ -17,6 +17,8 @@ const HOW = `How to read a change:
   call site further up (a prop or children); change it where it's written.
 - property "children-order": the element's children are shown in the order \`children.order\` (indices into the
   current children); reorder the JSX, or the list they're rendered from.
+- property "removed": the element is deleted from the design at that scope. Remove its JSX (or, for one item of
+  a list or one instance, the data or prop that renders it, or a condition); don't just hide it with CSS.
 - \`from\` is the value before the edit, to help you find the spot. Line numbers may have shifted slightly.`;
 
 const RULES = `Rules:
