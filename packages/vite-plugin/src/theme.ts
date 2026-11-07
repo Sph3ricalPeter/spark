@@ -45,8 +45,6 @@ export const THEME = `
     --sp-link: #8fb4ff;
     --sp-warn: #d9a441;
     --sp-danger: #e5534b;
-    /* Native controls (scrollbars, any <select> popup) follow the dark theme. */
-    color-scheme: dark;
   }
   /* Native dropdown lists are drawn by the browser: dark, like the rest of
      Spark, and never transparent text from the select they open from. */

@@ -323,6 +323,7 @@ const ASK_STYLE = `
       color: var(--sp-text-strong); font: var(--sp-fs-md) var(--sp-font);
     }
     .ask-main input::placeholder { color: var(--sp-text-dim); }
+    .ask-main input:focus { outline: none; border: none; }
     .ask .ib {
       flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
       border: none; background: none; color: var(--sp-text-dim); border-radius: var(--sp-r-md);
@@ -368,7 +369,10 @@ const ASK_STYLE = `
     .qf button.select .sel-h { font-family: var(--sp-font); }
     .qf .varbtn { width: 22px; height: 22px; margin-right: 2px; border: none; background: none; opacity: 0; }
     .qf:hover .varbtn, .qf:focus-within .varbtn { opacity: 1; }
-    .qf .var-pill { margin: 0 3px 0 0; }
+    .qf .with-var > .var-pill { align-self: center; margin: 0 3px 0 0; }
+    /* The variable's name comes first; what it resolves to gives way. */
+    .qf .var-pill .nm { flex: 0 1 auto; }
+    .qf .var-pill .vl { flex: 0 100 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
 
 const STYLE = `${THEME}
@@ -1259,7 +1263,7 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind, fields: HTMLEleme
   const r = el.getBoundingClientRect();
   askTag.className = `ask-tag${n.comp ? " comp" : ""}`;
   askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
-  askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), n.owner ? h("span", { class: "in" }, `in ${n.owner}`) : null);
+  askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
 
   askHead.replaceChildren(h("span", {}, KIND_LABEL[kind]));
   if (path.length) {
