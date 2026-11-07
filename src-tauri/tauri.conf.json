@@ -31,7 +31,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0MTJBQURCMEUxRjRCNEQKUldSTlN4OE8yNm9TeEJpUDFPZFpaTjZFa0RKS0lQUWkra2VlQjErajN6RTJ5Qmg1dXpsOFlwMnUK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU3OTY0OTFCNDU3NUE5OTkKUldTWnFYVkZHMG1XVjMwQXJpdWV0THcyaWVaanBHUjhKalhoN1BseWdKeXM0WFhLZklUNllBamwK",
       "endpoints": [
         "https://github.com/Sph3ricalPeter/spark/releases/latest/download/latest.json"
       ],

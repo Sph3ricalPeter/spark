@@ -30,20 +30,16 @@ what's new with **Restart now**. The updater never restarts on its own.
 
 ## Signing key
 
-The updater pubkey in `tauri.conf.json` is dawg's, so spark reuses dawg's
-signing key pair. To turn on updates, copy dawg's two repo secrets into this
-repo (Settings → Secrets and variables → Actions):
+spark has its own updater key pair (made with `npx @tauri-apps/cli signer
+generate -w ~/.tauri/spark.key`). The public half is `plugins.updater.pubkey`
+in `tauri.conf.json`; the private key and its password live only in the repo
+secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+(Settings → Secrets and variables → Actions) and in Peter's `~/.tauri`.
 
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-
-Without them CI still builds the installer, but doesn't publish dev updates,
-and `release.yml` refuses to run. Never change the pubkey after the first
-install: it strands every copy.
-
-To give spark its own key instead (before anyone installs it):
-`npx tauri signer generate -w ~/.tauri/spark.key`, put the public key in
-`plugins.updater.pubkey` and the private key and password in the secrets.
+Without the secrets CI still builds the installer, but doesn't publish dev
+updates, and `release.yml` refuses to run. Never change the pubkey once spark
+is installed anywhere: it strands every copy. Rotating the key means a new
+pubkey here plus new secrets, and reinstalling by hand.
 
 ## Later
 
