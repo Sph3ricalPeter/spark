@@ -36,10 +36,13 @@ Zustand). Release and deploy are ported from dawg and described in
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);
   `css.ts` reads matched rules, authored values and tokens; `changes.ts` is
-  the changelog and its live previews: every edit starts as an override on
-  exactly one instance (owner path with list keys) and can be applied
-  upstream, Unity-prefab style, to any owning component or the original,
-  or moved to a CSS rule; tokens are always global;
+  the changelog and its live previews: an override lives on a step of
+  the element's chain, prefab style: the component itself (base), its
+  variants (variant props read from the fiber, `variant="ghost"`, then
+  `ghost small`), or this one instance (owner path with list keys). Edits go
+  to the element's own variant by default (the inspector's chain picks
+  another), text to the one instance; each override can be moved along the
+  chain or to a CSS rule; tokens are always global;
   `reorder.ts` drags an element along its flex/grid parent (previewed
   with CSS `order`, recorded as a "children-order" override on the parent);
   `shell.ts` is the board: an infinite canvas (zoom, pan) of frames, each an

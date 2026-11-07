@@ -35,6 +35,8 @@ import {
   type Change,
   type ChangeLog,
   type PathEntry,
+  type Variant,
+  breadth,
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
@@ -222,6 +224,29 @@ function componentName(type: unknown): string | null {
   return null;
 }
 
+/** Props that hold content or wiring, not a look: never part of a variant. */
+const NOT_VARIANT = new Set([
+  "children", "className", "style", "id", "key", "ref", "value", "defaultValue", "label", "title", "name", "text",
+  "placeholder", "alt", "href", "src", "htmlFor", "role", "tabIndex", "type", "autoComplete", "lang", "dir", "form",
+  "target", "rel", "as", "to", "icon",
+]);
+
+/**
+ * The props that pick a variant, in the order written: short lowercase
+ * words (`variant="ghost"`, `size="sm"`) and flags that are on (`small`).
+ * Content (labels, numbers, handlers, children) isn't a variant.
+ */
+function variantOf(props: Record<string, unknown> | null | undefined): Variant | undefined {
+  if (!props) return undefined;
+  const out: Variant = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (NOT_VARIANT.has(k) || /^(on[A-Z]|data-|aria-)/.test(k)) continue;
+    if (v === true) out[k] = true;
+    else if (typeof v === "string" && /^[a-z][a-z0-9-]{0,15}$/.test(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** The components that rendered this element, innermost first, each with its call site. */
 function ownersOf(el: Element): Owner[] {
   const owners: Owner[] = [];
@@ -231,7 +256,8 @@ function ownersOf(el: Element): Owner[] {
     const name = componentName(f.type);
     if (!name) continue;
     const call = f.memoizedProps?.["data-spark-call"];
-    owners.push({ name, call: typeof call === "string" ? call : null, key: f.key ?? null });
+    const variant = variantOf(f.memoizedProps);
+    owners.push({ name, call: typeof call === "string" ? call : null, key: f.key ?? null, ...(variant ? { variant } : {}) });
   }
   return owners;
 }
@@ -245,23 +271,98 @@ function instancePath(el: Element): PathEntry[] {
   return i < 0 ? owners : owners.slice(i);
 }
 
+/** A variant as JSX props: `variant="ghost" small`. */
+function variantJsx(v: Variant): string {
+  return Object.entries(v)
+    .map(([k, x]) => (x === true ? k : `${k}="${x}"`))
+    .join(" ");
+}
+
+/** A variant in a word or two: "ghost small". */
+function variantName(v: Variant): string {
+  return Object.entries(v)
+    .map(([k, x]) => (x === true ? k : x))
+    .join(" ");
+}
+
 /** What an override's scope means, in words (stored with the change for whoever applies it). */
-function scopeWords(path: PathEntry[], scope: number | null): string {
+function scopeWords(path: PathEntry[], scope: number | null, variant?: Variant): string {
   const comp = path[0]?.name ?? "?";
   const at = (e: PathEntry) => `${e.name}${e.key !== null ? ` (key ${e.key})` : ""} at ${e.call ?? "root"}`;
   if (scope === null) return `only this instance: ${path.map(at).join(", inside ")}`;
-  if (scope === 0) return `the ${comp} component itself: every ${comp} everywhere`;
+  if (scope === 0 && variant && Object.keys(variant).length)
+    return `the "${variantName(variant)}" variant of ${comp}: every <${comp} ${variantJsx(variant)}> (with any other props), wherever ${comp} styles that variant`;
+  if (scope === 0) return `the ${comp} component itself: every ${comp} everywhere, variants included`;
   const via = path.slice(0, scope).map((e) => e.call ?? "?").join(" → ");
   return `in ${path[scope].name}: every ${comp} it renders through ${via}`;
 }
 
-/** The choices for where an override lives, narrowest first. */
-function scopeChoices(path: PathEntry[]): { scope: number | null; label: string }[] {
-  const comp = path[0]?.name ?? "?";
-  const out: { scope: number | null; label: string }[] = [{ scope: null, label: "Only this instance" }];
-  for (let k = path.length - 1; k >= 1; k--) out.push({ scope: k, label: `Apply to ${path[k].name} (every ${comp} it renders here)` });
-  out.push({ scope: 0, label: `Apply to ${comp} (original: every ${comp})` });
-  return out;
+/**
+ * One step of the chain an edit can go to, widest first: the component
+ * itself (base), each variant (`ghost`, then `ghost small`), this one.
+ */
+type Step = { key: string; scope: number | null; variant?: Variant; label: string; words: string };
+
+/** The chain for an element with this owner path. */
+function chainOf(path: PathEntry[]): Step[] {
+  if (!path.length) return [];
+  const comp = path[0].name;
+  const steps: Step[] = [{ key: "base", scope: 0, label: comp, words: `every ${comp}, variants included` }];
+  const entries = Object.entries(path[0].variant ?? {});
+  for (let i = 1; i <= entries.length; i++) {
+    const variant = Object.fromEntries(entries.slice(0, i)) as Variant;
+    steps.push({ key: `v${i}`, scope: 0, variant, label: variantName(variant), words: `every <${comp} ${variantJsx(variant)}>` });
+  }
+  steps.push({ key: "one", scope: null, label: "This one", words: "only this instance" });
+  return steps;
+}
+
+/** Where an override sits on its element's chain (or an owner scope from older lists). */
+function stepKey(inst: Change["instance"]): string {
+  const scope = inst?.scope ?? null;
+  if (scope === null) return "one";
+  if (scope > 0) return `in${scope}`;
+  const n = Object.keys(inst?.variant ?? {}).length;
+  return n ? `v${n}` : "base";
+}
+
+/** Same scope and the same variant. */
+function sameStep(a: Change["instance"] | { scope: number | null; variant?: Variant }, b: { scope: number | null; variant?: Variant }): boolean {
+  const key = (v: Variant | undefined) => JSON.stringify(Object.entries(v ?? {}).sort());
+  return (a?.scope ?? null) === b.scope && key(a?.variant) === key(b.variant);
+}
+
+/** An override's step, named for the inspector: "Button", "ghost small", "this one", "every Button in Card". */
+function stepLabel(c: Change): string {
+  const path = pathFor(c);
+  const key = stepKey(c.instance);
+  if (key === "one") return "this one";
+  if (key === "base") return path[0]?.name ?? "?";
+  if (key.startsWith("v")) return variantName(c.instance?.variant ?? {});
+  const k = c.instance?.scope ?? 0;
+  return `every ${path[0]?.name ?? "?"} in ${path[k]?.name ?? "?"}`;
+}
+
+/** How many elements on screen a step of this element's chain reaches. */
+function coverCount(path: PathEntry[], step: Step): number {
+  if (step.scope === null) return 1;
+  const comp = path[0]?.name;
+  const src = selected?.getAttribute("data-spark-src");
+  if (!src) return 1;
+  let n = 0;
+  for (const x of Array.from(document.querySelectorAll(`[data-spark-src="${CSS.escape(src)}"]`))) {
+    if (skip(x)) continue;
+    const p = instancePath(x);
+    if (p[0]?.name === comp && Object.entries(step.variant ?? {}).every(([k, v]) => p[0].variant?.[k] === v)) n++;
+  }
+  return Math.max(n, 1);
+}
+
+/** The step new edits to `path` go to: the one picked, else the element's own variant (or the base). */
+function targetStep(path: PathEntry[]): Step | null {
+  const chain = chainOf(path);
+  if (!chain.length) return null;
+  return chain.find((s) => s.key === editTarget) ?? chain.at(-2)!;
 }
 
 const skip = (n: Node) => host.contains(n) || (n instanceof Element && n.hasAttribute("data-spark"));
@@ -455,9 +556,35 @@ const STYLE = `${THEME}
     .instance .crumbs { margin-bottom: var(--sp-2); line-height: 1.5; }
     .instance .crumbs b { color: var(--sp-text-strong); }
     .instance .inst, .instance .sep { color: var(--sp-text-dim); }
-    .instance select.wide { border-color: var(--sp-accent); }
+    .instance .chain-head { color: var(--sp-text-dim); font-size: var(--sp-fs-xs); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--sp-1); }
+    .instance .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+    .instance .chain .sep { color: var(--sp-text-dim); padding: 0 2px; }
+    .instance .chain .step {
+      display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: var(--sp-r-sm);
+      border: 1px solid var(--sp-line); background: transparent; color: var(--sp-text); font: 500 var(--sp-fs-sm)/1.2 var(--sp-font); cursor: pointer;
+    }
+    .instance .chain .step:hover { border-color: var(--sp-line-strong); color: var(--sp-text-strong); }
+    .instance .chain .step.base { color: var(--sp-component); }
+    .instance .chain .step.on { background: var(--sp-accent); border-color: var(--sp-accent); color: #fff; }
+    .instance .chain .step.one.on { background: var(--sp-warn); border-color: var(--sp-warn); }
+    .instance .crumbs { margin-top: var(--sp-2); line-height: 1.5; font-size: var(--sp-fs-sm); }
+    .instance .edits { margin-top: var(--sp-2); border-top: 1px solid var(--sp-line); padding-top: var(--sp-2); }
+    .instance .edits-head { display: flex; align-items: center; gap: var(--sp-2); color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-bottom: var(--sp-1); }
+    .instance .edits-head span { flex: 1; }
+    .instance .edits-head .push {
+      padding: 2px 8px; border-radius: var(--sp-r-sm); border: 1px solid var(--sp-accent); background: transparent;
+      color: var(--sp-accent); font: 500 var(--sp-fs-xs)/1.4 var(--sp-font); cursor: pointer;
+    }
+    .instance .edits-head .push:hover { background: var(--sp-accent); color: #fff; }
+    .instance .edit-line { display: flex; align-items: center; gap: var(--sp-1); padding: 2px 0; }
+    .instance .edit-line code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text); }
+    .instance .edit-line select { width: auto; max-width: 45%; padding: 1px 4px; font-size: var(--sp-fs-xs); }
+    .instance .edit-line.one code { color: var(--sp-warn); }
+    .instance .edit-line .tb { border: none; background: transparent; color: var(--sp-text-dim); cursor: pointer; padding: 2px; display: inline-flex; }
+    .instance .edit-line .tb:hover { color: var(--sp-text-strong); }
     .row .k.ov { color: var(--sp-warn); }
     .row .k.ov::after { content: " •"; }
+    .row .k.ov.up { color: var(--sp-component); }
     .owner { padding: 3px 0; }
     .owner b { color: var(--sp-text-strong); font-weight: 600; margin-right: 6px; }
     details { margin-top: 12px; }
@@ -688,11 +815,11 @@ let picking = false;
 let hovered: Element | null = null;
 let selected: Element | null = null;
 /**
- * Where the next edit to the selection goes, like a prefab override's target:
- * null for this instance only, k for `instancePath(selected)[k]`'s source,
- * 0 for the component itself. Back to null whenever the selection changes.
+ * Where the next edit to the selection goes: a `Step` key on its chain
+ * ("base", "v1"…, "one"), or null for its own level (see `targetStep`).
+ * Back to null whenever the selection changes.
  */
-let editScope: number | null = null;
+let editTarget: string | null = null;
 /** The element whose text is being edited in place. */
 let editing: HTMLElement | null = null;
 let editFrom = "";
@@ -895,7 +1022,7 @@ function jumpToVariable(name: string) {
 
 function select(el: Element | null) {
   blurApp();
-  if (el !== selected) editScope = null;
+  if (el !== selected) editTarget = null;
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
   markTab();
@@ -955,17 +1082,19 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
   if (value && !CSS.supports(prop, value)) return false;
   const element = elementInfo(el);
   const path = instancePath(el);
-  // Like a prefab: editing an instance adds an override on it, on top of anything applied upstream.
-  // The edit goes where the inspector's "Edits go to" says (editScope).
-  const scope = editScope !== null && editScope < path.length ? editScope : null;
-  const rank = (k: number | null | undefined) => (k === null || k === undefined ? Infinity : k);
+  // Like a prefab: the edit goes to a step of the element's chain (its own
+  // variant unless the inspector picks another), on top of anything wider.
+  const step = targetStep(path);
+  const scope = step?.scope ?? null;
+  const variant = step?.variant;
+  const want = { scope, variant };
   const mine = overridesOn(el).filter((c) => c.property === prop);
-  const existing = mine.filter((c) => (c.instance?.scope ?? null) === scope).at(-1);
+  const existing = mine.filter((c) => sameStep(c.instance, want)).at(-1);
   if (existing) {
     record({ ...existing, to: value || existing.from });
   } else {
     // Starts from what's applied further out, if anything.
-    const upstream = mine.filter((c) => rank(c.instance?.scope) < rank(scope)).at(-1);
+    const upstream = mine.filter((c) => breadth(c.instance) < breadth(want)).at(-1);
     const from = upstream?.to ?? authored(el, matchedRules(el, skip), prop) ?? getComputedStyle(el).getPropertyValue(prop);
     record({
       level: "instance",
@@ -975,7 +1104,14 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
       file: null,
       selector: null,
       element,
-      instance: { component: path[0]?.name ?? element.comp ?? "?", call: path[0]?.call ?? null, path, scope, appliesTo: scopeWords(path, scope) },
+      instance: {
+        component: path[0]?.name ?? element.comp ?? "?",
+        call: path[0]?.call ?? null,
+        path,
+        scope,
+        ...(variant ? { variant } : {}),
+        appliesTo: scopeWords(path, scope, variant),
+      },
     });
   }
   if (final) changed();
@@ -1266,29 +1402,26 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind, fields: HTMLEleme
   askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
 
   askHead.replaceChildren(h("span", {}, KIND_LABEL[kind]));
-  if (path.length) {
+  const chain = chainOf(path);
+  const step = targetStep(path);
+  if (step) {
     const comp = path[0].name;
-    const short = (scope: number | null) => (scope === null ? "This instance" : scope === 0 ? `Every ${comp}` : `Every ${comp} in ${path[scope].name}`);
-    const choices = [null, ...path.map((_, k) => k).slice(1), 0];
-    const text = h("span", { class: "sel-v" }, short(editScope));
-    const btn = h("button", { class: "select", type: "button", title: `Edits go to ${scopeWords(path, editScope)}` }, text, lucide("chevron-down", 12));
+    const short = (s: Step) => (s.key === "one" ? "This one only" : s.key === "base" ? `Every ${comp}` : `Every ${s.label}`);
+    const text = h("span", { class: "sel-v" }, short(step));
+    const btn = h("button", { class: "select", type: "button", title: `Edits go to ${step.words}` }, text, lucide("chevron-down", 12));
     const wrap = h("div", { class: "sel" }, btn);
     menuButton(
       btn,
       wrap,
-      () =>
-        choices.map((scope) => ({
-          value: scope === null ? "" : String(scope),
-          label: scope === null ? "This instance only" : scope === 0 ? `${comp} itself: every ${comp}` : `Every ${comp} in ${path[scope].name}`,
-        })),
-      () => (editScope === null ? "" : String(editScope)),
+      () => chain.map((s) => ({ value: s.key, label: `${s.key === "one" ? "This one only" : s.label} · ${coverCount(path, s)} on screen` })),
+      () => step.key,
       (v) => {
-        editScope = v === "" ? null : Number(v);
+        editTarget = v;
         render();
       },
       "right",
     );
-    askHead.append(h("span", { class: `scope${editScope !== null ? " wide" : ""}` }, h("span", {}, "Edits go to"), wrap));
+    askHead.append(h("span", { class: `scope${step.key === "one" ? " wide" : ""}` }, h("span", {}, "Edits go to"), wrap));
   }
   askTools.replaceChildren(...fields);
   askEdits.style.display = fields.length ? "" : "none";
@@ -1416,13 +1549,6 @@ import.meta.hot?.send("spark:run-state", {});
 // ---------------------------------------------------------------------------
 // The panel's contents
 
-/** Where an override lives, short: "on this instance", "in Card", "in Button itself". */
-function scopeLabel(path: PathEntry[], scope: number | null): string {
-  if (scope === null) return "on this instance";
-  if (scope === 0) return `in ${path[0]?.name ?? "the component"} itself`;
-  return `in ${path[scope]?.name ?? "?"}`;
-}
-
 /** The closest element around `el` that's written in owner `k` of its path. */
 function ownerElement(el: Element, path: PathEntry[], k: number): Element | null {
   for (let x = el.parentElement; x; x = x.parentElement) {
@@ -1434,8 +1560,9 @@ function ownerElement(el: Element, path: PathEntry[], k: number): Element | null
 }
 
 /**
- * Which component this is an instance of, the owners around it (click one to
- * select it), and where edits go: this instance, an owner, or the original.
+ * Where edits go, as the chain they can go to (click a step to edit there):
+ * the component, its variants, this one. Then the owners around it (click one
+ * to select it), and the edits on this element, each movable along the chain.
  */
 function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
   const box = h("div", { class: "instance" });
@@ -1443,10 +1570,30 @@ function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
     box.append(h("div", { class: "hint" }, "Not inside a component Spark knows; edits apply to this element."));
     return box;
   }
-  const name = (e: PathEntry) => e.name + (e.key !== null ? ` [${e.key}]` : "");
-  const crumbs = h("div", { class: "crumbs" }, h("span", { class: "inst" }, "Instance of "), h("b", {}, path[0].name));
+  const chain = chainOf(path);
+  const step = targetStep(path)!;
+  const steps = h("div", { class: "chain" });
+  chain.forEach((s, i) => {
+    if (i > 0) steps.append(h("span", { class: "sep" }, "›"));
+    const b = h(
+      "button",
+      { class: `step${s.key === step.key ? " on" : ""}${s.key === "base" ? " base" : ""}${s.key === "one" ? " one" : ""}`, type: "button", title: `Edit ${s.words}` },
+      s.key === "base" ? lucide("component", 12) : null,
+      s.label,
+    );
+    b.addEventListener("click", () => {
+      editTarget = s.key;
+      render();
+    });
+    steps.append(b);
+  });
+  const n = coverCount(path, step);
+  const words = step.key === "one" ? "Edits change only this one" : `Edits change ${step.words} · ${n} on screen`;
+  box.append(h("div", { class: "chain-head" }, h("span", {}, "Edits go to")), steps, h("div", { class: "hint" }, words));
+
   if (path.length > 1) {
-    crumbs.append(h("span", { class: "inst" }, " in "));
+    const name = (e: PathEntry) => e.name + (e.key !== null ? ` [${e.key}]` : "");
+    const crumbs = h("div", { class: "crumbs" }, h("span", { class: "inst" }, "Used in "));
     path.slice(1).forEach((e, i) => {
       const k = i + 1;
       const target = ownerElement(el, path, k);
@@ -1457,24 +1604,52 @@ function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
           : h("span", { title: e.call ?? "" }, name(e)),
       );
     });
+    box.append(crumbs);
   }
-  box.append(crumbs);
 
-  // Narrowest first: this instance, each owner outward, then the component itself.
-  const choices = [null, ...path.map((_, k) => k).slice(1), 0].map((scope) => ({ scope }));
-  const sel = h("select", { title: "Where the next edit to this element goes" }) as HTMLSelectElement;
-  for (const c of choices) {
-    const label = c.scope === null ? "This instance only" : c.scope === 0 ? `${path[0].name} itself: every ${path[0].name}` : `Every ${path[0].name} in ${path[c.scope].name}`;
-    sel.append(h("option", { value: c.scope === null ? "" : String(c.scope) }, label));
+  // The edits on this element, narrowest first: what this step changes against the one above it.
+  const mine = [...overridesOn(el)].reverse();
+  if (mine.length) {
+    const list = h("div", { class: "edits" });
+    const here = mine.filter((c) => sameStep(c.instance, step));
+    const parent = chain[chain.findIndex((s) => s.key === step.key) - 1];
+    const head = h("div", { class: "edits-head" }, h("span", {}, `Edits on this ${path[0].name}`));
+    if (here.length && parent) {
+      const push = h("button", { class: "push", type: "button", title: `Move ${here.length === 1 ? "this edit" : `these ${here.length} edits`} to ${parent.words}` }, `Apply all to ${parent.label}`);
+      push.addEventListener("click", () => {
+        for (const c of here) applyTo(c.id, parent.scope, scopeWords(path, parent.scope, parent.variant), parent.variant);
+        editTarget = parent.key;
+        changed();
+      });
+      head.append(push);
+    }
+    list.append(head);
+    for (const c of mine) list.append(editLine(c, chain, path));
+    box.append(list);
   }
-  sel.value = editScope === null ? "" : String(editScope);
-  sel.classList.toggle("wide", editScope !== null);
-  sel.addEventListener("change", () => {
-    editScope = sel.value === "" ? null : Number(sel.value);
-    render();
-  });
-  box.append(row("Edits go to", sel, h("div", { class: "hint" }, scopeWords(path, editScope))));
   return box;
+}
+
+/** One edit on the selection: what it changes, and the step it lives on (pick another to move it). */
+function editLine(c: Change, chain: Step[], path: PathEntry[]): HTMLElement {
+  const what = c.property === "text" ? `text "${c.to}"` : c.property === "removed" ? "removed" : c.property === "children-order" ? "children order" : `${c.property}: ${c.to}`;
+  const key = stepKey(c.instance);
+  const sel = h("select", { title: "Where this edit lives: pick another step to move it" }) as HTMLSelectElement;
+  const known = chain.some((s) => sameStep(c.instance, s));
+  if (!known) sel.append(h("option", { value: "", selected: true }, stepLabel(c)));
+  for (const s of chain) sel.append(h("option", { value: s.key, selected: known && sameStep(c.instance, s) }, s.key === "one" ? "this one" : s.label));
+  sel.addEventListener("change", () => {
+    const s = chain.find((x) => x.key === sel.value);
+    if (!s) return;
+    applyTo(c.id, s.scope, scopeWords(path, s.scope, s.variant), s.variant);
+    changed();
+  });
+  const revertBtn = h("button", { class: "tb", type: "button", title: "Revert this edit" }, lucide("rotate-ccw", 12));
+  revertBtn.addEventListener("click", () => {
+    revert(c.id);
+    changed();
+  });
+  return h("div", { class: `edit-line ${key === "one" ? "one" : key === "base" ? "base" : "variant"}`, title: `${c.property}: ${c.from || "unset"} → ${c.to}` }, h("code", {}, what), sel, revertBtn);
 }
 
 function locLink(loc: string | null) {
@@ -1662,7 +1837,7 @@ function render() {
     }
     if (compact) {
       const c = overridden.get(f.prop);
-      const qf = h("div", { class: `qf${changed ? " changed" : ""}`, title: c ? `${f.prop}: overridden ${scopeLabel(path, c.instance?.scope ?? null)}` : f.prop });
+      const qf = h("div", { class: `qf${changed ? " changed" : ""}`, title: c ? `${f.prop}: set on ${stepLabel(c)}` : f.prop });
       if (f.kind !== "number" || bound) {
         // The label opens what the field opens: the color picker, the menu, the variable.
         const k = h("span", { class: "qk" }, short);
@@ -1705,12 +1880,16 @@ function render() {
   }
   renderAsk(el, path, kind, essentials.filter((f) => f.kind !== "sides").slice(0, 4).map((f) => fieldRow(f, true)));
   // Mark the fields an override sets, and say where it lives.
+  const target = targetStep(path) ?? { scope: null };
   for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
     const name = k.title;
     const c = overridden.get(name) ?? SIDES.map((side) => overridden.get(`${name}-${side}`)).find(Boolean);
     if (!c) continue;
+    // Set on the step edits go to (or narrower): this level's own diff. Wider: it comes from the parent.
+    const own = breadth(c.instance) >= breadth(target);
     k.classList.add("ov");
-    k.title = `${name}: overridden ${scopeLabel(path, c.instance?.scope ?? null)}`;
+    if (!own) k.classList.add("up");
+    k.title = own ? `${name}: changed on ${stepLabel(c)}` : `${name}: comes from ${stepLabel(c)}`;
   }
 
   // Tokens this element uses
@@ -1757,12 +1936,16 @@ function describeChange(c: Change): string {
   return `${c.instance?.appliesTo ?? c.instance?.component ?? "?"} · ${n} on screen`;
 }
 
-/** Where an override lives: its scope, or (style overrides) one of the CSS rules that match it. */
+/** Where an override lives: a step of its chain, or (style overrides) one of the CSS rules that match it. */
 function scopeSelect(c: Change): HTMLElement {
   const path = pathFor(c);
-  const sel = h("select", { title: "Where this change lives" }) as HTMLSelectElement;
-  for (const o of scopeChoices(path)) sel.append(h("option", { value: String(o.scope), selected: o.scope === (c.instance?.scope ?? null) }, o.label));
   const el = coveredElements(c)[0];
+  // The chain of an element it covers (its variant props), else of the path it was made on.
+  const chain = chainOf(el ? instancePath(el) : path);
+  const sel = h("select", { title: "Where this change lives" }) as HTMLSelectElement;
+  const known = chain.some((s) => sameStep(c.instance, s));
+  if (!known) sel.append(h("option", { value: "", selected: true }, stepLabel(c)));
+  for (const s of chain) sel.append(h("option", { value: s.key, selected: known && sameStep(c.instance, s) }, s.key === "one" ? "Only this one" : `${s.label}: ${s.words}`));
   const rules = el && !["text", "children-order", "removed"].includes(c.property) ? matchedRules(el, skip) : [];
   for (const [i, m] of [...rules.entries()].reverse()) sel.append(h("option", { value: `rule:${i}` }, `Move to CSS rule ${m.selector} · ${shortFile(m.file)}`));
   sel.addEventListener("change", () => {
@@ -1770,8 +1953,9 @@ function scopeSelect(c: Change): HTMLElement {
       const m = rules[Number(sel.value.slice(5))];
       applyToRule(c.id, rel(m.file), m.selector, m.rule.style.getPropertyValue(c.property));
     } else {
-      const scope = sel.value === "null" ? null : Number(sel.value);
-      applyTo(c.id, scope, scopeWords(path, scope));
+      const s = chain.find((x) => x.key === sel.value);
+      if (!s) return;
+      applyTo(c.id, s.scope, scopeWords(el ? instancePath(el) : path, s.scope, s.variant), s.variant);
     }
     changed();
   });
@@ -1800,7 +1984,7 @@ function renderChanges() {
         : c.property === "removed"
           ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
           : `${c.property}: ${c.from || "unset"} → ${c.to}`;
-    const kind = c.level === "instance" ? (c.instance?.scope ?? null) === null ? "override" : "applied upstream" : c.level === "component" ? "css rule" : "variable";
+    const kind = c.level === "instance" ? `on ${stepLabel(c)}` : c.level === "component" ? "css rule" : "variable";
     footer.append(
       h(
         "div",

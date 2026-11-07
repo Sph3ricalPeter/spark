@@ -1,11 +1,13 @@
 // The changelog: every visual edit, plus its live preview in the page.
 //
-// Edits work like Unity prefab overrides. An edit starts as an override on
-// exactly the instance you touched. Each override can then be applied
-// upstream to any component that owns it: the component that renders it
-// (every instance it renders at that line), further out, or all the way
-// to the original definition (every instance everywhere). A token edit
-// is always global; an override can also be applied to a matched CSS rule.
+// Edits work like prefab overrides along a chain: the component itself (the
+// base: every instance), its variants (instances with some variant props
+// set, `variant="ghost"`, then `variant="ghost" small`: a variant of a
+// variant), and the one instance. An edit goes to the selection's own level
+// unless the inspector says otherwise, and can be moved along the chain.
+// Older lists can also hold overrides scoped to an owner ("every Button in
+// Card"). A token edit is always global; an override can also be applied to
+// a matched CSS rule.
 //
 // Previews are exact where they can be: a token or CSS rule edit changes the
 // real rule in the page's CSSOM, which is what the code change will do. When
@@ -27,7 +29,12 @@ export type PathEntry = {
   call: string | null;
   /** Its React key, when it's one of a list (rendered by .map()). */
   key: string | null;
+  /** The variant props this instance was given (`variant="ghost"`, `small`), in the order written. */
+  variant?: Variant;
 };
+
+/** Variant props: a string value, or `true` for a flag like `small`. */
+export type Variant = Record<string, string | boolean>;
 
 export type Change = {
   id: string;
@@ -60,9 +67,12 @@ export type Change = {
      * - null: only this exact instance (every call site and list key in `path` must match);
      * - k ≥ 1: in `path[k].name`'s source, so every instance it renders through the
      *   calls `path[0..k-1]`;
-     * - 0: in the definition of `path[0].name` itself, so every instance everywhere.
+     * - 0: in the definition of `path[0].name` itself, so every instance everywhere;
+     *   with `variant`, only the instances given those props (one of its variants).
      */
     scope?: number | null;
+    /** Scope 0 only: the variant the override belongs to (every instance with these props). */
+    variant?: Variant;
     /** `scope` in words, for whoever applies the change to code. */
     appliesTo?: string;
   } | null;
@@ -103,11 +113,30 @@ export function pathFor(c: Change): PathEntry[] {
 
 const scopeOf = (c: Change) => c.instance?.scope ?? null;
 
+/** Does an instance given props `have` belong to variant `want`? */
+export function inVariant(want: Variant | undefined, have: Variant | undefined): boolean {
+  return Object.entries(want ?? {}).every(([k, v]) => have?.[k] === v);
+}
+
+const variantKey = (v: Variant | undefined) => JSON.stringify(Object.entries(v ?? {}).sort());
+
+/**
+ * How wide an override's target is, for ordering (narrower wins): the base
+ * component 0, its variants a little more per prop, an owner's scope k, and
+ * the one instance Infinity.
+ */
+export function breadth(inst: { scope?: number | null; variant?: Variant } | null | undefined): number {
+  const scope = inst?.scope ?? null;
+  if (scope === null) return Infinity;
+  if (scope === 0) return Object.keys(inst?.variant ?? {}).length / 100;
+  return scope;
+}
+
 /** Does an element with this owner path fall under override `c`? */
 function covers(c: Change, path: PathEntry[]): boolean {
   const want = pathFor(c);
   const scope = scopeOf(c);
-  if (scope === 0) return true;
+  if (scope === 0) return path.length > 0 && path[0].name === want[0]?.name && inVariant(c.instance?.variant, path[0].variant);
   const depth = scope === null ? want.length : scope;
   if (path.length < depth) return false;
   for (let i = 0; i < depth; i++) {
@@ -132,14 +161,14 @@ export function overridesOn(el: Element): Change[] {
 
 /** Widest scope first: the definition (0), then outer owners, then the exact instance. */
 function byBreadth(list: Change[]): Change[] {
-  const rank = (c: Change) => (scopeOf(c) === null ? Infinity : (scopeOf(c) as number));
-  return [...list].sort((a, b) => rank(a) - rank(b));
+  return [...list].sort((a, b) => breadth(a.instance) - breadth(b.instance));
 }
 
 function samePlace(a: Change, b: Pick<Change, "level" | "property" | "file" | "selector" | "element" | "instance">) {
   if (a.level !== b.level || a.property !== b.property) return false;
   if (a.level !== "instance") return a.file === b.file && a.selector === b.selector;
   if (a.element.src !== b.element.src || scopeOf(a) !== (b.instance?.scope ?? null)) return false;
+  if (variantKey(a.instance?.variant) !== variantKey(b.instance?.variant)) return false;
   // Same scope and the same owners as far as that scope looks.
   const probe = { ...a, instance: { ...a.instance!, scope: scopeOf(a) } } as Change;
   return covers(probe, b.instance?.path ?? []);
@@ -168,11 +197,13 @@ export function record(c: Omit<Change, "id" | "at" | "status">): Change | null {
 }
 
 /** Move an override to another scope (null: this instance only). An override already there absorbs it. */
-export function applyTo(id: string, scope: number | null, appliesTo: string) {
+export function applyTo(id: string, scope: number | null, appliesTo: string, variant?: Variant) {
   const c = changes.find((x) => x.id === id);
   if (!c?.instance) return;
   const restore = c.property === "text" ? coveredElements(c) : [];
   c.instance = { ...c.instance, scope, appliesTo };
+  if (scope === 0 && variant && Object.keys(variant).length) c.instance.variant = variant;
+  else delete c.instance.variant;
   const twin = changes.find((x) => x !== c && x.status === "pending" && samePlace(x, c));
   if (twin) {
     twin.to = c.to;

@@ -14,6 +14,10 @@ const HOW = `How to read a change:
   - scope k ≥ 1: in the source of \`path[k].name\`, for every instance it renders through the calls path[0..k-1].
     Usually a prop, className or style at the call site \`path[k-1].call\`.
   - scope 0: in the component \`path[0].name\` itself, for every instance everywhere: its CSS rule or its JSX.
+    With \`instance.variant\` (props such as \`{ "variant": "ghost", "small": true }\`), only for that variant of it:
+    every instance given those props. Change the styling the component uses for that variant (for example the
+    \`.btn.ghost.small\` rule, a variant map, or a condition on those props), adding it if it doesn't exist yet;
+    other variants and the base stay as they are.
 - property "text": the element's text becomes \`to\`. The literal may be in the element's JSX or passed in from a
   call site further up (a prop or children); change it where it's written.
 - property "children-order": the element's children are shown in the order \`children.order\` (indices into the
