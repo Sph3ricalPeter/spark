@@ -407,12 +407,14 @@ function startPan(e: PointerEvent) {
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
   canvas.classList.add("panning");
-  let x = e.screenX;
-  let y = e.screenY;
+  // clientX, not screenX: with Windows display scaling screenX can be in
+  // device pixels, which overshoots.
+  let x = e.clientX;
+  let y = e.clientY;
   const move = (ev: PointerEvent) => {
-    panBy(ev.screenX - x, ev.screenY - y);
-    x = ev.screenX;
-    y = ev.screenY;
+    panBy(ev.clientX - x, ev.clientY - y);
+    x = ev.clientX;
+    y = ev.clientY;
   };
   const up = () => {
     canvas.classList.remove("panning");
@@ -428,6 +430,8 @@ canvas.addEventListener("pointerdown", (e) => {
   const p = e as PointerEvent;
   if (p.button === 1 || (p.button === 0 && (space || p.target === canvas))) startPan(p);
 });
+// Middle button: no autoscroll, no paste, no auxclick in the shell.
+canvas.addEventListener("mousedown", (e) => (e as MouseEvent).button === 1 && e.preventDefault());
 canvas.addEventListener("auxclick", (e) => e.preventDefault());
 
 /** True when keys belong to a text field, not to shortcuts. */

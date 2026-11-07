@@ -108,12 +108,15 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
       e.stopPropagation();
       const el = document.documentElement;
       el.setPointerCapture(e.pointerId);
-      let x = e.screenX;
-      let y = e.screenY;
+      // Keep the grabbed point of the app under the pointer. The frame moves
+      // as it pans, so the pointer's position in the app drifts back to
+      // where it was grabbed; screenX can't be used here because Chromium
+      // doesn't scale it for a transformed iframe (and Windows display scaling
+      // can put it in device pixels), which overshoots.
+      const x = e.clientX;
+      const y = e.clientY;
       const move = (ev: PointerEvent) => {
-        s.panBy(ev.screenX - x, ev.screenY - y);
-        x = ev.screenX;
-        y = ev.screenY;
+        s.panBy((ev.clientX - x) * s.zoom, (ev.clientY - y) * s.zoom);
       };
       const up = () => {
         el.removeEventListener("pointermove", move);
@@ -126,6 +129,15 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
     },
     true,
   );
+
+  // The middle button's own default (Windows autoscroll) would fight the pan.
+  const noMiddle = (e: MouseEvent) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  window.addEventListener("mousedown", noMiddle, true);
+  window.addEventListener("auxclick", noMiddle, true);
 
   // Alt+S also works with focus outside the app (the bar, the panel).
   const parentDoc = window.parent.document;

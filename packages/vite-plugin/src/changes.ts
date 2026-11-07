@@ -33,8 +33,9 @@ export type Change = {
   id: string;
   /** "instance": an override, see `instance.scope`. "component": a CSS rule. "token": a design token. */
   level: Level;
-  /** The CSS property, the token's name for a token change, or "text" for an
-   * element's text content. */
+  /** The CSS property, the token's name for a token change, "text" for an
+   * element's text content, or "children-order" for children dragged into a
+   * new order (see `children`). */
   property: string;
   /** The value before Spark touched it ("" when it wasn't set). */
   from: string;
@@ -64,6 +65,14 @@ export type Change = {
     /** `scope` in words, for whoever applies the change to code. */
     appliesTo?: string;
   } | null;
+  /**
+   * "children-order" only: the element's children in their new order.
+   * `order[i]` is the index (among the element's child elements, as written
+   * and rendered) of the child now shown at position i; `labels` names them in
+   * the new order. Applied to code by moving the JSX of those children (or
+   * the list they come from) into that order.
+   */
+  children?: { order: number[]; labels: string[] };
   status: "pending" | "applied";
   at: string;
 };
@@ -139,6 +148,7 @@ export function record(c: Omit<Change, "id" | "at" | "status">): Change {
   const existing = changes.find((x) => x.status === "pending" && samePlace(x, c));
   if (existing) {
     existing.to = c.to;
+    if (c.children) existing.children = c.children;
     existing.at = new Date().toISOString();
     if (existing.to === existing.from) {
       revert(existing.id);
@@ -227,6 +237,11 @@ export function renderOverrides() {
   for (const c of overrides) {
     if (c.property === "text") {
       for (const [el, ids] of marks) if (lastText(ids) === c.id) setText(el, c.to);
+      continue;
+    }
+    if (c.property === "children-order") {
+      // The DOM stays as React made it; the flex or grid shows the new order.
+      for (const [pos, i] of (c.children?.order ?? []).entries()) css += `[data-spark-o~="${c.id}"] > :nth-child(${i + 1}) { order: ${pos} !important; }\n`;
       continue;
     }
     css += `[data-spark-o~="${c.id}"] { ${c.property}: ${c.to} !important; }\n`;

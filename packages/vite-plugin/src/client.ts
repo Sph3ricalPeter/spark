@@ -36,6 +36,7 @@ import { authored, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
+import { installReorder } from "./reorder.ts";
 import { renderVariables, resolvedLine, VARIABLES_STYLE, type Variable } from "./variables.ts";
 
 const PANEL_W = 340;
@@ -876,7 +877,7 @@ function scopeSelect(c: Change): HTMLElement {
   const sel = h("select", { title: "Where this change lives" }) as HTMLSelectElement;
   for (const o of scopeChoices(path)) sel.append(h("option", { value: String(o.scope), selected: o.scope === (c.instance?.scope ?? null) }, o.label));
   const el = coveredElements(c)[0];
-  const rules = el && c.property !== "text" ? matchedRules(el, skip) : [];
+  const rules = el && c.property !== "text" && c.property !== "children-order" ? matchedRules(el, skip) : [];
   for (const [i, m] of [...rules.entries()].reverse()) sel.append(h("option", { value: `rule:${i}` }, `Move to CSS rule ${m.selector} · ${shortFile(m.file)}`));
   sel.addEventListener("change", () => {
     if (sel.value.startsWith("rule:")) {
@@ -1050,6 +1051,17 @@ if (shell) {
   });
 }
 initChanges(skip, instancePath);
+installReorder({
+  overlay: shadow,
+  active: () => picking && !editing && !resizing,
+  selected: () => selected,
+  pickable,
+  select,
+  instancePath,
+  elementInfo,
+  scopeWords,
+  changed,
+});
 render();
 let reopen = false;
 try {

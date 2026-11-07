@@ -32,6 +32,11 @@ Zustand). Release and deploy are ported from dawg and described in
   exactly one instance (owner path with list keys) and can be applied
   upstream, Unity-prefab style, to any owning component or the original,
   or moved to a CSS rule; tokens are always global;
+  `reorder.ts` drags an element along its flex/grid parent (previewed
+  with CSS `order`, recorded as a "children-order" override on the parent);
+  `shell.ts` is the viewport canvas (zoom, pan, device sizes) the app runs
+  inside as an iframe, with `frame.ts` its side in the app and `mode.ts`
+  deciding which page is which;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Plan: the "Spark:
