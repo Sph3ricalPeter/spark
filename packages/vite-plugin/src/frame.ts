@@ -3,7 +3,7 @@
 //
 // - Ctrl+wheel, pinches and Ctrl +/-/0 inside the app zoom the canvas, never
 //   the page, so the app keeps its layout and the panel keeps its size.
-// - Middle drag, and Space drag while the panel is open, pan the canvas.
+// - Middle drag, and Space drag in edit mode, pan the canvas.
 // - The overlay is drawn inside the frame, so it scales with the canvas and
 //   stays on its elements; handles, outlines and the tag keep their on-screen
 //   size by dividing by the zoom.
@@ -37,8 +37,9 @@ function zoomKeyOf(e: KeyboardEvent): "in" | "out" | "reset" | null {
 }
 
 /**
- * `overlay` is the client's shadow host; `isOpen` says whether the panel is
- * open; `toggle` opens or closes it (Alt+S pressed outside the app).
+ * `overlay` is the client's shadow host; `isOpen` says whether Spark has the
+ * pointer (edit mode), which turns on Space-drag panning; `toggle` opens or
+ * closes the panel (Alt+S pressed outside the app).
  */
 export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: () => void) {
   const s = shell;

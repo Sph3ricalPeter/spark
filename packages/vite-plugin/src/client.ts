@@ -3,9 +3,11 @@
 // Everything lives in one Shadow DOM so the app's CSS and Spark's never mix.
 // No React here on purpose: the app's React and ours would share a page.
 //
-// Alt+S opens or closes the panel. While "Pick" is on:
+// Alt+S opens or closes the panel. View mode (the default) leaves the app
+// alone. Edit mode (the Edit toggle or Alt+E):
 // - hover highlights, click selects (the app doesn't see the click),
-//   Arrow Up selects the parent, Esc leaves the selection;
+//   Arrow Up selects the parent; Esc steps out one level at a time
+//   (popover, text edit, selection), and from nothing selected back to view;
 // - the selection has handles: drag them to resize (Shift keeps the ratio
 //   on a corner, Alt for fine steps);
 // - double-click text to edit it in place; Enter or Esc keeps the edit.
@@ -229,6 +231,10 @@ const STYLE = `
     }
     button { cursor: pointer; }
     button.on { background: ${ACCENT}; border-color: ${ACCENT}; color: #fff; }
+    .seg { display: inline-flex; }
+    .seg button { border-radius: 0; }
+    .seg button:first-child { border-radius: 4px 0 0 4px; }
+    .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
     select { width: 100%; padding: 4px 6px; }
     input { width: 100%; font: 11px ui-monospace, monospace; padding: 3px 6px; }
     input:focus, select:focus { outline: 1px solid ${ACCENT}; border-color: ${ACCENT}; }
@@ -313,14 +319,17 @@ const tagLabel = h("div", { class: "tag" });
 const DIRS = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
 type Dir = (typeof DIRS)[number];
 const handles = DIRS.map((dir) => h("div", { class: "handle", "data-dir": dir }));
-const pickBtn = h("button", { title: "Pick an element (click in the app)" }, "Pick");
+// View: the app works as normal. Edit: hover highlights, clicks select (Alt+E).
+const viewBtn = h("button", { title: "Use the app normally (Esc out of everything)" }, "View");
+const editBtn = h("button", { title: "Select and edit elements (Alt+E)" }, "Edit");
+const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
 const body = h("div", { class: "body" });
 const footer = h("div", { class: "footer" });
 const panel = h(
   "div",
   { class: "panel" },
-  h("header", {}, "Spark", status, pickBtn, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
+  h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
   body,
   footer,
 );
@@ -357,8 +366,10 @@ function setOpen(v: boolean) {
   fab.classList.toggle("hidden", v);
   if (shell) shell.setDocked(v);
   else document.documentElement.classList.toggle("spark-docked", v);
-  setPicking(v);
-  if (!v) select(null);
+  if (!v) {
+    select(null);
+    setPicking(false);
+  }
   try {
     localStorage.setItem("spark:open", v ? "1" : "0");
   } catch {
@@ -366,13 +377,35 @@ function setOpen(v: boolean) {
   }
 }
 
+/** Edit mode (true) or view mode (false). Entering edit mode opens the panel; view mode drops the selection. */
 function setPicking(v: boolean) {
   picking = v;
-  pickBtn.classList.toggle("on", v);
-  if (!v) hover(null);
+  editBtn.classList.toggle("on", v);
+  viewBtn.classList.toggle("on", !v);
+  if (v && !open) setOpen(true);
+  if (!v) {
+    hover(null);
+    if (selected) select(null);
+  }
   placeHandles();
+  render();
 }
-pickBtn.addEventListener("click", () => setPicking(!picking));
+viewBtn.addEventListener("click", () => setPicking(false));
+editBtn.addEventListener("click", () => setPicking(true));
+
+/** One step out on Esc: popover, then selection, then edit mode. True when something closed. */
+function escapeStep(): boolean {
+  if (closePopover()) return true;
+  if (selected) {
+    select(null);
+    return true;
+  }
+  if (picking) {
+    setPicking(false);
+    return true;
+  }
+  return false;
+}
 
 /** The nearest element we know the source of. */
 function pickable(node: EventTarget | null): Element | null {
@@ -660,7 +693,9 @@ function render() {
       h(
         "div",
         { class: "empty" },
-        "Click an element in the app to select it. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent, Esc to leave.",
+        picking
+          ? "Click an element to select it. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc steps out: selection, then back to View."
+          : "View mode: use the app as normal. Switch to Edit (Alt+E) to select and change elements.",
       ),
     );
     return;
@@ -887,13 +922,18 @@ document.addEventListener(
       setOpen(!open);
       return;
     }
+    if (e.altKey && e.code === "KeyE") {
+      e.preventDefault();
+      setPicking(!picking);
+      return;
+    }
     // Typing in the panel: its fields handle their own keys.
     if (!open || e.composedPath().includes(host) || e.composedPath().includes(panelHost)) return;
     if (e.key === "Escape") {
-      if (closePopover()) return;
-      if (selected) {
+      // In view mode Esc belongs to the app.
+      if (picking && escapeStep()) {
         e.preventDefault();
-        select(null);
+        e.stopPropagation();
       }
     } else if (e.key === "ArrowUp" && picking && selected) {
       const parent = selected.parentElement?.closest("[data-spark-src]");
@@ -905,13 +945,28 @@ document.addEventListener(
   },
   true,
 );
-// The panel's own keys never reach the app.
-panelRoot.addEventListener("keydown", (e) => {
-  if ((e as KeyboardEvent).key === "Escape") {
-    (panelRoot.activeElement as HTMLElement | null)?.blur();
-    closePopover();
+// Keys with focus outside the app: in the panel, or (viewport shell) anywhere
+// in the shell page. Capture phase, so fields that keep their keys still let
+// Esc and Alt+E through.
+const panelKeys = (e: Event) => {
+  const k = e as KeyboardEvent;
+  if (k.altKey && k.code === "KeyE") {
+    k.preventDefault();
+    setPicking(!picking);
+  } else if (k.key === "Escape") {
+    const t = k.composedPath()[0] as HTMLElement | undefined;
+    // Esc in a field leaves the field; otherwise it steps out like in the app.
+    if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName ?? "")) {
+      t.blur();
+      closePopover();
+    } else {
+      (panelRoot.activeElement as HTMLElement | null)?.blur();
+      escapeStep();
+    }
   }
-});
+};
+const keyTarget: EventTarget = shell ? window.parent.document : panelRoot;
+keyTarget.addEventListener("keydown", panelKeys, true);
 
 // ---------------------------------------------------------------------------
 // Start
@@ -920,9 +975,11 @@ document.head.append(dockStyle);
 document.documentElement.append(host);
 if (shell) {
   shell.mount(panelHost);
-  frameGlue(host, () => open, () => setOpen(!open));
+  // Space-drag pans only in edit mode: in view mode Space belongs to the app.
+  frameGlue(host, () => picking, () => setOpen(!open));
   const sh = shell;
   window.addEventListener("pagehide", () => {
+    keyTarget.removeEventListener("keydown", panelKeys, true);
     panelHost.remove();
     sh.setDocked(false);
   });
