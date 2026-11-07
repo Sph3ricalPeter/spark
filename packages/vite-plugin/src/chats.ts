@@ -29,6 +29,8 @@ export type Chat = {
   updated: number;
   /** "New chat" closed it: it no longer shows in the element's popup. */
   closed?: boolean;
+  /** "implement": an Implement changes run (no element; key `implement:<id>`). */
+  kind?: "implement";
 };
 
 export type ChatFile = { version: 2; chats: Chat[] };
@@ -97,6 +99,14 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
         c.messages.push({ role: "user", text, at: Date.now() });
         c.updated = Date.now();
         return { id: c.id, sessionId: c.sessionId };
+      }),
+    /** A chat of its own for one Implement changes run, with what was asked. */
+    begin: (text: string) =>
+      change((f) => {
+        const id = newId();
+        const now = Date.now();
+        f.chats.push({ id, key: `implement:${id}`, label: "Implement changes", kind: "implement", sessionId: null, messages: [{ role: "user", text, at: now }], created: now, updated: now });
+        return id;
       }),
     /** Change one chat by id. */
     update: (id: string, fn: (c: Chat) => void) =>

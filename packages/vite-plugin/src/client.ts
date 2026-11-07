@@ -479,12 +479,8 @@ const STYLE = `${THEME}
     .changes-head { display: flex; align-items: center; gap: 8px; }
     .changes-head h3 { margin: 0; }
     button:disabled { opacity: 0.5; cursor: default; }
-    .run { display: none; padding: 10px 12px; border-top: 1px solid var(--sp-line); }
-    .run-head { display: flex; align-items: center; gap: 8px; color: var(--sp-text-strong); font-weight: 600; }
-    .run-sum { margin-top: 6px; }
-    .run-err { margin-top: 6px; color: #ff8a80; white-space: pre-wrap; }
-    .run-log { margin-top: 6px; color: var(--sp-text-dim); font-family: var(--sp-mono); font-size: var(--sp-fs-sm); }
-    .run-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .run-line { display: flex; align-items: center; gap: 8px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); min-width: 0; }
+    .run-line .last { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sp-mono); font-size: var(--sp-fs-xs); }
     .spin {
       width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--sp-line-strong); border-top-color: var(--sp-accent);
       animation: spin 0.8s linear infinite;
@@ -698,8 +694,6 @@ const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
 const body = h("div", { class: "body" });
 const footer = h("div", { class: "footer" });
-/** Claude's current or last run: progress, then its summary. */
-const runBox = h("div", { class: "run" });
 /** What the body shows: the selection's inspector, the page's own styles, or the app's variables. */
 type View = "inspect" | "page" | "variables";
 let view: View = "inspect";
@@ -717,7 +711,6 @@ const panel = h(
   h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, lucide("x"))),
   h("nav", { class: "tabs" }, tabs.inspect, tabs.page, tabs.variables),
   body,
-  runBox,
   footer,
 );
 panel.addEventListener("click", () => closePopover());
@@ -1728,37 +1721,9 @@ function placeAsk() {
   askBox.style.top = `${Math.round(y)}px`;
 }
 
+/** Claude's runs show in the Chats list; the panel only says one is going (renderChanges). */
 function renderRun() {
-  if (!run) {
-    runBox.replaceChildren();
-    runBox.style.display = "none";
-    return;
-  }
-  runBox.style.display = "block";
-  const what = run.kind === "implement" ? "Implementing changes" : "Claude is working";
-  const head = isRunning()
-    ? h("div", { class: "run-head" }, h("span", { class: "spin" }), h("span", { class: "grow" }, `${what}…`), h("button", { click: () => import.meta.hot?.send("spark:stop", {}) }, "Stop"))
-    : h(
-        "div",
-        { class: "run-head" },
-        h("span", { class: "grow" }, run.error ? "Couldn't run Claude" : run.done?.ok ? "Done" : "Claude stopped"),
-        h("button", { title: "Dismiss", click: () => ((run = null), renderRun()) }, lucide("x")),
-      );
-  const parts: (HTMLElement | false)[] = [head];
-  if (run.error) parts.push(h("div", { class: "run-err" }, run.error));
-  if (run.done) {
-    const d = run.done;
-    if (d.summary) parts.push(d.ok ? h("div", { class: "run-sum md" }, markdown(d.summary)) : h("div", { class: "run-err" }, d.summary));
-    if (d.applied.length || d.skipped.length || d.cost !== undefined) {
-      const bits = [];
-      if (d.applied.length || d.skipped.length) bits.push(`${d.applied.length} applied · ${d.skipped.length} skipped`);
-      if (d.cost !== undefined) bits.push(`$${d.cost.toFixed(2)}`);
-      parts.push(h("div", { class: "hint" }, bits.join(" · ")));
-    }
-    for (const s of d.skipped) parts.push(h("div", { class: "run-err" }, `Skipped: ${s.why}`));
-  }
-  if (isRunning()) parts.push(h("div", { class: "run-log" }, ...run.lines.slice(-6).map((l) => h("div", {}, l))));
-  runBox.replaceChildren(...parts.filter((p): p is HTMLElement => !!p));
+  renderChanges();
 }
 
 import.meta.hot?.on("spark:run", (e: RunEvent) => {
@@ -2206,6 +2171,17 @@ function renderChanges() {
   ) as HTMLButtonElement;
   implementBtn.disabled = pending.length === 0 || isRunning();
   footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
+  // A run going: what Claude is doing now, and Stop. Its transcript and result are in the Chats list.
+  if (run?.kind === "implement" && isRunning()) {
+    implementBtn.replaceChildren("Stop");
+    implementBtn.disabled = false;
+    implementBtn.title = "Stop Claude";
+    implementBtn.onclick = (e) => {
+      e.stopPropagation();
+      import.meta.hot?.send("spark:stop", {});
+    };
+    footer.append(h("div", { class: "run-line" }, h("span", { class: "spin" }), h("span", {}, "Implementing… (Chats has the details)"), h("span", { class: "last" }, run.lines.at(-1) ?? "")));
+  }
   if (pending.length === 0) {
     footer.append(h("div", { class: "empty" }, "Edits you make show up here."));
     return;

@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { tagJsx } from "./tag.ts";
-import type { ChangeLog } from "./changes.ts";
+import type { Change, ChangeLog } from "./changes.ts";
 import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
 import { run, running, stop, type RunEvent } from "./runner.ts";
 import { chatStore } from "./chats.ts";
@@ -203,6 +203,21 @@ export default function spark(): Plugin {
           return { version: 1, changes: [] };
         }
       };
+      /** One change in a line: padding-left: 8px → 30px (the "ghost" variant of Button). */
+      const changeLine = (c: Change) => {
+        const what =
+          c.property === "text"
+            ? `text "${c.from}" → "${c.to}"`
+            : c.property === "removed"
+              ? `remove <${c.element.tag}>`
+              : c.property === "children-order"
+                ? "reorder children"
+                : `${c.property}: ${c.from || "unset"} → ${c.to}`;
+        const where = c.level === "token" ? "variable" : c.level === "component" ? (c.selector ?? "") : (c.instance?.appliesTo ?? "").split(":")[0];
+        return `${what}${where ? ` (${where})` : ""}`;
+      };
+      const implementRequest = (pending: Change[]) =>
+        `Implement ${pending.length} change${pending.length === 1 ? "" : "s"}:\n\n${pending.map((c) => `- ${changeLine(c)}`).join("\n")}`;
       const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { id: string; resume?: string; then: (e: RunEvent) => void }) => {
         const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done" || e.type === "session") ? { ...e, chat: chat.id } : e);
         runningChat = chat?.id ?? null;
@@ -231,8 +246,31 @@ export default function spark(): Plugin {
       server.ws.on("spark:implement", async (data: { ids?: string[] }) => {
         const log = await loadLog();
         const pending = log.changes.filter((c) => c.status === "pending" && (!data?.ids || data.ids.includes(c.id)));
-        if (pending.length === 0) return;
-        await start("implement", implementPrompt(pending), pending.map((c) => c.id));
+        if (pending.length === 0 || running()) return;
+        // The run is a chat in the Chats list: the changes asked for, then Claude's result.
+        const id = await chats.begin(implementRequest(pending));
+        const say = (text: string, ok: boolean) => chats.update(id, (c) => c.messages.push({ role: "claude", text, ok, at: Date.now() }));
+        await start("implement", implementPrompt(pending), pending.map((c) => c.id), {
+          id,
+          then: (e) => {
+            if (e.type === "error") void say(e.text, false);
+            else if (e.type === "session") {
+              void chats.update(id, (c) => {
+                c.sessionId = e.sessionId;
+                if (e.model) c.model = e.model;
+              });
+            } else if (e.type === "done") {
+              const what = new Map(pending.map((c) => [c.id, changeLine(c)]));
+              const bits = [`${e.applied.length} applied · ${e.skipped.length} skipped`, ...(e.cost !== undefined ? [`$${e.cost.toFixed(2)}`] : [])];
+              const skipped = e.skipped.map((x) => `- Skipped ${what.get(x.id) ?? x.id}: ${x.why}`).join("\n");
+              const text = [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped, `_${bits.join(" · ")}_`].filter(Boolean).join("\n\n");
+              void chats.update(id, (c) => {
+                if (e.model) c.model = e.model;
+                c.messages.push({ role: "claude", text, ok: e.ok, at: Date.now() });
+              });
+            }
+          },
+        });
       });
       // Ask Claude, from the popup on an element: the element's open chat (by its
       // `chat` key), one Claude session that later prompts resume (chats.ts).

@@ -39,6 +39,7 @@ export const SIDEBAR_STYLE = `
   .chat-row.closed { color: var(--sp-text-dim); }
   .chat-row .st { position: absolute; left: 11px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--sp-accent); }
   .chat-row.closed .st { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sp-line-strong); }
+  .chat-row.run .st { background: var(--sp-component); }
   .chat-row.bad .st { background: var(--sp-danger); }
   .chat-row.busy .st {
     left: 9px; top: 12px; width: 12px; height: 12px; background: none; border: 2px solid var(--sp-line-strong); border-top-color: var(--sp-accent);
@@ -123,7 +124,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
 // The Chats tab
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
+type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; kind?: "implement" };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
@@ -163,8 +164,22 @@ export function chatsTab(deps: ChatsDeps) {
       const last = c.messages.at(-1);
       const first = c.messages.find((m) => m.role === "user");
       const busy = running === c.id;
-      const state = busy ? "Claude is answering" : c.closed ? "Closed" : last?.ok === false ? "Failed" : "Open";
-      const cls = `chat-row${c.closed ? " closed" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
+      // An Implement changes run has no element: its transcript opens here.
+      const run = c.kind === "implement";
+      const state = busy
+        ? run
+          ? "Claude is implementing"
+          : "Claude is answering"
+        : last?.ok === false
+          ? "Failed"
+          : run
+            ? last?.role === "claude"
+              ? "Done"
+              : "Stopped"
+            : c.closed
+              ? "Closed"
+              : "Open";
+      const cls = `chat-row${run ? " run" : ""}${c.closed && !run ? " closed" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
       const del = h("button", { class: `del${sure === c.id ? " sure" : ""}`, title: "Delete this chat" }, sure === c.id ? "Delete?" : "Delete");
       del.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -198,8 +213,8 @@ export function chatsTab(deps: ChatsDeps) {
         del,
       );
       if (expanded.has(c.id)) {
+        if (!run) row.append(h("div", { class: "missing" }, "This element isn't on the board right now."));
         row.append(
-          h("div", { class: "missing" }, "This element isn't on the board right now."),
           h(
             "div",
             { class: "chat-log" },
@@ -209,6 +224,12 @@ export function chatsTab(deps: ChatsDeps) {
       }
       row.addEventListener("click", (e) => {
         if ((e.target as HTMLElement).closest(".chat-log")) return;
+        if (run) {
+          if (expanded.has(c.id)) expanded.delete(c.id);
+          else expanded.add(c.id);
+          render();
+          return;
+        }
         if (c.closed) deps.send("spark:chat-open", { id: c.id });
         if (deps.open(c)) expanded.delete(c.id);
         else if (expanded.has(c.id)) expanded.delete(c.id);
@@ -229,6 +250,6 @@ export function chatsTab(deps: ChatsDeps) {
       running = run;
       render();
     },
-    openCount: () => chats.filter((c) => !c.closed && c.messages.length).length,
+    openCount: () => chats.filter((c) => !c.closed && !c.kind && c.messages.length).length,
   };
 }
