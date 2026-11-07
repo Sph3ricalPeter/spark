@@ -261,12 +261,17 @@ const STYLE = `${THEME}
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .ask {
-      position: fixed; display: none; align-items: center; gap: 2px; width: 320px; box-sizing: border-box;
-      pointer-events: auto; padding: 3px 3px 3px 10px;
+      position: fixed; display: none; align-items: center; gap: 2px; width: 360px; box-sizing: border-box;
+      pointer-events: auto; padding: 3px;
       background: #1b1c20; border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.4);
       color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
     }
     .ask:focus-within { border-color: var(--sp-accent); }
+    .ask-tag {
+      flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      margin-right: var(--sp-1); padding: 2px 6px; border-radius: var(--sp-r-sm);
+      background: var(--sp-accent); color: var(--sp-text-strong); font: 600 var(--sp-fs-sm)/1.4 var(--sp-font);
+    }
     .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; font-family: var(--sp-font); }
     .ask .ib {
       display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
@@ -438,7 +443,9 @@ const makeBtn = h(
   lucide("component"),
 );
 const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
-const askBox = h("div", { class: "ask" }, askInput, makeBtn, sendBtn);
+/** What's selected, as the start of the ask row (it replaces the floating tag label). */
+const askTag = h("span", { class: "ask-tag" });
+const askBox = h("div", { class: "ask" }, askTag, askInput, makeBtn, sendBtn);
 shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
@@ -933,15 +940,20 @@ function placeAsk() {
     askBox.style.display = "none";
     return;
   }
-  const r = selected!.getBoundingClientRect();
+  const el = selected!;
+  const r = el.getBoundingClientRect();
+  const comp = el.getAttribute("data-spark-comp");
+  const tag = `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}`;
+  if (askTag.textContent !== tag) askTag.textContent = tag;
+  askTag.title = `${tag}  ${Math.round(r.width)}×${Math.round(r.height)}`;
+  // The row names the selection, so its floating label goes (unless something else is hovered).
+  if (!hovered || hovered === el) tagLabel.style.display = "none";
   askBox.style.display = "flex";
   const z = parseFloat(getComputedStyle(askBox).getPropertyValue("--z")) || 1;
   const w = askBox.offsetWidth;
   const hgt = askBox.offsetHeight;
-  const gap = 6 / z;
-  // The tag label is above the element when there's room (see label()).
-  const tagH = tagLabel.offsetHeight;
-  const top = r.top > 22 ? r.top - 20 + tagH - tagH / z : r.top;
+  const gap = 8 / z;
+  const top = r.top;
   const right = window.innerWidth - (!shell ? PANEL_W : 0);
   const half = w / 2 / z;
   const cx = Math.max(half + 4, Math.min(r.left + r.width / 2, right - half - 4));
