@@ -39,7 +39,7 @@ import {
   breadth,
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
-import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
+import { closePopover, colorField, colorTokens, displayColor, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { shell } from "./mode.ts";
@@ -179,11 +179,16 @@ function fieldFor(prop: string): Field | undefined {
   return undefined;
 }
 
-let allOpen = false;
+/** Which of the inspector's folding sections are open, remembered across sessions. */
+const SECTIONS_STORE = "spark:sections";
+const sectionsOpen: Record<string, boolean> = { all: false, vars: false, owners: false, rules: false };
 try {
-  allOpen = localStorage.getItem("spark:all-props") === "1";
+  Object.assign(sectionsOpen, JSON.parse(localStorage.getItem(SECTIONS_STORE) ?? "{}"));
+  // "All properties" was remembered on its own before.
+  const old = localStorage.getItem("spark:all-props");
+  if (old !== null && localStorage.getItem(SECTIONS_STORE) === null) sectionsOpen.all = old === "1";
 } catch {
-  // Storage off: starts folded.
+  // Storage off: sections start folded.
 }
 
 function fiberOf(el: Element): Fiber | null {
@@ -510,13 +515,22 @@ const STYLE = `${THEME}
       content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--sp-accent);
       animation: spin .8s linear infinite;
     }
-    .all-head {
-      display: flex; align-items: center; width: 100%; margin-top: var(--sp-4); padding: var(--sp-2) 0; border: none; border-top: 1px solid var(--sp-line);
-      border-radius: 0; background: none; color: var(--sp-text-dim); font-weight: 600; text-align: left;
+    /* Folding sections: one header style for every group below the essentials. */
+    .sec { margin-top: var(--sp-3); border-top: 1px solid var(--sp-line); }
+    .sec + .sec { margin-top: 0; }
+    .sec.open { padding-bottom: var(--sp-2); }
+    .sec-head {
+      display: flex; align-items: center; gap: 6px; width: 100%; padding: var(--sp-2) 0; border: none; border-radius: 0; background: none;
+      color: var(--sp-text-dim); font: 600 var(--sp-fs-sm)/1.2 var(--sp-font); text-transform: uppercase; letter-spacing: .06em; text-align: left;
     }
-    .all-head::before { content: "▸"; margin-right: 6px; }
-    .all-head.open::before { content: "▾"; }
-    .all-head:hover { color: var(--sp-text-strong); }
+    .sec-head .icon { transform: rotate(-90deg); transition: transform .12s; }
+    .sec-head.open .icon { transform: none; }
+    .sec-head:hover { color: var(--sp-text-strong); }
+    .sec-title { flex: 1; }
+    .sec-count { color: var(--sp-text-dim); font: 500 var(--sp-fs-xs)/1 var(--sp-font); text-transform: none; letter-spacing: 0; }
+    .sec > .hint:first-of-type { margin: 0 0 var(--sp-2); }
+    h4 { margin: var(--sp-3) 0 var(--sp-1); font: 500 var(--sp-fs-sm)/1.2 var(--sp-font); color: var(--sp-text-dim); }
+    .sec-head + h4 { margin-top: 0; }
     .seg button { border-radius: 0; }
     .seg button:first-child { border-radius: var(--sp-r-sm) 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
@@ -534,17 +548,23 @@ const STYLE = `${THEME}
     h3 { margin: 16px 0 6px; font-size: var(--sp-fs-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--sp-text-dim); }
     h3:first-child { margin-top: 0; }
     .title { font: 600 var(--sp-fs-lg) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
+    .el-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+    .el-head .title { flex: 1; min-width: 0; }
+    .el-head .size { flex: none; color: var(--sp-text-dim); font: var(--sp-fs-sm) var(--sp-mono); }
+    .el-src { margin-top: 2px; }
     .link { color: var(--sp-link); cursor: pointer; font-family: var(--sp-mono); font-size: var(--sp-fs-sm); word-break: break-all; }
     .link:hover { text-decoration: underline; }
-    .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
-    .row .k { color: var(--sp-text-dim); width: 112px; flex: none; }
+    /* Names sit level with the field's first line, whatever notes go under it. */
+    .row { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
+    .row .k { position: relative; color: var(--sp-text-dim); width: 108px; flex: none; line-height: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row .v { font-family: var(--sp-mono); font-size: var(--sp-fs-sm); word-break: break-all; }
     .hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-top: 4px; }
     .instance { margin: var(--sp-2) 0 var(--sp-1); padding: var(--sp-2); border-radius: var(--sp-r-md); background: var(--sp-surface); }
     .instance .crumbs { margin-bottom: var(--sp-2); line-height: 1.5; }
     .instance .crumbs b { color: var(--sp-text-strong); }
     .instance .inst, .instance .sep { color: var(--sp-text-dim); }
-    .instance .chain-head { color: var(--sp-text-dim); font-size: var(--sp-fs-xs); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--sp-1); }
+    .instance .chain-head { display: flex; align-items: baseline; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--sp-1); }
+    .instance .count { color: var(--sp-text-dim); font: 500 var(--sp-fs-xs)/1 var(--sp-font); text-transform: none; letter-spacing: 0; }
     .instance .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
     .instance .chain .sep { color: var(--sp-text-dim); padding: 0 2px; }
     .instance .chain .step {
@@ -554,25 +574,38 @@ const STYLE = `${THEME}
     .instance .chain .step:hover { border-color: var(--sp-line-strong); color: var(--sp-text-strong); }
     .instance .chain .step.base { color: var(--sp-component); }
     .instance .chain .step.on { background: var(--sp-accent); border-color: var(--sp-accent); color: #fff; }
-    .instance .chain .step.one.on { background: var(--sp-warn); border-color: var(--sp-warn); }
-    .instance .crumbs { margin-top: var(--sp-2); line-height: 1.5; font-size: var(--sp-fs-sm); }
+    /* Selection colors: purple is the component, pink one instance of it. */
+    .instance .chain .step.one.on { background: var(--sp-instance); border-color: var(--sp-instance); }
+    .instance .crumbs { margin-top: var(--sp-1); line-height: 1.5; font-size: var(--sp-fs-sm); }
     .instance .edits { margin-top: var(--sp-2); border-top: 1px solid var(--sp-line); padding-top: var(--sp-2); }
     .instance .edits-head { display: flex; align-items: center; gap: var(--sp-2); color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-bottom: var(--sp-1); }
-    .instance .edits-head span { flex: 1; }
+    .instance .edits-head > span:first-child { flex: 1; }
     .instance .edits-head .push {
       padding: 2px 8px; border-radius: var(--sp-r-sm); border: 1px solid var(--sp-accent); background: transparent;
       color: var(--sp-accent); font: 500 var(--sp-fs-xs)/1.4 var(--sp-font); cursor: pointer;
     }
     .instance .edits-head .push:hover { background: var(--sp-accent); color: #fff; }
-    .instance .edit-line { display: flex; align-items: center; gap: var(--sp-1); padding: 2px 0; }
+    .instance .edit-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    .instance .edit-line .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--sp-warn); }
+    .instance .edit-line.up .dot { background: var(--sp-component); }
     .instance .edit-line code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text); }
-    .instance .edit-line select { width: auto; max-width: 45%; padding: 1px 4px; font-size: var(--sp-fs-xs); }
-    .instance .edit-line.one code { color: var(--sp-warn); }
+    .instance .edit-line .sel { flex: none; min-width: 84px; max-width: 45%; }
+    .instance .edit-line button.select { height: 20px; padding: 0 4px 0 6px; font-size: var(--sp-fs-xs); background: transparent; border-color: var(--sp-line); }
+    .instance .edit-line button.select:hover { border-color: var(--sp-line-strong); }
     .instance .edit-line .tb { border: none; background: transparent; color: var(--sp-text-dim); cursor: pointer; padding: 2px; display: inline-flex; }
     .instance .edit-line .tb:hover { color: var(--sp-text-strong); }
-    .row .k.ov { color: var(--sp-warn); }
-    .row .k.ov::after { content: " •"; }
+    /* An edited property: orange when the step edits go to sets it, purple when a wider step does.
+       The name, a dot in the gutter and the field's border all say the same. */
+    .row .k.ov { overflow: visible; color: var(--sp-warn); }
+    .row .k.ov::before { content: ""; position: absolute; left: -9px; top: 9px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
     .row .k.ov.up { color: var(--sp-component); }
+    .field .up.changed, .field .up .changed { border-color: var(--sp-component); }
+    /* Fields share one height, so rows line up. */
+    .field .num, .field .color > input, .field > input { height: 24px; }
+    .field .color .swatch, .field .varbtn { width: 24px; height: 24px; }
+    .field .resolved-line { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 6px; }
+    .field .resolved-line > * { flex: none; }
+    .field .resolved-line .resolved { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .owner { padding: 3px 0; }
     .owner b { color: var(--sp-text-strong); font-weight: 600; margin-right: 6px; }
     details { margin-top: 12px; }
@@ -666,7 +699,10 @@ const STYLE = `${THEME}
       position: absolute; top: 28px; right: 0; z-index: 5; width: 236px; padding: 8px;
       background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-md); box-shadow: 0 8px 24px #0009;
     }
-    .pop-title { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin: 0 0 6px; }
+    .pop-title { display: flex; align-items: baseline; gap: 8px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin: 0 0 6px; }
+    .pop-name { flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; overflow: hidden; white-space: nowrap; }
+    .pop-name code { font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text-strong); overflow: hidden; text-overflow: ellipsis; }
+    .pop-name span { font: var(--sp-fs-xs) var(--sp-mono); }
     .swatches { display: grid; grid-template-columns: repeat(8, 22px); gap: 5px; margin-bottom: 10px; max-height: 160px; overflow: auto; }
     .cp { display: flex; flex-direction: column; gap: 8px; }
     .cp-sv { position: relative; height: 140px; border-radius: var(--sp-r-sm); cursor: crosshair; touch-action: none; }
@@ -728,6 +764,8 @@ const panel = h(
   footer,
 );
 panel.addEventListener("click", () => closePopover());
+// On the board the bar's View/Edit switch is right there; the panel doesn't repeat it.
+if (shell) modeToggle.style.display = "none";
 const fab = h("button", { class: "fab", title: "Open Spark (Alt+S)", click: () => setOpen(true) }, "Spark");
 // Ask Claude, right on the selection.
 const askInput = h("input", { placeholder: "Ask Claude to change this…", spellcheck: "false" }) as HTMLInputElement;
@@ -1865,8 +1903,12 @@ function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
     steps.append(b);
   });
   const n = coverCount(path, step);
-  const words = step.key === "one" ? "Edits change only this one" : `Edits change ${step.words} · ${n} on screen`;
-  box.append(h("div", { class: "chain-head" }, h("span", {}, "Edits go to")), steps, h("div", { class: "hint" }, words));
+  const words = step.key === "one" ? "Only this one" : step.words[0].toUpperCase() + step.words.slice(1);
+  box.append(
+    h("div", { class: "chain-head" }, h("span", { class: "grow" }, "Edits go to"), step.key !== "one" ? h("span", { class: "count", title: "Elements on screen this step changes" }, `${n} on screen`) : null),
+    steps,
+    h("div", { class: "hint" }, words),
+  );
 
   if (path.length > 1) {
     const name = (e: PathEntry) => e.name + (e.key !== null ? ` [${e.key}]` : "");
@@ -1892,7 +1934,7 @@ function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
     const parent = chain[chain.findIndex((s) => s.key === step.key) - 1];
     const head = h("div", { class: "edits-head" }, h("span", {}, `Edits on this ${path[0].name}`));
     if (here.length && parent) {
-      const push = h("button", { class: "push", type: "button", title: `Move ${here.length === 1 ? "this edit" : `these ${here.length} edits`} to ${parent.words}` }, `Apply all to ${parent.label}`);
+      const push = h("button", { class: "push", type: "button", title: `Move ${here.length === 1 ? "this edit" : `these ${here.length} edits`} to ${parent.words}` }, `Move up to ${parent.label}`);
       push.addEventListener("click", () => {
         for (const c of here) applyTo(c.id, parent.scope, scopeWords(path, parent.scope, parent.variant), parent.variant);
         editTarget = parent.key;
@@ -1901,32 +1943,50 @@ function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
       head.append(push);
     }
     list.append(head);
-    for (const c of mine) list.append(editLine(c, chain, path));
+    for (const c of mine) list.append(editLine(c, chain, path, step));
     box.append(list);
   }
   return box;
 }
 
-/** One edit on the selection: what it changes, and the step it lives on (pick another to move it). */
-function editLine(c: Change, chain: Step[], path: PathEntry[]): HTMLElement {
+/**
+ * One edit on the selection: what it changes, and the step it lives on (pick
+ * another to move it). Its dot is colored like the fields: orange when the
+ * step edits go to (or a narrower one) sets it, purple when a wider step does.
+ */
+function editLine(c: Change, chain: Step[], path: PathEntry[], step: Step): HTMLElement {
   const what = c.property === "text" ? `text "${c.to}"` : c.property === "removed" ? "removed" : c.property === "children-order" ? "children order" : `${c.property}: ${c.to}`;
-  const key = stepKey(c.instance);
-  const sel = h("select", { title: "Where this edit lives: pick another step to move it" }) as HTMLSelectElement;
-  const known = chain.some((s) => sameStep(c.instance, s));
-  if (!known) sel.append(h("option", { value: "", selected: true }, stepLabel(c)));
-  for (const s of chain) sel.append(h("option", { value: s.key, selected: known && sameStep(c.instance, s) }, s.key === "one" ? "this one" : s.label));
-  sel.addEventListener("change", () => {
-    const s = chain.find((x) => x.key === sel.value);
-    if (!s) return;
-    applyTo(c.id, s.scope, scopeWords(path, s.scope, s.variant), s.variant);
-    changed();
-  });
+  const known = chain.find((s) => sameStep(c.instance, s));
+  const label = (s: Step) => (s.key === "one" ? "This one" : s.label);
+  const stepBtn = h("button", { class: "select step-pick", type: "button", title: "Where this edit lives: pick another step to move it" }, h("span", { class: "sel-v" }, known ? label(known) : stepLabel(c)), lucide("chevron-down", 12));
+  const wrap = h("div", { class: "sel" }, stepBtn);
+  menuButton(
+    stepBtn,
+    wrap,
+    () => chain.map((s) => ({ value: s.key, label: label(s), hint: s.key === "one" ? "only this one" : `${coverCount(path, s)} on screen` })),
+    () => known?.key ?? null,
+    (key) => {
+      const s = chain.find((x) => x.key === key);
+      if (!s || s === known) return;
+      applyTo(c.id, s.scope, scopeWords(path, s.scope, s.variant), s.variant);
+      changed();
+    },
+    "right",
+  );
   const revertBtn = h("button", { class: "tb", type: "button", title: "Revert this edit" }, lucide("rotate-ccw", 12));
   revertBtn.addEventListener("click", () => {
     revert(c.id);
     changed();
   });
-  return h("div", { class: `edit-line ${key === "one" ? "one" : key === "base" ? "base" : "variant"}`, title: `${c.property}: ${c.from || "unset"} → ${c.to}` }, h("code", {}, what), sel, revertBtn);
+  const mark = breadth(c.instance) >= breadth(step) ? "own" : "up";
+  return h(
+    "div",
+    { class: `edit-line ${mark}`, title: `${c.property}: ${c.from || "unset"} → ${c.to}\n${mark === "own" ? "Changed on" : "Comes from"} ${stepLabel(c)}` },
+    h("span", { class: "dot" }),
+    h("code", {}, what),
+    wrap,
+    revertBtn,
+  );
 }
 
 function locLink(loc: string | null) {
@@ -1934,8 +1994,14 @@ function locLink(loc: string | null) {
   return h("span", { class: "link", title: "Open in editor", click: () => openInEditor(loc) }, loc);
 }
 
-function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement | null) {
+/** A property row: its name, the field, notes under the field. `mark` colors the name when an edit sets it. */
+function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement | null, mark?: { mark: "own" | "up" | null; title: string } | null) {
   const k = typeof name === "string" ? h("span", { class: "k", title: name }, name) : h("span", { class: "k" }, name);
+  if (mark?.mark) {
+    k.classList.add("ov");
+    if (mark.mark === "up") k.classList.add("up");
+    k.title = mark.title;
+  }
   return h("div", { class: "row" }, k, h("div", { class: "field" }, field, below));
 }
 
@@ -2034,23 +2100,32 @@ function render() {
   const pending = allChanges().filter((c) => c.status === "pending");
   const colors = colorTokens(skip);
 
-  // Element
+  // Element: its tag and size, and where it's written.
   body.append(
-    h("div", { class: "title" }, `<${el.tagName.toLowerCase()}${classes.length ? "." + classes.join(".") : ""}>`),
-    h("div", { class: "row" }, h("span", { class: "k" }, "Written in"), locLink(el.getAttribute("data-spark-src"))),
-    h("div", { class: "row" }, h("span", { class: "k" }, "Size"), h("span", { class: "v" }, `${Math.round(r.width)} × ${Math.round(r.height)}`)),
+    h(
+      "div",
+      { class: "el-head" },
+      h("div", { class: "title" }, `<${el.tagName.toLowerCase()}${classes.length ? "." + classes.join(".") : ""}>`),
+      h("span", { class: "size", title: "Size on screen" }, `${Math.round(r.width)} × ${Math.round(r.height)}`),
+    ),
+    h("div", { class: "el-src", title: "Written in" }, locLink(el.getAttribute("data-spark-src"))),
   );
 
   body.append(instanceHeader(el, path));
 
-  /** What a field shows: the pending edit, else the source's value (instance: falling back to computed). */
+  // Edits on this element and how they relate to the step edits go to: set
+  // on that step or narrower is this step's own diff ("own", orange); set on
+  // a wider step it comes from above ("up", purple).
+  const target = targetStep(path) ?? { scope: null };
   const overrides = overridesOn(el);
-  const valueOf = (prop: string): { value: string; changed: boolean } => {
+  const markOf = (c: Change | undefined): Mark => (!c ? null : breadth(c.instance) >= breadth(target) ? "own" : "up");
+  /** What a field shows: the pending edit, else the source's value (instance: falling back to computed). */
+  const valueOf = (prop: string): { value: string; changed: boolean; mark: Mark } => {
     const c = overrides.filter((x) => x.property === prop).at(-1);
     // Computed lengths come with long fractions (108.641px); two decimals is plenty.
     const computed = cs.getPropertyValue(prop).replace(/(\.\d\d)\d+/g, "$1");
     if (c) overridden.set(prop, c);
-    return { value: c?.to ?? authored(el, rules, prop) ?? computed, changed: !!c };
+    return { value: c?.to ?? authored(el, rules, prop) ?? computed, changed: !!c, mark: markOf(c) };
   };
   const overridden = new Map<string, Change>();
   const onValue = (prop: string): OnValue => (v, final) => {
@@ -2076,6 +2151,11 @@ function render() {
       ` · ${shortFile(from.rule.file)}`,
     );
   };
+  /** A field's own mark: its border says whether this step or a wider one set it. */
+  const marked = <T extends HTMLElement>(field: T, mark: Mark): T => {
+    if (mark === "up") field.classList.add("up");
+    return field;
+  };
 
   /** One property's row in the panel. */
   const fieldRow = (f: Field): HTMLElement => {
@@ -2083,33 +2163,48 @@ function render() {
       const quad = h("div", { class: "quad" });
       const values: string[] = [];
       const computeds: string[] = [];
+      const marks: Mark[] = [];
       for (const side of SIDES) {
         const prop = `${f.prop}-${side}`;
-        const { value, changed } = valueOf(prop);
+        const { value, changed, mark } = valueOf(prop);
         values.push(value);
         computeds.push(cs.getPropertyValue(prop).trim());
-        quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)));
+        marks.push(mark);
+        quad.append(
+          marked(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)), mark),
+        );
       }
       const sideProps = SIDES.map((side) => `${f.prop}-${side}`);
       const same = values.every((v) => v === values[0]) ? values[0] : "";
       const quadVar = withVar(quad, "size", same, computeds[0], (v) => {
         sideProps.forEach((p, i) => edit(el, p, v, i === sideProps.length - 1));
       });
-      return row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable));
+      return row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable), rowMark(f.prop, sideProps, marks));
     }
-    const { value, changed } = valueOf(f.prop);
+    const { value, changed, mark } = valueOf(f.prop);
     const computed = cs.getPropertyValue(f.prop);
     let field: HTMLElement;
     if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
     else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop), f.prop === "font-weight" ? WEIGHTS : {});
     else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
     else field = textField(value, changed, onValue(f.prop));
+    marked(field, mark);
     if (f.kind !== "select") {
       const prop = f.prop;
       field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
     }
-    const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
-    return row(f.prop, field, notes.length ? h("div", {}, ...notes) : null);
+    const notes = [resolvedLine(value, f.kind === "color" ? displayColor(computed) : computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
+    return row(f.prop, field, notes.length ? h("div", {}, ...notes) : null, rowMark(f.prop, [f.prop], [mark]));
+  };
+  /** The label's mark: orange when this step changes any of the row's properties, purple when only wider steps do. */
+  const rowMark = (name: string, props: string[], marks: Mark[]): { mark: Mark; title: string } | null => {
+    const mark: Mark = marks.includes("own") ? "own" : marks.includes("up") ? "up" : null;
+    if (!mark) return null;
+    const where = props
+      .map((p) => overridden.get(p))
+      .filter((c): c is Change => !!c)
+      .map((c) => `${c.property}: ${markOf(c) === "own" ? "changed on" : "comes from"} ${stepLabel(c)}`);
+    return { mark, title: where.join("\n") || name };
   };
 
   // The essentials for this kind of element first; everything else, by category, under "All properties".
@@ -2117,74 +2212,85 @@ function render() {
   const essentials = ESSENTIALS[kind].map(fieldFor).filter((f): f is Field => !!f);
   body.append(h("h3", {}, KIND_LABEL[kind]));
   for (const f of essentials) body.append(fieldRow(f));
-  const toggle = h("button", { class: `all-head${allOpen ? " open" : ""}`, title: "Every property, by category" }, "All properties");
-  toggle.addEventListener("click", () => {
-    allOpen = !allOpen;
+  // Edits in the folded part still show: their categories open on their own.
+  const editedRest = FIELDS.flatMap((g) => g.fields).filter((f) => !essentials.includes(f) && (f.kind === "sides" ? SIDES.some((s) => overrides.some((c) => c.property === `${f.prop}-${s}`)) : overrides.some((c) => c.property === f.prop)));
+  const all = section("all", "All properties", editedRest.length ? `${editedRest.length} changed` : "", () => {
+    const out: HTMLElement[] = [];
+    for (const { group, fields } of FIELDS) {
+      const rest = fields.filter((f) => !essentials.includes(f));
+      if (!rest.length) continue;
+      out.push(h("h4", {}, group));
+      for (const f of rest) out.push(fieldRow(f));
+    }
+    return out;
+  });
+  body.append(all);
+  if (!sectionsOpen.all) for (const f of editedRest) all.append(fieldRow(f));
+  renderAsk(el, path, kind);
+
+  // Variables this element uses: editing one changes everything that uses it.
+  const tokens = tokensUsed(el, rules);
+  if (tokens.length) {
+    body.append(
+      section("vars", "Variables used here", String(tokens.length), () => {
+        const out: HTMLElement[] = [h("div", { class: "hint" }, "Changing a variable changes everything that uses it. Click a name to see it in Variables.")];
+        const rootCs = getComputedStyle(document.documentElement);
+        for (const t of tokens) {
+          const c = pending.find((x) => x.level === "token" && x.property === t);
+          const value = c?.to ?? rootCs.getPropertyValue(t).trim();
+          const onToken: OnValue = (v, final) => {
+            editToken(el, t, v, final);
+          };
+          const isColor = CSS.supports("color", value) && !/^-?\d/.test(value);
+          const isNum = /^-?\d*\.?\d+[a-z%]*$/i.test(value);
+          const field = isColor
+            ? colorField(value, value, colors.filter((x) => x.name !== t), !!c, onToken)
+            : isNum
+              ? numberField(value, { computed: value, unit: value.replace(/^-?\d*\.?\d+/, ""), changed: !!c, step: /^-?\d*\.\d/.test(value) ? 0.1 : 1 }, onToken)
+              : textField(value, !!c, onToken);
+          out.push(row(h("span", { class: "link", title: `${t}: show in Variables`, click: () => jumpToVariable(t) }, t), field));
+        }
+        return out;
+      }),
+    );
+  }
+
+  // Context
+  body.append(
+    section("owners", "Component instances", String(owners.length), () => {
+      if (owners.length === 0) return [h("div", { class: "empty" }, "No React components found above this element.")];
+      return owners.map((o) => h("div", { class: "owner" }, h("b", {}, o.name), o.call ? locLink(o.call) : h("span", { class: "empty" }, "root")));
+    }),
+    section("rules", "Matched rules", String(rules.length), () =>
+      [...rules]
+        .reverse()
+        .map((m) => h("div", { class: "rule" }, h("div", { class: "sel" }, m.selector), h("div", { class: "file" }, shortFile(m.file)), h("pre", {}, m.rule.style.cssText.split("; ").join(";\n")))),
+    ),
+  );
+}
+
+/** How a field relates to the step edits go to: set there or narrower ("own"), set on a wider step ("up"), or not edited. */
+type Mark = "own" | "up" | null;
+
+/**
+ * A folding section of the inspector: a header with a count, and the rows
+ * `build` makes, built only while it's open. Remembered per `key`.
+ */
+function section(key: string, title: string, count: string, build: () => HTMLElement[]): HTMLElement {
+  const open = !!sectionsOpen[key];
+  const head = h("button", { class: `sec-head${open ? " open" : ""}`, type: "button", "aria-expanded": open ? "true" : "false" }, lucide("chevron-down", 12), h("span", { class: "sec-title" }, title), count ? h("span", { class: "sec-count" }, count) : null);
+  head.addEventListener("click", () => {
+    sectionsOpen[key] = !open;
     try {
-      localStorage.setItem("spark:all-props", allOpen ? "1" : "0");
+      localStorage.setItem(SECTIONS_STORE, JSON.stringify(sectionsOpen));
     } catch {
       // Not remembered.
     }
     render();
   });
-  body.append(toggle);
-  if (allOpen) {
-    for (const { group, fields } of FIELDS) {
-      const rest = fields.filter((f) => !essentials.includes(f));
-      if (!rest.length) continue;
-      body.append(h("h3", {}, group));
-      for (const f of rest) body.append(fieldRow(f));
-    }
-  }
-  renderAsk(el, path, kind);
-  // Mark the fields an override sets, and say where it lives.
-  const target = targetStep(path) ?? { scope: null };
-  for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
-    const name = k.title;
-    const c = overridden.get(name) ?? SIDES.map((side) => overridden.get(`${name}-${side}`)).find(Boolean);
-    if (!c) continue;
-    // Set on the step edits go to (or narrower): this level's own diff. Wider: it comes from the parent.
-    const own = breadth(c.instance) >= breadth(target);
-    k.classList.add("ov");
-    if (!own) k.classList.add("up");
-    k.title = own ? `${name}: changed on ${stepLabel(c)}` : `${name}: comes from ${stepLabel(c)}`;
-  }
-
-  // Tokens this element uses
-  const tokens = tokensUsed(el, rules);
-  if (tokens.length) {
-    body.append(h("h3", {}, "Variables used here"), h("div", { class: "hint" }, "Changing a variable changes everything that uses it. Click a name to see it in Variables."));
-    const rootCs = getComputedStyle(document.documentElement);
-    for (const t of tokens) {
-      const c = pending.find((x) => x.level === "token" && x.property === t);
-      const value = c?.to ?? rootCs.getPropertyValue(t).trim();
-      const onToken: OnValue = (v, final) => {
-        editToken(el, t, v, final);
-      };
-      const isColor = CSS.supports("color", value) && !/^-?\d/.test(value);
-      const isNum = /^-?\d*\.?\d+[a-z%]*$/i.test(value);
-      const field = isColor
-        ? colorField(value, value, colors.filter((x) => x.name !== t), !!c, onToken)
-        : isNum
-          ? numberField(value, { computed: value, unit: value.replace(/^-?\d*\.?\d+/, ""), changed: !!c, step: /^-?\d*\.\d/.test(value) ? 0.1 : 1 }, onToken)
-          : textField(value, !!c, onToken);
-      body.append(row(h("span", { class: "link", title: `${t}: show in Variables`, click: () => jumpToVariable(t) }, t), field));
-    }
-  }
-
-  // Context
-  const instances = h("details", {}, h("summary", {}, "Component instances"));
-  if (owners.length === 0) instances.append(h("div", { class: "empty" }, "No React components found above this element."));
-  for (const o of owners) {
-    instances.append(h("div", { class: "owner" }, h("b", {}, o.name), o.call ? locLink(o.call) : h("span", { class: "empty" }, "root")));
-  }
-  const matched = h("details", {}, h("summary", {}, `Matched rules (${rules.length})`));
-  for (const m of [...rules].reverse()) {
-    matched.append(
-      h("div", { class: "rule" }, h("div", { class: "sel" }, m.selector), h("div", { class: "file" }, shortFile(m.file)), h("pre", {}, m.rule.style.cssText.split("; ").join(";\n"))),
-    );
-  }
-  body.append(instances, matched);
+  const box = h("div", { class: `sec${open ? " open" : ""}` }, head);
+  if (open) box.append(...build());
+  return box;
 }
 
 function describeChange(c: Change): string {

@@ -618,10 +618,19 @@ export function colorField(
     };
 
     if (tokens.length) {
-      pop.append(h("div", { class: "pop-title" }, "Variables"));
+      // The swatches have no room for names: the title names the one under the pointer (else the one in use).
+      const bound = tokens.find((t) => value === `var(${t.name})`);
+      const name = h("span", { class: "pop-name" });
+      const say = (t: Token | undefined) => {
+        name.replaceChildren(...(t ? [h("code", {}, t.name), h("span", {}, t.value)] : []));
+      };
+      say(bound);
+      pop.append(h("div", { class: "pop-title" }, h("span", {}, "Variables"), name));
       const grid = h("div", { class: "swatches" });
+      grid.addEventListener("pointerleave", () => say(bound));
       for (const t of tokens) {
-        const b = h("button", { class: `swatch${value === `var(${t.name})` ? " on" : ""}`, title: `${t.name}  ${t.value}` });
+        const b = h("button", { class: `swatch${t === bound ? " on" : ""}`, title: `${t.name}  ${t.value}` });
+        b.addEventListener("pointerenter", () => say(t));
         paintSwatch(b, t.value);
         b.addEventListener("click", () => {
           set(`var(${t.name})`, t.value, true);
