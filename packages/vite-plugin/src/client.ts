@@ -40,6 +40,8 @@ import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
 import { renderVariables, resolvedLine, VARIABLES_STYLE, type Variable } from "./variables.ts";
+import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
+import type { RuleRef } from "./css.ts";
 
 const PANEL_W = 340;
 const ACCENT = "#4f8cff";
@@ -95,6 +97,7 @@ const FIELDS: { group: string; fields: Field[] }[] = [
     group: "Text",
     fields: [
       { prop: "color", kind: "color" },
+      { prop: "font-family", kind: "text" },
       { prop: "font-size", kind: "number", min: 0 },
       { prop: "font-weight", kind: "select", options: ["100", "200", "300", "400", "500", "600", "700", "800", "900"] },
       { prop: "line-height", kind: "number", step: 0.1, unit: "", min: 0 },
@@ -336,7 +339,8 @@ const STYLE = `
     input[type="color"] { width: 100%; height: 28px; padding: 2px; cursor: pointer; }
     .toast { color: #d9a441; font-size: 11px; margin-top: 6px; }
     .row .k .link { font-size: inherit; }
-    ${VARIABLES_STYLE}`;
+    ${VARIABLES_STYLE}
+    ${PAGE_STYLE}`;
 shadow.append(h("style", {}, STYLE));
 
 
@@ -355,15 +359,22 @@ const body = h("div", { class: "body" });
 const footer = h("div", { class: "footer" });
 /** Claude's current or last run: progress, then its summary. */
 const runBox = h("div", { class: "run" });
-/** What the body shows: the selection's inspector, or the app's variables. */
-type View = "inspect" | "variables";
+/** What the body shows: the selection's inspector, the page's own styles, or the app's variables. */
+type View = "inspect" | "page" | "variables";
 let view: View = "inspect";
-const tabs = { inspect: h("button", { class: "on", click: () => setView("inspect") }, "Inspect"), variables: h("button", { click: () => setView("variables") }, "Variables") };
+const tabs: Record<View, HTMLElement> = {
+  inspect: h("button", { class: "on", click: () => setView("inspect") }, "Inspect"),
+  page: h("button", { title: "Styles on html, body and :root", click: () => setView("page") }, "Page"),
+  variables: h("button", { click: () => setView("variables") }, "Variables"),
+};
+function markTab() {
+  for (const [k, b] of Object.entries(tabs)) b.classList.toggle("on", k === view);
+}
 const panel = h(
   "div",
   { class: "panel" },
   h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
-  h("nav", { class: "tabs" }, tabs.inspect, tabs.variables),
+  h("nav", { class: "tabs" }, tabs.inspect, tabs.page, tabs.variables),
   body,
   runBox,
   footer,
@@ -537,8 +548,7 @@ function hover(el: Element | null) {
 function setView(v: View) {
   if (view === v) return;
   view = v;
-  tabs.inspect.classList.toggle("on", v === "inspect");
-  tabs.variables.classList.toggle("on", v === "variables");
+  markTab();
   body.scrollTop = 0;
   render();
 }
@@ -556,8 +566,7 @@ function jumpToVariable(name: string) {
 function select(el: Element | null) {
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
-  tabs.inspect.classList.toggle("on", view === "inspect");
-  tabs.variables.classList.toggle("on", view === "variables");
+  markTab();
   selected = el;
   place(selectBox, el);
   placeHandles();
@@ -646,6 +655,18 @@ function editToken(el: Element | null, name: string, value: string, final: boole
   const from = prev?.from ?? ref.rule.style.getPropertyValue(name).trim();
   const element = el ? elementInfo(el) : { src: null, comp: null, tag: "", classes: [] };
   record({ level: "token", property: name, from, to: value, file: rel(ref.file), selector: ref.selector, element, instance: null });
+  if (final) changed();
+  return true;
+}
+
+/** Edit a declaration of a CSS rule in place (page styles). `from` is "" for a property the rule didn't set. */
+function editRule(ref: RuleRef, prop: string, from: string, value: string, final: boolean): boolean {
+  value = value.trim();
+  if (!value || !CSS.supports(prop, value)) return false;
+  const file = rel(ref.file);
+  const prev = allChanges().find((c) => c.status === "pending" && c.level === "component" && c.property === prop && c.file === file && c.selector === ref.selector);
+  const element = selected ? elementInfo(selected) : { src: null, comp: null, tag: "", classes: [] };
+  record({ level: "component", property: prop, from: prev?.from ?? from, to: value, file, selector: ref.selector, element, instance: null });
   if (final) changed();
   return true;
 }
@@ -978,12 +999,30 @@ function renderVariablesView() {
   body.scrollTop = scroll;
 }
 
+function renderPageView() {
+  const scroll = body.scrollTop;
+  const pending = allChanges().filter((c) => c.status === "pending" && c.level === "component");
+  renderPage(body, pageRules(skip), {
+    pendingValue: (file, selector, prop) => pending.find((c) => c.file === rel(file) && c.selector === selector && c.property === prop)?.to,
+    edit: (ref, prop, from, value, final) => editRule(ref, prop, from, value, final),
+    colors: colorTokens(skip),
+    jumpToVariable,
+    showVariables: () => setView("variables"),
+    shortFile,
+  });
+  body.scrollTop = scroll;
+}
+
 function render() {
   renderChanges();
   closePopover();
   body.replaceChildren();
   if (view === "variables") {
     renderVariablesView();
+    return;
+  }
+  if (view === "page") {
+    renderPageView();
     return;
   }
   if (!selected) {
@@ -1034,6 +1073,26 @@ function render() {
   const onValue = (prop: string): OnValue => (v, final) => {
     edit(el, prop, v, final);
   };
+  // Where an inherited value comes from, when this element doesn't set it.
+  const ruleCache = new Map<Element, RuleRef[]>();
+  const rulesOf = (x: Element) => {
+    if (!ruleCache.has(x)) ruleCache.set(x, matchedRules(x, skip));
+    return ruleCache.get(x)!;
+  };
+  const inheritLine = (prop: string, changed: boolean): HTMLElement | null => {
+    if (!INHERITED.has(prop) || changed || authored(el, rules, prop) !== null) return null;
+    const from = inheritedFrom(el, prop, rulesOf);
+    if (!from) return null;
+    const page = isPageSelector(from.rule.selector);
+    const go = () => (page ? setView("page") : select(from.el.closest("[data-spark-src]") ?? from.el));
+    return h(
+      "div",
+      { class: "inherited" },
+      "inherited from ",
+      h("span", { class: "link", title: page ? "Edit in Page" : "Select that element", click: go }, from.rule.selector),
+      ` · ${shortFile(from.rule.file)}`,
+    );
+  };
 
   for (const { group, fields } of FIELDS) {
     body.append(h("h3", {}, group));
@@ -1059,7 +1118,8 @@ function render() {
       else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
       else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
       else field = textField(value, changed, onValue(f.prop));
-      body.append(row(f.prop, field, resolvedLine(value, computed, jumpToVariable)));
+      const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
+      body.append(row(f.prop, field, notes.length ? h("div", {}, ...notes) : null));
     }
   }
 
