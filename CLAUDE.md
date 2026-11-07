@@ -22,7 +22,9 @@ Zustand). Release and deploy are ported from dawg and described in
   `vite.config.ts` to make it editable from inside itself (dev server only).
   `tag.ts` adds `data-spark-src` / `data-spark-comp` to DOM elements and
   `data-spark-call` to component call sites; `client.ts` is the overlay and
-  docked panel (Shadow DOM, no React; Alt+S) with the property editor;
+  docked panel (Shadow DOM, no React; Alt+S): selection handles to resize,
+  double-click to edit text in place, and the property editor built from
+  `fields.ts` (scrubbable numbers, dropdowns, color swatches);
   `css.ts` reads matched rules, authored values and tokens; `changes.ts` is
   the changelog (instance, component or token level) and its live previews;
   `index.ts` injects the client and saves `.spark/selection.json` and

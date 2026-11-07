@@ -16,7 +16,8 @@ export type Level = "instance" | "component" | "token";
 export type Change = {
   id: string;
   level: Level;
-  /** The CSS property, or the token's name for a token change. */
+  /** The CSS property, the token's name for a token change, or "text" for an
+   * instance's text content. */
   property: string;
   /** The value before Spark touched it ("" when it wasn't set). */
   from: string;
@@ -78,6 +79,10 @@ export function revert(id: string) {
   const c = changes.find((x) => x.id === id);
   if (!c) return;
   changes = changes.filter((x) => x.id !== id);
+  if (c.level === "instance" && c.property === "text") {
+    const pid = pids.get(keyOf(c.element.src, c.instance?.call ?? null));
+    for (const el of Array.from(document.querySelectorAll(`[data-spark-pid="${pid}"]`))) setText(el, c.from);
+  }
   if (c.level === "instance") renderInstances();
   else setOnRule(c, c.from);
 }
@@ -133,8 +138,14 @@ export function renderInstances() {
   markInstances(groups);
   let css = "";
   for (const [key, list] of groups) {
-    const decls = list.map((c) => `${c.property}: ${c.to} !important;`).join(" ");
-    css += `[data-spark-pid="${pidFor(key)}"] { ${decls} }\n`;
+    const sel = `[data-spark-pid="${pidFor(key)}"]`;
+    const text = list.find((c) => c.property === "text");
+    if (text) for (const el of Array.from(document.querySelectorAll(sel))) setText(el, text.to);
+    const decls = list
+      .filter((c) => c.property !== "text")
+      .map((c) => `${c.property}: ${c.to} !important;`)
+      .join(" ");
+    if (decls) css += `${sel} { ${decls} }\n`;
   }
   if (instanceSheet.textContent !== css) instanceSheet.textContent = css;
 }
@@ -148,5 +159,16 @@ function markInstances(groups: Map<string, Change[]>) {
       if (el.getAttribute("data-spark-pid") === pid) continue;
       if (callOf(el, element.comp) === (instance?.call ?? null)) el.setAttribute("data-spark-pid", pid);
     }
+  }
+}
+
+/** Text previews change the text node React already owns, so React can still update it. */
+function setText(el: Element, value: string) {
+  if (el.textContent === value || (el as HTMLElement).isContentEditable) return;
+  const nodes = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE);
+  if (nodes.length === 0) el.append(value);
+  else {
+    nodes[0].nodeValue = value;
+    for (const n of nodes.slice(1)) n.nodeValue = "";
   }
 }
