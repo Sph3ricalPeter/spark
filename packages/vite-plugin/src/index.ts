@@ -8,7 +8,7 @@
 // - Talks to the client over Vite's own HMR socket, so it works wherever hot
 //   reload works, including a Tauri window, and writes what the client sends
 //   into `.spark/` in the project root: selection.json and changes.json, and
-//   chats.json: the Ask popup's conversations, one Claude session per element.
+//   chats.json: the Ask chats, each one Claude session about one element (chats.ts).
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,17 +17,7 @@ import { tagJsx } from "./tag.ts";
 import type { ChangeLog } from "./changes.ts";
 import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
 import { run, running, stop, type RunEvent } from "./runner.ts";
-
-/** One Ask popup conversation (.spark/chats.json, by element key). */
-type Chat = {
-  /** The Claude session later prompts resume; null until the first reply. */
-  sessionId: string | null;
-  /** What the element was called when last asked about ("h2 in Card"). */
-  label: string;
-  /** The model that last answered (claude-sonnet-5-5). */
-  model?: string;
-  messages: { role: "user" | "claude"; text: string; ok?: boolean; at: number }[];
-};
+import { chatStore } from "./chats.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODULES: Record<string, string> = {
@@ -191,7 +181,7 @@ export default function spark(): Plugin {
         } catch {
           // No changes yet.
         }
-        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes, chats: await loadChats() });
+        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes, chats: (await chats.load()).chats, runningChat: running() ? runningChat : null });
       });
       // The current selection, for the MCP server's get_selection (milestone 3).
       server.ws.on("spark:select", (data) => save("selection.json", data));
@@ -203,26 +193,7 @@ export default function spark(): Plugin {
         return save("changes.json", data);
       });
 
-      const loadChats = async (): Promise<Record<string, Chat>> => {
-        try {
-          return JSON.parse(await readFile(path.join(dir, "chats.json"), "utf8"));
-        } catch {
-          return {};
-        }
-      };
-      /** Chats re-filed under a new key (spark:chat-move), so a reply in flight lands in the right one. */
-      const movedTo = new Map<string, string>();
-      /** chats.json changes one at a time, so a reply and a move never overwrite each other. */
-      let chatQueue: Promise<unknown> = Promise.resolve();
-      const serial = (fn: () => Promise<void>) => (chatQueue = chatQueue.then(fn, fn));
-      const updateChat = (key: string, fn: (c: Chat) => Chat) =>
-        serial(async () => {
-          for (let n = 0; movedTo.has(key) && n < 20; n++) key = movedTo.get(key)!;
-          const chats = await loadChats();
-          chats[key] = fn(chats[key] ?? { sessionId: null, label: "", messages: [] });
-          await save("chats.json", chats);
-          server.ws.send("spark:chat", { key, chat: chats[key] });
-        });
+      const chats = chatStore(dir, (f) => server.ws.send("spark:chats", { chats: f.chats }));
 
       // Claude, from the panel: "Implement changes" and "Ask Claude".
       const loadLog = async (): Promise<ChangeLog> => {
@@ -232,9 +203,9 @@ export default function spark(): Plugin {
           return { version: 1, changes: [] };
         }
       };
-      const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { key: string; resume?: string; then: (e: RunEvent) => void }) => {
-        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done" || e.type === "session") ? { ...e, chat: chat.key } : e);
-        runningChat = chat?.key ?? null;
+      const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { id: string; resume?: string; then: (e: RunEvent) => void }) => {
+        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done" || e.type === "session") ? { ...e, chat: chat.id } : e);
+        runningChat = chat?.id ?? null;
         run({
           cwd: root,
           prompt,
@@ -263,68 +234,50 @@ export default function spark(): Plugin {
         if (pending.length === 0) return;
         await start("implement", implementPrompt(pending), pending.map((c) => c.id));
       });
-      // Ask Claude, from the popup on an element: a chat per element (its `chat` key),
-      // one Claude session that later prompts resume.
+      // Ask Claude, from the popup on an element: the element's open chat (by its
+      // `chat` key), one Claude session that later prompts resume (chats.ts).
       let runningChat: string | null = null;
       server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string }) => {
         if (running()) return;
         const log = await loadLog();
         const pending = log.changes.filter((c) => c.status === "pending");
         const ids = pending.map((c) => c.id);
-        const key = data.chat;
-        if (!key) return start("ask", askPrompt(data.request, data.selection, pending), ids);
-        const before = (await loadChats())[key];
-        await updateChat(key, (c) => ({ ...c, label: data.selection?.label ?? c.label, messages: [...c.messages, { role: "user", text: data.request, at: Date.now() }] }));
+        if (!data.chat) return start("ask", askPrompt(data.request, data.selection, pending), ids);
+        const { id, sessionId } = await chats.ask(data.chat, data.selection?.label, data.request);
+        const say = (text: string, ok: boolean) => chats.update(id, (c) => c.messages.push({ role: "claude", text, ok, at: Date.now() }));
         const answer = (resumed: boolean) => (e: RunEvent) => {
-          if (e.type === "error") {
-            void updateChat(key, (c) => ({ ...c, messages: [...c.messages, { role: "claude", text: e.text, ok: false, at: Date.now() }] }));
-            return;
+          if (e.type === "error") void say(e.text, false);
+          else if (e.type === "session") {
+            void chats.update(id, (c) => {
+              c.sessionId = e.sessionId;
+              if (e.model) c.model = e.model;
+            });
+          } else if (e.type === "done") {
+            // The session is gone (cleared history, another machine): start a new one with the full prompt.
+            if (!e.ok && resumed && /no conversation found|session/i.test(e.summary)) {
+              void start("ask", askPrompt(data.request, data.selection, pending), ids, { id, then: answer(false) });
+              return;
+            }
+            void chats.update(id, (c) => {
+              if (e.sessionId) c.sessionId = e.sessionId;
+              if (e.model) c.model = e.model;
+              c.messages.push({ role: "claude", text: e.summary || (e.ok ? "Done." : "Claude stopped."), ok: e.ok, at: Date.now() });
+            });
           }
-          if (e.type === "session") {
-            if (e.model) void updateChat(key, (c) => ({ ...c, model: e.model }));
-            return;
-          }
-          if (e.type !== "done") return;
-          // The session is gone (cleared history, another machine): start a new one with the full prompt.
-          if (!e.ok && resumed && /no conversation found|session/i.test(e.summary)) {
-            void start("ask", askPrompt(data.request, data.selection, pending), ids, { key, then: answer(false) });
-            return;
-          }
-          void updateChat(key, (c) => ({
-            ...c,
-            sessionId: e.sessionId ?? c.sessionId,
-            model: e.model ?? c.model,
-            messages: [...c.messages, { role: "claude", text: e.summary || (e.ok ? "Done." : "Claude stopped."), ok: e.ok, at: Date.now() }],
-          }));
         };
-        const resume = before?.sessionId ?? undefined;
+        const resume = sessionId ?? undefined;
         const prompt = resume ? followupPrompt(data.request, data.selection, pending) : askPrompt(data.request, data.selection, pending);
-        await start("ask", prompt, ids, { key, resume, then: answer(!!resume) });
+        await start("ask", prompt, ids, { id, resume, then: answer(!!resume) });
       });
-      // A chat's element moved (Claude's edit shifted its lines): file the chat under its new key.
-      server.ws.on("spark:chat-move", (data: { from: string; to: string }) =>
-        serial(async () => {
-          const chats = await loadChats();
-          if (!chats[data.from] || chats[data.to]) return;
-          chats[data.to] = chats[data.from];
-          delete chats[data.from];
-          movedTo.set(data.from, data.to);
-          if (runningChat === data.from) runningChat = data.to;
-          await save("chats.json", chats);
-          server.ws.send("spark:chat", { key: data.from, chat: null, movedTo: data.to });
-          server.ws.send("spark:chat", { key: data.to, chat: chats[data.to] });
-        }),
-      );
-      // "New chat" in the popup: forget the element's conversation and its session.
-      server.ws.on("spark:chat-reset", async (data: { chat: string }) => {
-        if (running() && runningChat === data.chat) return;
-        await serial(async () => {
-          const chats = await loadChats();
-          delete chats[data.chat];
-          await save("chats.json", chats);
-          server.ws.send("spark:chat", { key: data.chat, chat: null });
-        });
-      });
+      // The board's Chats list asks for the list when it loads.
+      server.ws.on("spark:chats-get", async (_d, client) => client.send("spark:chats", { chats: (await chats.load()).chats, running: running() ? runningChat : null }));
+      // "New chat": the element's open chat closes (it stays in the Chats list).
+      server.ws.on("spark:chat-new", (data: { chat: string }) => chats.close(data.chat));
+      // The Chats list: open an earlier chat again, or delete one.
+      server.ws.on("spark:chat-open", (data: { id: string }) => chats.reopen(data.id));
+      server.ws.on("spark:chat-delete", (data: { id: string }) => (runningChat === data.id && running() ? undefined : chats.remove(data.id)));
+      // A chat's element moved (Claude's edit shifted its lines): its chats follow it.
+      server.ws.on("spark:chat-move", (data: { from: string; to: string }) => chats.move(data.from, data.to));
       // The empty Components view: Claude writes the *.spark.tsx files.
       // A component frame's case renamed in place (gallery.ts): rename its export.
       server.ws.on("spark:rename-case", async (data: { file: string; from: string; to: string }) => {

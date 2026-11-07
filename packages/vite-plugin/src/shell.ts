@@ -23,6 +23,7 @@ import { installFont } from "./fonts.ts";
 import { THEME, icon } from "./theme.ts";
 import { h } from "./fields.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
+import { chatsTab, sidebar, SIDEBAR_STYLE } from "./sidebar.ts";
 import caseFiles from "/@spark/cases";
 
 const BAR_H = 40;
@@ -155,6 +156,8 @@ root.append(
       overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
     }
     .docked .bar, .docked .canvas { right: ${PANEL_W}px; }
+    .sidebar { top: ${BAR_H}px; }
+    ${SIDEBAR_STYLE}
     button, select, input {
       font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
       border-radius: var(--sp-r-sm); height: 26px; padding: 0 8px; flex: none;
@@ -288,9 +291,16 @@ islandView.addEventListener("click", () => switchMode(false));
 islandEdit.addEventListener("click", () => switchMode(true));
 const sizeControls = [presetSel, prevBtn, nextBtn, wIn, hIn, rotateBtn, ratioSel];
 
+// The left sidebar: Chats (sidebar.ts). Opening it gives the canvas less room.
+const side = sidebar((open) => {
+  shellEl.classList.toggle("side-open", open);
+  apply();
+});
 const bar = h(
   "div",
   { class: "bar" },
+  side.toggle,
+  h("span", { class: "sep" }),
   addBtn,
   h("span", { class: "sep" }),
   presetSel,
@@ -334,7 +344,7 @@ function blurChrome() {
 const stage = h("div", { class: "stage" });
 const shield = h("div", { class: "shield" });
 const canvas = h("div", { class: "canvas" }, stage, shield);
-const shellEl = h("div", { class: "shell" }, bar, canvas);
+const shellEl = h("div", { class: "shell" }, bar, side.el, canvas);
 root.append(shellEl);
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1069,54 @@ function guardFrames() {
 }
 
 // ---------------------------------------------------------------------------
+// Chats: every chat with Claude about an element, from the dev server (chats.ts)
+
+type ChatRef = { id: string; key: string };
+/** Open a chat on its element: the frame that has it becomes the selected one, in Edit mode. */
+function openChat(chat: ChatRef): boolean {
+  for (const f of frames) {
+    const win = f.iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    if (!hooks?.findChat?.(chat.key)) continue;
+    selectFrame(f);
+    if (!edit) switchMode(true);
+    const box = hooks.openChat?.(chat.key);
+    if (box) {
+      // Bring the element into view when it's off screen, at the current zoom.
+      const { cw, ch } = canvasSize();
+      const x = px + (f.x + box.x) * z;
+      const y = py + (f.y + box.y) * z;
+      if (x < 0 || y < 0 || x + box.w * z > cw || y + box.h * z > ch) {
+        centerOn(f.x + box.x, f.y + box.y, box.w, box.h, z);
+        apply();
+      }
+    }
+    return true;
+  }
+  return false;
+}
+const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
+side.addTab("Chats", chatList.el);
+let chatData: ChatRef[] = [];
+let runningChat: string | null = null;
+const showChats = () => {
+  chatList.update(chatData as Parameters<typeof chatList.update>[0], runningChat);
+  side.setCount(chatList.openCount());
+};
+import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | null }) => {
+  chatData = d.chats;
+  if (d.running !== undefined) runningChat = d.running;
+  showChats();
+});
+import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
+  if (e.type === "start") runningChat = e.chat ?? null;
+  else if (e.type === "done" || e.type === "error") runningChat = null;
+  else return;
+  showChats();
+});
+import.meta.hot?.send("spark:chats-get", {});
+
+// ---------------------------------------------------------------------------
 // Start
 
 // An old bookmark of the Components view opens the board.
@@ -1070,6 +1128,7 @@ document.documentElement.append(host);
 syncComponents(caseFiles);
 window.addEventListener("spark:cases", (e) => syncComponents((e as CustomEvent<string[]>).detail));
 shellEl.classList.toggle("docked", docked);
+side.init();
 focusFrame(selected());
 apply();
 requestAnimationFrame(guardFrames);

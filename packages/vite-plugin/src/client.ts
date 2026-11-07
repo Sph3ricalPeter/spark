@@ -756,7 +756,7 @@ const askTag = h("span", { class: "ask-tag" });
 /** The conversation with Claude about the selected element (renderChat fills it). */
 const askThread = h("div", { class: "ask-thread" });
 const askTitle = h("span", { class: "grow" }, "Claude");
-const newChatBtn = h("button", { type: "button", title: "Forget this conversation; the next prompt starts a new Claude session", click: () => resetChat() }, "New chat");
+const newChatBtn = h("button", { type: "button", title: "Start over with a new Claude session; this chat stays in Chats", click: () => resetChat() }, "New chat");
 const askTop = h("div", { class: "ask-top" }, askTitle, newChatBtn);
 const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn));
 askBox.addEventListener("click", () => closePopover());
@@ -1061,6 +1061,7 @@ function follow() {
   placeAsk();
   if (++frame % 30 === 0) {
     renderOverrides();
+    rekeySelection();
     refreshPins();
   } else placePins();
   requestAnimationFrame(follow);
@@ -1462,14 +1463,19 @@ function findByKey(key: string): Element | null {
 
 /** A chat saved under this element's old key (its lines moved): file it under the new one. */
 function adoptChat(el: Element, key: string) {
-  if (chats[key]) return;
-  for (const k of Object.keys(chats)) {
-    if (k === key || keyParts(k).file !== keyParts(key).file || findByKey(k) !== el) continue;
-    chats[key] = chats[k];
-    delete chats[k];
-    import.meta.hot?.send("spark:chat-move", { from: k, to: key });
-    return;
+  const file = keyParts(key).file;
+  const moved = new Set<string>();
+  for (const c of chats) {
+    if (c.key === key || moved.has(c.key) || keyParts(c.key).file !== file || findByKey(c.key) !== el) continue;
+    moved.add(c.key);
+    import.meta.hot?.send("spark:chat-move", { from: c.key, to: key });
   }
+  for (const c of chats) if (moved.has(c.key)) c.key = key;
+}
+
+/** The chat the popup shows on an element: its open one (the last that "New chat" didn't close). */
+function openChatOn(key: string): Chat | undefined {
+  return chats.filter((c) => c.key === key && !c.closed).at(-1);
 }
 
 /** The pins: one per chat whose element is on this page. Rebuilt now and then (follow). */
@@ -1478,8 +1484,8 @@ function refreshPins() {
   const show = open && picking;
   const next: typeof pins = [];
   if (show) {
-    for (const key of Object.keys(chats)) {
-      if (!chats[key].messages.length) continue;
+    const keys = new Set(chats.filter((c) => !c.closed && c.messages.length).map((c) => c.key));
+    for (const key of keys) {
       const el = findByKey(key);
       if (!el) continue;
       const k = chatKey(el, instancePath(el));
@@ -1498,7 +1504,8 @@ function refreshPins() {
             askInput.focus();
           },
         }, lucide("message-circle", 12));
-      const chat = chats[k];
+      const chat = openChatOn(k) ?? openChatOn(key);
+      if (!chat) continue;
       const lastClaude = [...chat.messages].reverse().find((m) => m.role === "claude");
       node.title = `Chat with Claude about ${chat.label || "this element"}${lastClaude ? `\n${lastClaude.text.split("\n")[0].slice(0, 120)}` : ""}`;
       next.push({ key: k, el, node });
@@ -1512,7 +1519,7 @@ function placePins() {
   for (const p of pins) {
     const visible = p.el.isConnected && p.el !== selected;
     p.node.style.display = visible ? "inline-flex" : "none";
-    p.node.classList.toggle("busy", isRunning() && runChat === p.key);
+    p.node.classList.toggle("busy", isRunning() && !!runChat && chats.find((c) => c.id === runChat)?.key === p.key);
     if (!visible) continue;
     const r = p.el.getBoundingClientRect();
     // The pin's bottom-left corner sits on the element's top-right one.
@@ -1550,6 +1557,16 @@ function rememberSelection(el: Element | null) {
   } catch {
     // Storage off: a reload drops the selection.
   }
+}
+
+/** Fast Refresh can keep the selected node and only move its lines: follow its new key,
+ * so the popup keeps showing its chat (the pins re-file the chat under that key). */
+function rekeySelection() {
+  if (!selected?.isConnected || !selKey) return;
+  const key = chatKey(selected, instancePath(selected));
+  if (key === selKey) return;
+  rememberSelection(selected);
+  render();
 }
 
 /** Every frame: find a selection React replaced, or one from before a reload. */
@@ -1593,7 +1610,8 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
 }
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
-type Chat = { sessionId: string | null; label: string; model?: string; messages: ChatMessage[] };
+/** One chat with Claude about an element (chats.ts on the dev server). */
+type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
 
 /** "claude-sonnet-5-5" (or with a date) as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
@@ -1603,15 +1621,15 @@ function modelName(id: string): string {
 }
 /** The model answering the running chat, as soon as its session starts. */
 let runModel: string | null = null;
-/** Every element's conversation (.spark/chats.json), kept in step by the dev server. */
-let chats: Record<string, Chat> = {};
-/** The chat Claude is answering right now, if the run is one. */
+/** Every chat (.spark/chats.json), kept in step by the dev server. */
+let chats: Chat[] = [];
+/** The chat Claude is answering right now (its id), if the run is one. */
 let runChat: string | null = null;
 
 /** The conversation on the selected element, with Claude's progress while it answers. */
 function renderChat() {
-  const chat = askOn ? chats[askOn.key] : undefined;
-  const answering = isRunning() && !!askOn && runChat === askOn.key;
+  const chat = askOn ? openChatOn(askOn.key) : undefined;
+  const answering = isRunning() && !!chat && runChat === chat.id;
   const msgs = chat?.messages ?? [];
   askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
   const model = (answering && runModel) || chat?.model;
@@ -1643,7 +1661,7 @@ function renderChat() {
 
 function resetChat() {
   if (!askOn) return;
-  import.meta.hot?.send("spark:chat-reset", { chat: askOn.key });
+  import.meta.hot?.send("spark:chat-new", { chat: askOn.key });
   askInput.focus();
 }
 
@@ -1759,10 +1777,9 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
   renderChat();
 });
 // An element's conversation changed (a prompt, Claude's reply, New chat).
-import.meta.hot?.on("spark:chat", (d: { key: string; chat: Chat | null; movedTo?: string }) => {
-  if (d.chat) chats[d.key] = d.chat;
-  else delete chats[d.key];
-  if (d.movedTo && runChat === d.key) runChat = d.movedTo;
+import.meta.hot?.on("spark:chats", (d: { chats: Chat[] }) => {
+  chats = d.chats;
+  rekeySelection();
   renderChat();
   refreshPins();
 });
@@ -2422,12 +2439,22 @@ if (shell) {
       restore(list as Change[]);
       render();
     },
+    // The Chats list (sidebar.ts): is a chat's element in this frame, and open it here.
+    findChat: (key) => !!findByKey(key),
+    openChat: (key) => {
+      const el = findByKey(key);
+      if (!el) return null;
+      select(el);
+      askInput.focus();
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    },
   });
 } else if (reopen) setOpen(true);
 requestAnimationFrame(follow);
 
-import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null; chats?: Record<string, Chat> }) => {
-  chats = info.chats ?? {};
+import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null; chats?: Chat[] }) => {
+  chats = Array.isArray(info.chats) ? info.chats : [];
   renderChat();
   root = info.root;
   status.textContent = info.name;

@@ -24,6 +24,10 @@ export type ClientHooks = {
   deselect(): void;
   /** Another frame changed the change list (an edit, undo, redo): show this one. */
   restore(changes: unknown[]): void;
+  /** The Chats list: is the element this chat key names in this frame? */
+  findChat?(key: string): boolean;
+  /** Select that element and open its chat; its box in the frame, or null when it's not here. */
+  openChat?(key: string): { x: number; y: number; w: number; h: number } | null;
 };
 
 /**
