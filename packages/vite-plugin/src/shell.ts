@@ -560,6 +560,49 @@ function syncLocation() {
 }
 setInterval(syncLocation, 500);
 
+// Ctrl+wheel, pinches and Ctrl +/-/0 over the app must zoom the canvas, never
+// the page. The shell puts its own listeners on the frame's window rather
+// than leaving that to the client in the frame: the client only loads after
+// the app's own modules, so while the frame loads, after a full reload (Vite
+// does one when an edit can't hot-update, e.g. after Implement changes) or
+// when the app throws on start, there was no listener and the browser zoomed
+// the whole page. A reload or navigation gives the frame a new window, so
+// this checks every animation frame and re-attaches.
+const GUARD = "__sparkZoomGuard";
+function guardFrame() {
+  try {
+    const w = frame.contentWindow as (Window & { [GUARD]?: boolean }) | null;
+    if (w && !w[GUARD]) {
+      w[GUARD] = true;
+      w.addEventListener(
+        "wheel",
+        (e) => {
+          if (!(e.ctrlKey || e.metaKey)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          api.wheelZoom(e.clientX, e.clientY, wheelDelta(e));
+        },
+        { passive: false, capture: true },
+      );
+      w.addEventListener(
+        "keydown",
+        (e) => {
+          const k = zoomKeyOf(e);
+          if (!k) return;
+          e.preventDefault();
+          e.stopPropagation();
+          zoomKey(k);
+        },
+        true,
+      );
+    }
+  } catch {
+    // The frame navigated off-origin: nothing to guard.
+  }
+  requestAnimationFrame(guardFrame);
+}
+requestAnimationFrame(guardFrame);
+
 document.documentElement.append(host);
 apply();
 if (!fill()) resized();

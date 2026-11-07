@@ -1,8 +1,8 @@
 // The client's side of the viewport shell, when the app runs in its iframe
 // (see mode.ts and shell.ts).
 //
-// - Ctrl+wheel, pinches and Ctrl +/-/0 inside the app zoom the canvas, never
-//   the page, so the app keeps its layout and the panel keeps its size.
+// - Ctrl+wheel, pinches and Ctrl +/-/0 inside the app zoom the canvas: the
+//   shell catches those itself (shell.ts, guardFrame).
 // - Middle drag, and Space drag in edit mode, pan the canvas.
 // - The overlay is drawn inside the frame, so it scales with the canvas and
 //   stays on its elements; handles, outlines and the tag keep their on-screen
@@ -29,14 +29,6 @@ function typing(e: Event) {
   return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName ?? ""));
 }
 
-function zoomKeyOf(e: KeyboardEvent): "in" | "out" | "reset" | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (e.key === "=" || e.key === "+" || e.code === "NumpadAdd") return "in";
-  if (e.key === "-" || e.code === "NumpadSubtract") return "out";
-  if (e.key === "0" || e.code === "Numpad0") return "reset";
-  return null;
-}
-
 /**
  * `overlay` is the client's shadow host; `isOpen` says whether Spark has the
  * pointer (edit mode), which turns on Space-drag panning; `toggle` opens or
@@ -59,28 +51,14 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
   };
   sync();
 
-  window.addEventListener(
-    "wheel",
-    (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
-      s.wheelZoom(e.clientX, e.clientY, dy);
-    },
-    { passive: false, capture: true },
-  );
+  // Ctrl+wheel and Ctrl +/-/0 inside the app are caught by the shell itself
+  // (shell.ts, guardFrame), so they work even before this client loads.
 
   let spaceDown = false;
   window.addEventListener(
     "keydown",
     (e) => {
-      const k = zoomKeyOf(e);
-      if (k) {
-        e.preventDefault();
-        e.stopPropagation();
-        s.zoomKey(k);
-      } else if (e.code === "Space" && isOpen() && !typing(e)) {
+      if (e.code === "Space" && isOpen() && !typing(e)) {
         e.preventDefault();
         e.stopPropagation();
         if (!spaceDown) s.space(true);
