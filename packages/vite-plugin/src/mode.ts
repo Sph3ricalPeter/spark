@@ -29,6 +29,11 @@ export type ShellApi = {
   panBy(dx: number, dy: number): void;
   /** Space held inside the app: dragging pans the canvas. */
   space(down: boolean): void;
+  /**
+   * The client's view/edit mode, for the mode island over the canvas.
+   * `toggle` is how the island's buttons switch it.
+   */
+  setMode(edit: boolean, toggle: (edit: boolean) => void): void;
 };
 
 declare global {

@@ -4,7 +4,7 @@
 // No React here on purpose: the app's React and ours would share a page.
 //
 // Alt+S opens or closes the panel. View mode (the default) leaves the app
-// alone. Edit mode (the Edit toggle or Alt+E):
+// alone. Edit mode (the Edit toggle, Tab, or Alt+E):
 // - hover highlights, click selects (the app doesn't see the click),
 //   Arrow Up selects the parent; Esc steps out one level at a time
 //   (popover, text edit, selection), and from nothing selected back to view;
@@ -322,9 +322,9 @@ const tagLabel = h("div", { class: "tag" });
 const DIRS = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
 type Dir = (typeof DIRS)[number];
 const handles = DIRS.map((dir) => h("div", { class: "handle", "data-dir": dir }));
-// View: the app works as normal. Edit: hover highlights, clicks select (Alt+E).
+// View: the app works as normal. Edit: hover highlights, clicks select (Tab or Alt+E).
 const viewBtn = h("button", { title: "Use the app normally (Esc out of everything)" }, "View");
-const editBtn = h("button", { title: "Select and edit elements (Alt+E)" }, "Edit");
+const editBtn = h("button", { title: "Select and edit elements (Tab or Alt+E)" }, "Edit");
 const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
 const body = h("div", { class: "body" });
@@ -397,6 +397,7 @@ function setPicking(v: boolean) {
   }
   placeHandles();
   render();
+  shell?.setMode(v, setPicking);
 }
 viewBtn.addEventListener("click", () => setPicking(false));
 editBtn.addEventListener("click", () => setPicking(true));
@@ -757,7 +758,7 @@ function render() {
         { class: "empty" },
         picking
           ? "Click an element to select it. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc steps out: selection, then back to View."
-          : "View mode: use the app as normal. Switch to Edit (Alt+E) to select and change elements.",
+          : "View mode: use the app as normal. Switch to Edit (Tab) to select and change elements.",
       ),
     );
     return;
@@ -972,6 +973,20 @@ const keepFromApp = (e: Event) => {
 };
 document.addEventListener("keyup", keepFromApp, true);
 document.addEventListener("keypress", keepFromApp, true);
+/** Tab alone switches view/edit; Shift+Tab still walks the app's focus order backwards. */
+function plainTab(e: KeyboardEvent) {
+  return e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+}
+
+/** Focus is in something you type into: there Tab keeps moving to the next field. */
+function textEntry(e: Event): boolean {
+  const t = e.composedPath()[0] as HTMLElement | undefined;
+  if (!t || !t.tagName) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !/^(button|submit|reset|checkbox|radio|range|color|file|image)$/.test((t as HTMLInputElement).type);
+}
+
 document.addEventListener(
   "keydown",
   (e) => {
@@ -988,8 +1003,9 @@ document.addEventListener(
       setOpen(!open);
       return;
     }
-    if (e.altKey && e.code === "KeyE") {
+    if ((e.altKey && e.code === "KeyE") || (plainTab(e) && !textEntry(e))) {
       e.preventDefault();
+      e.stopPropagation();
       setPicking(!picking);
       return;
     }
@@ -1016,7 +1032,7 @@ document.addEventListener(
 // Esc and Alt+E through.
 const panelKeys = (e: Event) => {
   const k = e as KeyboardEvent;
-  if (k.altKey && k.code === "KeyE") {
+  if ((k.altKey && k.code === "KeyE") || (plainTab(k) && !textEntry(k))) {
     k.preventDefault();
     setPicking(!picking);
   } else if (k.key === "Escape") {
@@ -1070,6 +1086,7 @@ try {
   // Storage may be off.
 }
 if (reopen) setOpen(true);
+shell?.setMode(picking, setPicking);
 requestAnimationFrame(follow);
 
 import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null }) => {

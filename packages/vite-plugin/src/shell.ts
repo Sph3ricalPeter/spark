@@ -120,7 +120,6 @@ root.append(
     .sep { width: 1px; height: 18px; background: #2a2c31; flex: none; margin: 0 4px; }
     .grow { flex: 1; min-width: 8px; }
     .zoom { width: 52px; text-align: center; font: 11px ui-monospace, monospace; color: #fff; flex: none; }
-    .ratio { padding: 0 6px; font-size: 11px; }
     .canvas {
       position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: hidden;
       background-color: #0e0f11;
@@ -143,6 +142,26 @@ root.append(
     /* Covers the frame while panning, so the drag isn't lost into the app. */
     .shield { position: absolute; inset: 0; display: none; }
     .panning .shield, .space .shield { display: block; }
+    /* The mode island: in the middle of the bar, so the mode is never in doubt
+       and it never covers the app. */
+    .island {
+      display: none; flex: none; align-items: center; gap: 8px; padding: 2px 6px 2px 2px; height: 32px;
+      background: #16171aee; border: 1px solid #2a2c31; border-radius: 999px;
+      box-shadow: 0 6px 20px #0008; font: 12px/1 ui-sans-serif, system-ui, sans-serif; color: #8a8f98;
+      user-select: none;
+    }
+    .island.ready { display: flex; }
+    .island button { border-radius: 999px; height: 26px; font-weight: 600; padding: 0 14px; border-color: transparent; background: transparent; }
+    .island button.on { background: #fff; color: #16171a; }
+    .island.edit button.on { background: ${ACCENT}; color: #fff; }
+    .island kbd {
+      font: 10px ui-monospace, monospace; color: #b9bdc5; border: 1px solid #33363c;
+      border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px;
+    }
+    /* Edit mode frames the canvas in the accent color. */
+    .edit-mode .canvas::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 2px ${ACCENT};
+    }
     `,
   ),
 );
@@ -168,14 +187,25 @@ const nextBtn = h("button", { title: "Next size" }, "›");
 const wIn = h("input", { title: "Width (px)", inputmode: "numeric" }) as HTMLInputElement;
 const hIn = h("input", { title: "Height (px)", inputmode: "numeric" }) as HTMLInputElement;
 const rotateBtn = h("button", { title: "Swap width and height" }, "⟲");
-const ratioBtns = RATIOS.map(([name, r]) =>
-  h("button", { class: "ratio", title: `Aspect ${name}: keeps the width`, click: () => setRatio(r) }, name),
-);
+// Aspect ratios as one dropdown, so the bar keeps room for the mode island and zoom.
+const ratioSel = h("select", { title: "Aspect ratio: keeps the width" }) as HTMLSelectElement;
+ratioSel.append(h("option", { value: "" }, "Ratio"));
+for (const [i, [name]] of RATIOS.entries()) ratioSel.append(h("option", { value: String(i) }, name));
+ratioSel.addEventListener("change", () => {
+  if (ratioSel.value !== "") setRatio(RATIOS[Number(ratioSel.value)][1]);
+});
 const zoomOut = h("button", { title: "Zoom out (Ctrl −)" }, "−");
 const zoomLabel = h("span", { class: "zoom", title: "Ctrl+wheel or pinch to zoom at the pointer" });
 const zoomIn = h("button", { title: "Zoom in (Ctrl +)" }, "+");
 const fitBtn = h("button", { title: "Zoom to fit" }, "Fit");
 const oneBtn = h("button", { title: "Actual size (Ctrl 0)" }, "100%");
+
+const islandView = h("button", { title: "Use the app normally (Tab)" }, "View");
+const islandEdit = h("button", { title: "Select and edit elements (Tab)" }, "Edit");
+const island = h("div", { class: "island" }, h("span", { class: "seg" }, islandView, islandEdit), h("kbd", { title: "Tab switches mode" }, "Tab"));
+let toggleMode: ((edit: boolean) => void) | null = null;
+islandView.addEventListener("click", () => toggleMode?.(false));
+islandEdit.addEventListener("click", () => toggleMode?.(true));
 
 const bar = h(
   "div",
@@ -189,7 +219,9 @@ const bar = h(
   hIn,
   rotateBtn,
   h("span", { class: "sep" }),
-  ...ratioBtns,
+  ratioSel,
+  h("span", { class: "grow" }),
+  island,
   h("span", { class: "grow" }),
   zoomOut,
   zoomLabel,
@@ -249,7 +281,8 @@ function apply() {
   presetSel.value = preset;
   if (document.activeElement !== host || root.activeElement !== wIn) wIn.value = String(w);
   if (document.activeElement !== host || root.activeElement !== hIn) hIn.value = String(hgt);
-  for (const [i, b] of ratioBtns.entries()) b.classList.toggle("on", !fill() && Math.abs(w / hgt - RATIOS[i][1]) < 0.01);
+  const ratio = fill() ? -1 : RATIOS.findIndex(([, r]) => Math.abs(w / hgt - r) < 0.01);
+  ratioSel.value = ratio < 0 ? "" : String(ratio);
 }
 
 /** Center the frame at zoom `zz`. */
@@ -502,6 +535,14 @@ const api: ShellApi = {
   zoomKey,
   panBy,
   space: setSpace,
+  setMode(edit, toggle) {
+    toggleMode = toggle;
+    island.classList.add("ready");
+    island.classList.toggle("edit", edit);
+    islandView.classList.toggle("on", !edit);
+    islandEdit.classList.toggle("on", edit);
+    shellEl.classList.toggle("edit-mode", edit);
+  },
 };
 window.__sparkShell = api;
 

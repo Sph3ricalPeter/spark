@@ -23,7 +23,7 @@ Zustand). Release and deploy are ported from dawg and described in
   `tag.ts` adds `data-spark-src` / `data-spark-comp` to DOM elements and
   `data-spark-call` to component call sites; `client.ts` is the overlay and
   docked panel (Shadow DOM, no React; Alt+S). View mode (default) leaves the
-  app usable; edit mode (Alt+E) picks elements, Esc steps back out to view.
+  app usable; edit mode (Tab or Alt+E; the View/Edit island in the canvas bar shows which) picks elements, Esc steps back out to view.
   Edit mode has selection handles to resize,
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);
