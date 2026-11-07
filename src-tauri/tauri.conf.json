@@ -22,7 +22,8 @@
         "decorations": false,
         "shadow": true,
         "theme": "Dark",
-        "backgroundColor": "#0d0d0d"
+        "backgroundColor": "#0d0d0d",
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {

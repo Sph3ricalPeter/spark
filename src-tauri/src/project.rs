@@ -384,6 +384,10 @@ pub async fn open_project(app: AppHandle, folder: String) -> Result<Opened, Stri
         .min_inner_size(800.0, 500.0)
         .theme(Some(tauri::Theme::Dark))
         .background_color(tauri::window::Color(13, 13, 13, 255))
+        // The board zooms its own canvas; the webview's page zoom (Ctrl+wheel,
+        // Ctrl +/-) would scale Spark's panel and bar too. Off is Tauri's
+        // default; said here so it stays that way.
+        .zoom_hotkeys_enabled(false)
         .build();
     let window = match window {
         Ok(w) => w,

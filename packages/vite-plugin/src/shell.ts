@@ -839,9 +839,10 @@ function typing(e: Event) {
 /** Ctrl +, Ctrl -, Ctrl 0, anywhere outside the app. */
 function zoomKeyOf(e: KeyboardEvent): "in" | "out" | "reset" | null {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (e.key === "=" || e.key === "+" || e.code === "NumpadAdd") return "in";
-  if (e.key === "-" || e.code === "NumpadSubtract") return "out";
-  if (e.key === "0" || e.code === "Numpad0") return "reset";
+  // By key and by physical key, with or without Shift (Ctrl+Shift+- zooms the page too).
+  if (e.key === "=" || e.key === "+" || e.code === "Equal" || e.code === "NumpadAdd") return "in";
+  if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") return "out";
+  if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") return "reset";
   return null;
 }
 
@@ -873,7 +874,10 @@ window.addEventListener(
 window.addEventListener("keyup", (e) => e.code === "Space" && setSpace(false), true);
 window.addEventListener("blur", () => setSpace(false));
 // Ctrl+wheel anywhere in the shell (the bar, the panel) is ours, not the page's.
-window.addEventListener("wheel", (e) => (e.ctrlKey || e.metaKey) && e.preventDefault(), { passive: false });
+// Capture phase, so nothing in the shell that stops the event can let it through.
+window.addEventListener("wheel", (e) => (e.ctrlKey || e.metaKey) && e.preventDefault(), { passive: false, capture: true });
+// Safari's pinch comes as gesture events, not Ctrl+wheel.
+for (const t of ["gesturestart", "gesturechange", "gestureend"]) window.addEventListener(t, (e) => e.preventDefault(), { passive: false, capture: true });
 
 new ResizeObserver(() => apply()).observe(canvas);
 
@@ -1072,6 +1076,7 @@ function guardFrames() {
         },
         true,
       );
+      for (const t of ["gesturestart", "gesturechange", "gestureend"]) w.addEventListener(t, (e) => e.preventDefault(), { passive: false, capture: true });
       w.addEventListener(
         "pointerdown",
         () => {

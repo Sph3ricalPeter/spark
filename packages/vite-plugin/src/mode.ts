@@ -92,6 +92,19 @@ function detect(): Mode {
 
 export const mode: Mode = detect();
 
+// The page itself never zooms inside the board: Ctrl+wheel, pinches and
+// Ctrl +/-/0 belong to the canvas (the shell zooms it, see shell.ts
+// guardFrames). This runs with the frame's first module, before the app and
+// before the shell's guard has found the new window, so a gesture in that
+// gap can't zoom the whole tab either.
+if (mode === "frame") {
+  const zoomKey = (e: KeyboardEvent) =>
+    (e.ctrlKey || e.metaKey) && !e.altKey && /^(Equal|Minus|Digit0|NumpadAdd|NumpadSubtract|Numpad0)$/.test(e.code);
+  window.addEventListener("wheel", (e) => (e.ctrlKey || e.metaKey) && e.preventDefault(), { passive: false, capture: true });
+  window.addEventListener("keydown", (e) => zoomKey(e) && e.preventDefault(), true);
+  for (const t of ["gesturestart", "gesturechange", "gestureend"]) window.addEventListener(t, (e) => e.preventDefault(), { passive: false, capture: true });
+}
+
 /** The shell, when the app runs in its iframe. */
 export const shell: ShellApi | null = mode === "frame" ? window.parent.__sparkShell! : null;
 
