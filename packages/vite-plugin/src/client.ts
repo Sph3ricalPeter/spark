@@ -299,6 +299,13 @@ const STYLE = `${THEME}
     .row .k { color: var(--sp-text-dim); width: 112px; flex: none; }
     .row .v { font-family: var(--sp-mono); font-size: var(--sp-fs-sm); word-break: break-all; }
     .hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-top: 4px; }
+    .instance { margin: var(--sp-2) 0 var(--sp-1); padding: var(--sp-2); border-radius: var(--sp-r-md); background: var(--sp-surface); }
+    .instance .crumbs { margin-bottom: var(--sp-2); line-height: 1.5; }
+    .instance .crumbs b { color: var(--sp-text-strong); }
+    .instance .inst, .instance .sep { color: var(--sp-text-dim); }
+    .instance select.wide { border-color: var(--sp-accent); }
+    .row .k.ov { color: var(--sp-warn); }
+    .row .k.ov::after { content: " •"; }
     .owner { padding: 3px 0; }
     .owner b { color: var(--sp-text-strong); font-weight: 600; margin-right: 6px; }
     details { margin-top: 12px; }
@@ -491,6 +498,12 @@ let open = false;
 let picking = false;
 let hovered: Element | null = null;
 let selected: Element | null = null;
+/**
+ * Where the next edit to the selection goes, like a prefab override's target:
+ * null for this instance only, k for `instancePath(selected)[k]`'s source,
+ * 0 for the component itself. Back to null whenever the selection changes.
+ */
+let editScope: number | null = null;
 /** The element whose text is being edited in place. */
 let editing: HTMLElement | null = null;
 let editFrom = "";
@@ -634,6 +647,7 @@ function jumpToVariable(name: string) {
 
 function select(el: Element | null) {
   blurApp();
+  if (el !== selected) editScope = null;
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
   markTab();
@@ -694,12 +708,16 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
   const element = elementInfo(el);
   const path = instancePath(el);
   // Like a prefab: editing an instance adds an override on it, on top of anything applied upstream.
+  // The edit goes where the inspector's "Edits go to" says (editScope).
+  const scope = editScope !== null && editScope < path.length ? editScope : null;
+  const rank = (k: number | null | undefined) => (k === null || k === undefined ? Infinity : k);
   const mine = overridesOn(el).filter((c) => c.property === prop);
-  const existing = mine.filter((c) => (c.instance?.scope ?? null) === null).at(-1);
+  const existing = mine.filter((c) => (c.instance?.scope ?? null) === scope).at(-1);
   if (existing) {
     record({ ...existing, to: value || existing.from });
   } else {
-    const upstream = mine.at(-1);
+    // Starts from what's applied further out, if anything.
+    const upstream = mine.filter((c) => rank(c.instance?.scope) < rank(scope)).at(-1);
     const from = upstream?.to ?? authored(el, matchedRules(el, skip), prop) ?? getComputedStyle(el).getPropertyValue(prop);
     record({
       level: "instance",
@@ -709,7 +727,7 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
       file: null,
       selector: null,
       element,
-      instance: { component: path[0]?.name ?? element.comp ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
+      instance: { component: path[0]?.name ?? element.comp ?? "?", call: path[0]?.call ?? null, path, scope, appliesTo: scopeWords(path, scope) },
     });
   }
   if (final) changed();
@@ -993,9 +1011,11 @@ function placeAsk() {
   const el = selected!;
   const r = el.getBoundingClientRect();
   const comp = el.getAttribute("data-spark-comp");
-  const tag = `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}`;
+  // "Button in Card": an instance and the component it sits in.
+  const owners = instancePath(el);
+  const tag = owners[1] ? `${owners[0].name} in ${owners[1].name}` : `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}`;
   if (askTag.textContent !== tag) askTag.textContent = tag;
-  askTag.title = `${tag}  ${Math.round(r.width)}×${Math.round(r.height)}`;
+  askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${owners.map((o) => o.name).join(" › ") || "no component"}`;
   // The row names the selection, so its floating label goes (unless something else is hovered).
   if (!hovered || hovered === el) tagLabel.style.display = "none";
   askBox.style.display = "flex";
@@ -1076,6 +1096,67 @@ import.meta.hot?.send("spark:run-state", {});
 
 // ---------------------------------------------------------------------------
 // The panel's contents
+
+/** Where an override lives, short: "on this instance", "in Card", "in Button itself". */
+function scopeLabel(path: PathEntry[], scope: number | null): string {
+  if (scope === null) return "on this instance";
+  if (scope === 0) return `in ${path[0]?.name ?? "the component"} itself`;
+  return `in ${path[scope]?.name ?? "?"}`;
+}
+
+/** The closest element around `el` that's written in owner `k` of its path. */
+function ownerElement(el: Element, path: PathEntry[], k: number): Element | null {
+  for (let x = el.parentElement; x; x = x.parentElement) {
+    if (!x.hasAttribute("data-spark-src")) continue;
+    const p = instancePath(x);
+    if (p[0]?.name === path[k].name && p.length === path.length - k) return x;
+  }
+  return null;
+}
+
+/**
+ * Which component this is an instance of, the owners around it (click one to
+ * select it), and where edits go: this instance, an owner, or the original.
+ */
+function instanceHeader(el: Element, path: PathEntry[]): HTMLElement {
+  const box = h("div", { class: "instance" });
+  if (path.length === 0) {
+    box.append(h("div", { class: "hint" }, "Not inside a component Spark knows; edits apply to this element."));
+    return box;
+  }
+  const name = (e: PathEntry) => e.name + (e.key !== null ? ` [${e.key}]` : "");
+  const crumbs = h("div", { class: "crumbs" }, h("span", { class: "inst" }, "Instance of "), h("b", {}, path[0].name));
+  if (path.length > 1) {
+    crumbs.append(h("span", { class: "inst" }, " in "));
+    path.slice(1).forEach((e, i) => {
+      const k = i + 1;
+      const target = ownerElement(el, path, k);
+      if (i > 0) crumbs.append(h("span", { class: "sep" }, " › "));
+      crumbs.append(
+        target
+          ? h("span", { class: "link", title: `Select ${e.name}${e.call ? ` (rendered at ${e.call})` : ""}`, click: () => select(target) }, name(e))
+          : h("span", { title: e.call ?? "" }, name(e)),
+      );
+    });
+  }
+  box.append(crumbs);
+
+  // Narrowest first: this instance, each owner outward, then the component itself.
+  const choices = [null, ...path.map((_, k) => k).slice(1), 0].map((scope) => ({ scope }));
+  const sel = h("select", { title: "Where the next edit to this element goes" }) as HTMLSelectElement;
+  for (const c of choices) {
+    const label = c.scope === null ? "This instance only" : c.scope === 0 ? `${path[0].name} itself: every ${path[0].name}` : `Every ${path[0].name} in ${path[c.scope].name}`;
+    sel.append(h("option", { value: c.scope === null ? "" : String(c.scope) }, label));
+  }
+  sel.value = editScope === null ? "" : String(editScope);
+  sel.classList.toggle("wide", editScope !== null);
+  sel.addEventListener("change", () => {
+    editScope = sel.value === "" ? null : Number(sel.value);
+    render();
+  });
+  box.append(row("Edits go to", sel, h("div", { class: "hint" }, scopeWords(path, editScope))));
+  return box;
+}
 
 function locLink(loc: string | null) {
   if (!loc) return h("span", { class: "empty" }, "unknown");
@@ -1189,13 +1270,7 @@ function render() {
     h("div", { class: "row" }, h("span", { class: "k" }, "Size"), h("span", { class: "v" }, `${Math.round(r.width)} × ${Math.round(r.height)}`)),
   );
 
-  body.append(
-    h(
-      "div",
-      { class: "hint" },
-      `Edits are overrides on this instance${path.length ? ` (${path.map((e) => e.name + (e.key !== null ? `[${e.key}]` : "")).join(" in ")})` : ""}. Apply them upstream from the list below.`,
-    ),
-  );
+  body.append(instanceHeader(el, path));
 
   /** What a field shows: the pending edit, else the source's value (instance: falling back to computed). */
   const overrides = overridesOn(el);
@@ -1203,8 +1278,10 @@ function render() {
     const c = overrides.filter((x) => x.property === prop).at(-1);
     // Computed lengths come with long fractions (108.641px); two decimals is plenty.
     const computed = cs.getPropertyValue(prop).replace(/(\.\d\d)\d+/g, "$1");
+    if (c) overridden.set(prop, c);
     return { value: c?.to ?? authored(el, rules, prop) ?? computed, changed: !!c };
   };
+  const overridden = new Map<string, Change>();
   const onValue = (prop: string): OnValue => (v, final) => {
     edit(el, prop, v, final);
   };
@@ -1265,6 +1342,14 @@ function render() {
       const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
       body.append(row(f.prop, field, notes.length ? h("div", {}, ...notes) : null));
     }
+  }
+  // Mark the fields an override sets, and say where it lives.
+  for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
+    const name = k.title;
+    const c = overridden.get(name) ?? SIDES.map((side) => overridden.get(`${name}-${side}`)).find(Boolean);
+    if (!c) continue;
+    k.classList.add("ov");
+    k.title = `${name}: overridden ${scopeLabel(path, c.instance?.scope ?? null)}`;
   }
 
   // Tokens this element uses
