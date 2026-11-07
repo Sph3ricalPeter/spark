@@ -11,7 +11,8 @@
 // Every frame runs its own Spark client; the board keeps them in step: one
 // mode, one open panel (the selected frame's), one change list, one undo
 // history. Clicking in a frame selects it; Tab (or View in the bar) puts the
-// selected frame in view mode: the others dim (the camera stays put).
+// selected frame in view mode: the others dim. Only Fit, 100% and a
+// double-click on a frame's title move the camera.
 //
 // The canvas zooms and pans on its own: Ctrl+wheel or a pinch zooms at the
 // pointer, Ctrl +/- steps, Ctrl 0 is 100% on the selected frame; wheel over
@@ -843,9 +844,6 @@ const api: ShellApi = {
     docked = v;
     for (const hooks of clients.values()) hooks.setOpen(v);
     apply();
-    // Fill frames change size with the canvas.
-    if (!edit) focusFrame(selected());
-    apply();
   },
   wheelZoom(x, y, deltaY) {
     const f = selected();
@@ -863,7 +861,6 @@ const api: ShellApi = {
     if (v === edit) return;
     edit = v;
     for (const hooks of clients.values()) hooks.setPicking(v);
-    if (!v) focusFrame(selected());
     apply();
   },
   commit(changes, from) {
