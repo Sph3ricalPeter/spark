@@ -179,6 +179,8 @@ root.append(
     .canvas.space { cursor: grab; }
     .stage { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
     .frame { position: absolute; left: 0; top: 0; transition: opacity .15s; }
+    /* The selected frame is on top of any it overlaps. */
+    .frame.selected { z-index: 1; }
     .frame iframe {
       display: block; border: 0; background: var(--sp-text-strong);
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--sp-line), 0 12px 40px #0008;
@@ -547,11 +549,39 @@ function layout() {
   const apps = frames.filter((f) => f.kind === "app");
   const left = Math.max(...apps.map((f) => f.x + f.w)) + GAP;
   let y = Math.min(...apps.map((f) => f.y));
+  const fixed = frames.filter((f) => f.kind === "app" || f.placed);
   for (const f of frames) {
     if (f.kind !== "component" || f.placed) continue;
     f.x = left;
     f.y = y;
-    y += f.h + GAP / 2;
+    // Below any frame that was put in the way.
+    for (let hit = overlapping(f, fixed); hit; hit = overlapping(f, fixed)) f.y = hit.y + hit.h + ROW_GAP;
+    y = f.y + f.h + ROW_GAP;
+  }
+}
+
+/** Room between stacked frames, for the title above each. */
+const ROW_GAP = GAP / 2;
+
+/** A frame in `among` that `f` overlaps (with room for its title), if any. */
+function overlapping(f: Frame, among: Frame[]) {
+  return among.find((o) => o !== f && f.x < o.x + o.w && o.x < f.x + f.w && f.y < o.y + o.h + ROW_GAP && o.y < f.y + f.h + ROW_GAP);
+}
+
+/**
+ * A frame grew (its cases restacked, a case was renamed or added): the
+ * frames it now runs into below it move down, and the ones those run into.
+ */
+function pushBelow(f: Frame) {
+  const queue = [f];
+  for (let a = queue.shift(); a; a = queue.shift()) {
+    for (const b of frames) {
+      if (b === a || (b.kind === "component" && !b.placed) || b.y < a.y) continue;
+      if (b.x < a.x + a.w && a.x < b.x + b.w && b.y < a.y + a.h + ROW_GAP) {
+        b.y = a.y + a.h + ROW_GAP;
+        queue.push(b);
+      }
+    }
   }
 }
 
@@ -946,8 +976,13 @@ const api: ShellApi = {
     const nw = Math.max(80, Math.ceil(w));
     const nh = Math.max(40, Math.ceil(hh));
     if (nw === f.w && nh === f.h) return;
+    const grew = nw > f.w || nh > f.h;
     f.w = nw;
     f.h = nh;
+    if (grew && f.placed) {
+      pushBelow(f);
+      save();
+    }
     apply();
   },
 };
