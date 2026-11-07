@@ -265,14 +265,13 @@ const STYLE = `${THEME}
       color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
     }
     .ask:focus-within { border-color: var(--sp-accent); }
-    .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; }
+    .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; font-family: var(--sp-font); }
     .ask .ib {
       display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
       border: none; background: none; color: var(--sp-text-dim); border-radius: 5px;
     }
     .ask .ib:hover { background: var(--sp-line); color: var(--sp-text-strong); }
     .ask .ib.send { background: var(--sp-accent); color: var(--sp-text-strong); }
-    .ask .icon { display: inline-flex; }
     .seg button { border-radius: 0; }
     .seg button:first-child { border-radius: var(--sp-r-sm) 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
@@ -424,12 +423,6 @@ askInput.addEventListener("keydown", (e) => {
     sendAsk();
   } else if (e.key === "Escape") askInput.blur();
 });
-/** A small inline SVG icon (h() makes HTML elements only). */
-function icon(paths: string) {
-  const span = h("span", { class: "icon" });
-  span.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
-  return span;
-}
 const makeBtn = h(
   "button",
   {
@@ -440,10 +433,9 @@ const makeBtn = h(
       askInput.focus();
     },
   },
-  // Four diamonds: the usual "component" mark.
-  icon('<path d="M8 1.5 10 3.5 8 5.5 6 3.5Z"/><path d="M8 10.5 10 12.5 8 14.5 6 12.5Z"/><path d="M3.5 6 5.5 8 3.5 10 1.5 8Z"/><path d="M12.5 6 14.5 8 12.5 10 10.5 8Z"/>'),
+  lucide("component"),
 );
-const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, icon('<path d="M8 13V3"/><path d="M3.5 7.5 8 3l4.5 4.5"/>'));
+const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
 const askBox = h("div", { class: "ask" }, askInput, makeBtn, sendBtn);
 shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
