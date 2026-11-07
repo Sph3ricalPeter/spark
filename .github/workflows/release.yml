@@ -108,12 +108,25 @@ jobs:
 
       - run: npm ci
 
+      - name: Normalize the signing secrets
+        shell: bash
+        env:
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # Tolerate a pasted secret that lost its trailing "=" padding
+          # (double-click selection stops there) or picked up line breaks.
+          KEY=$(printf %s "$RAW_KEY" | tr -d ' \r\n')
+          while [ $(( ${#KEY} % 4 )) -ne 0 ]; do KEY="$KEY="; done
+          PASSWORD=$(printf %s "$RAW_PASSWORD" | tr -d '\r\n')
+          echo "::add-mask::$KEY"
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "spark ${{ github.ref_name }}"

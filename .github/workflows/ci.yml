@@ -126,10 +126,16 @@ jobs:
         # no key) don't self-update.
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           if [ "${{ steps.publish.outputs.enabled }}" = true ]; then
+            # Tolerate a pasted secret that lost its trailing "=" padding
+            # (double-click selection stops there) or picked up line breaks.
+            KEY=$(printf %s "$RAW_KEY" | tr -d ' \r\n')
+            while [ $(( ${#KEY} % 4 )) -ne 0 ]; do KEY="$KEY="; done
+            export TAURI_SIGNING_PRIVATE_KEY="$KEY"
+            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf %s "$RAW_PASSWORD" | tr -d '\r\n')"
             npm run build:dev -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
           else
             npm run build:dev
