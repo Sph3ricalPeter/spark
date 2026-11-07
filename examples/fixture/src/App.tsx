@@ -1,7 +1,6 @@
-import type { CSSProperties } from "react";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
-import { Meter } from "./ui/Meter";
+import { Track } from "./ui/Track";
 
 const TRACKS = [
   { name: "Drums", color: "var(--track-drums)", level: 0.8 },
@@ -17,19 +16,6 @@ function Toolbar() {
       <Button small>Redo</Button>
       <Button variant="primary">Export</Button>
     </header>
-  );
-}
-
-function Track({ name, color, level }: { name: string; color: string; level: number }) {
-  return (
-    <div className="track" style={{ "--track-color": color } as CSSProperties}>
-      <span className="name">{name}</span>
-      <div className="clip" />
-      <Meter level={level} />
-      <Button variant="ghost" small>
-        Mute
-      </Button>
-    </div>
   );
 }
 
