@@ -1137,7 +1137,7 @@ function render() {
   // Tokens this element uses
   const tokens = tokensUsed(el, rules);
   if (tokens.length) {
-    body.append(h("h3", {}, "Tokens"), h("div", { class: "hint" }, "Changing a token changes everything that uses it. Click a name to see all variables."));
+    body.append(h("h3", {}, "Variables used here"), h("div", { class: "hint" }, "Changing a variable changes everything that uses it. Click a name to see it in Variables."));
     const rootCs = getComputedStyle(document.documentElement);
     for (const t of tokens) {
       const c = pending.find((x) => x.level === "token" && x.property === t);
@@ -1172,7 +1172,7 @@ function render() {
 }
 
 function describeChange(c: Change): string {
-  if (c.level === "token") return `token · ${c.file ?? "?"}`;
+  if (c.level === "token") return `variable · ${c.file ?? "?"}`;
   if (c.level === "component") return `CSS rule ${c.selector} · ${c.file ?? "?"}`;
   const n = coveredElements(c).length;
   return `${c.instance?.appliesTo ?? c.instance?.component ?? "?"} · ${n} on screen`;
@@ -1221,7 +1221,7 @@ function renderChanges() {
         : c.property === "removed"
           ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
           : `${c.property}: ${c.from || "unset"} → ${c.to}`;
-    const kind = c.level === "instance" ? (c.instance?.scope ?? null) === null ? "override" : "applied upstream" : c.level === "component" ? "css rule" : "token";
+    const kind = c.level === "instance" ? (c.instance?.scope ?? null) === null ? "override" : "applied upstream" : c.level === "component" ? "css rule" : "variable";
     footer.append(
       h(
         "div",

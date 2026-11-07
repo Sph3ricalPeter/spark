@@ -299,7 +299,7 @@ export function colorField(
     };
 
     if (tokens.length) {
-      pop.append(h("div", { class: "pop-title" }, "Tokens"));
+      pop.append(h("div", { class: "pop-title" }, "Variables"));
       const grid = h("div", { class: "swatches" });
       for (const t of tokens) {
         const b = h("button", { class: `swatch${value === `var(${t.name})` ? " on" : ""}`, title: `${t.name}  ${t.value}` });
