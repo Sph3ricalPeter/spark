@@ -126,6 +126,43 @@ const FIELDS: { group: string; fields: Field[] }[] = [
 
 const SIDES = ["top", "right", "bottom", "left"] as const;
 
+/** What kind of thing an element is, for which properties come first. */
+type Kind = "text" | "button" | "input" | "media" | "stack" | "box";
+const KIND_LABEL: Record<Kind, string> = { text: "Text", button: "Button", input: "Field", media: "Image", stack: "Layout", box: "Box" };
+/** The properties people change most on each kind, first in the inspector and in the Ask popup. */
+const ESSENTIALS: Record<Kind, string[]> = {
+  text: ["color", "font-size", "font-weight", "line-height", "text-align", "margin"],
+  button: ["background-color", "color", "border-radius", "font-size", "font-weight", "padding"],
+  input: ["background-color", "color", "border-color", "border-radius", "font-size", "padding"],
+  media: ["width", "height", "border-radius", "opacity"],
+  stack: ["gap", "flex-direction", "align-items", "justify-content", "padding", "background-color", "border-radius"],
+  box: ["background-color", "border-radius", "width", "height", "padding", "display"],
+};
+const INLINE = /^(B|I|EM|STRONG|SMALL|CODE|BR|SPAN|A|SUB|SUP|MARK|ABBR|KBD|S|U)$/;
+
+function kindOf(el: Element, cs: CSSStyleDeclaration): Kind {
+  const tag = el.tagName;
+  if (/^(IMG|SVG|VIDEO|CANVAS|PICTURE|IFRAME)$/i.test(tag)) return "media";
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return "input";
+  if (tag === "BUTTON" || el.getAttribute("role") === "button") return "button";
+  if (/flex|grid/.test(cs.display)) return "stack";
+  const ownText = Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && n.textContent!.trim());
+  if (ownText && Array.from(el.children).every((c) => INLINE.test(c.tagName))) return "text";
+  return "box";
+}
+
+function fieldFor(prop: string): Field | undefined {
+  for (const g of FIELDS) for (const f of g.fields) if (f.prop === prop) return f;
+  return undefined;
+}
+
+let allOpen = false;
+try {
+  allOpen = localStorage.getItem("spark:all-props") === "1";
+} catch {
+  // Storage off: starts folded.
+}
+
 function fiberOf(el: Element): Fiber | null {
   const key = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
   return key ? ((el as unknown as Record<string, Fiber>)[key] ?? null) : null;
@@ -261,12 +298,24 @@ const STYLE = `${THEME}
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .ask {
-      position: fixed; display: none; align-items: center; gap: 2px; width: 360px; box-sizing: border-box;
+      position: fixed; display: none; flex-direction: column; gap: 4px; width: 360px; box-sizing: border-box;
       pointer-events: auto; padding: 3px;
       background: #1b1c20; border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.4);
       color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
     }
     .ask:focus-within { border-color: var(--sp-accent); }
+    .ask-main { display: flex; align-items: center; gap: 2px; }
+    .ask-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; padding: 4px 4px 2px; border-top: 1px solid var(--sp-line); }
+    .ask-tools .tool { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .ask-tools .tool-k { flex: none; width: 52px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ask-tools .tool > :last-child { flex: 1; min-width: 0; }
+    .all-head {
+      display: flex; align-items: center; width: 100%; margin-top: var(--sp-4); padding: var(--sp-2) 0; border: none; border-top: 1px solid var(--sp-line);
+      border-radius: 0; background: none; color: var(--sp-text-dim); font-weight: 600; text-align: left;
+    }
+    .all-head::before { content: "▸"; margin-right: 6px; }
+    .all-head.open::before { content: "▾"; }
+    .all-head:hover { color: var(--sp-text-strong); }
     .ask-tag {
       flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       margin-right: var(--sp-1); padding: 2px 6px; border-radius: var(--sp-r-sm);
@@ -436,6 +485,8 @@ askInput.addEventListener("keydown", (e) => {
     e.preventDefault();
     sendAsk();
   } else if (e.key === "Escape") askInput.blur();
+  // Tab stays in the prompt: it neither moves focus to the buttons nor switches mode.
+  else if (e.key === "Tab") e.preventDefault();
 });
 const makeBtn = h(
   "button",
@@ -452,7 +503,16 @@ const makeBtn = h(
 const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
 /** What's selected, as the start of the ask row (it replaces the floating tag label). */
 const askTag = h("span", { class: "ask-tag" });
-const askBox = h("div", { class: "ask" }, askTag, askInput, makeBtn, sendBtn);
+/** The selection's essential properties, right under the prompt (render() fills it). */
+const askTools = h("div", { class: "ask-tools" });
+const askBox = h("div", { class: "ask" }, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn), askTools);
+
+function renderAskTools(tools: [string, HTMLElement][]) {
+  askTools.replaceChildren(
+    ...tools.map(([prop, field]) => h("div", { class: "tool", title: prop }, h("span", { class: "tool-k" }, prop.replace("background-color", "fill").replace("border-radius", "radius")), field)),
+  );
+  askTools.style.display = tools.length ? "" : "none";
+}
 shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
@@ -1306,43 +1366,66 @@ function render() {
     );
   };
 
-  for (const { group, fields } of FIELDS) {
-    body.append(h("h3", {}, group));
-    for (const f of fields) {
-      if (f.kind === "sides") {
-        const quad = h("div", { class: "quad" });
-        const values: string[] = [];
-        const computeds: string[] = [];
-        for (const side of SIDES) {
-          const prop = `${f.prop}-${side}`;
-          const { value, changed } = valueOf(prop);
-          values.push(value);
-          computeds.push(cs.getPropertyValue(prop).trim());
-          quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)));
-        }
-        const sideProps = SIDES.map((side) => `${f.prop}-${side}`);
-        const same = values.every((v) => v === values[0]) ? values[0] : "";
-        const quadVar = withVar(quad, "size", same, computeds[0], (v) => {
-          sideProps.forEach((p, i) => edit(el, p, v, i === sideProps.length - 1));
-        });
-        body.append(row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable)));
-        continue;
+  /** One property's field: a full row for the panel, or just the field (compact) for the Ask popup. */
+  const fieldRow = (f: Field, compact = false): HTMLElement => {
+    if (f.kind === "sides") {
+      const quad = h("div", { class: "quad" });
+      const values: string[] = [];
+      const computeds: string[] = [];
+      for (const side of SIDES) {
+        const prop = `${f.prop}-${side}`;
+        const { value, changed } = valueOf(prop);
+        values.push(value);
+        computeds.push(cs.getPropertyValue(prop).trim());
+        quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)));
       }
-      const { value, changed } = valueOf(f.prop);
-      const computed = cs.getPropertyValue(f.prop);
-      let field: HTMLElement;
-      if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
-      else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
-      else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
-      else field = textField(value, changed, onValue(f.prop));
-      if (f.kind !== "select") {
-        const prop = f.prop;
-        field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
-      }
-      const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
-      body.append(row(f.prop, field, notes.length ? h("div", {}, ...notes) : null));
+      const sideProps = SIDES.map((side) => `${f.prop}-${side}`);
+      const same = values.every((v) => v === values[0]) ? values[0] : "";
+      const quadVar = withVar(quad, "size", same, computeds[0], (v) => {
+        sideProps.forEach((p, i) => edit(el, p, v, i === sideProps.length - 1));
+      });
+      return compact ? quadVar : row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable));
+    }
+    const { value, changed } = valueOf(f.prop);
+    const computed = cs.getPropertyValue(f.prop);
+    let field: HTMLElement;
+    if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
+    else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
+    else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
+    else field = textField(value, changed, onValue(f.prop));
+    if (f.kind !== "select") {
+      const prop = f.prop;
+      field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
+    }
+    const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
+    return compact ? field : row(f.prop, field, notes.length ? h("div", {}, ...notes) : null);
+  };
+
+  // The essentials for this kind of element first; everything else, by category, under "All properties".
+  const kind = kindOf(el, cs);
+  const essentials = ESSENTIALS[kind].map(fieldFor).filter((f): f is Field => !!f);
+  body.append(h("h3", {}, KIND_LABEL[kind]));
+  for (const f of essentials) body.append(fieldRow(f));
+  const toggle = h("button", { class: `all-head${allOpen ? " open" : ""}`, title: "Every property, by category" }, "All properties");
+  toggle.addEventListener("click", () => {
+    allOpen = !allOpen;
+    try {
+      localStorage.setItem("spark:all-props", allOpen ? "1" : "0");
+    } catch {
+      // Not remembered.
+    }
+    render();
+  });
+  body.append(toggle);
+  if (allOpen) {
+    for (const { group, fields } of FIELDS) {
+      const rest = fields.filter((f) => !essentials.includes(f));
+      if (!rest.length) continue;
+      body.append(h("h3", {}, group));
+      for (const f of rest) body.append(fieldRow(f));
     }
   }
+  renderAskTools(essentials.filter((f) => f.kind !== "sides").slice(0, 4).map((f) => [f.prop, fieldRow(f, true)]));
   // Mark the fields an override sets, and say where it lives.
   for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
     const name = k.title;
