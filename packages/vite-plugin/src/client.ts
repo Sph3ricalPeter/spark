@@ -32,6 +32,8 @@ import {
 } from "./changes.ts";
 import { authored, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
+import { frameGlue } from "./frame.ts";
+import { shell } from "./mode.ts";
 
 const PANEL_W = 340;
 const ACCENT = "#4f8cff";
@@ -198,11 +200,7 @@ function openInEditor(loc: string) {
 const host = document.createElement("spark-root");
 host.style.cssText = "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
 const shadow = host.attachShadow({ mode: "open" });
-shadow.append(
-  h(
-    "style",
-    {},
-    `
+const STYLE = `
     :host { all: initial; }
     * { box-sizing: border-box; }
     .box { position: fixed; pointer-events: none; display: none; }
@@ -305,9 +303,8 @@ shadow.append(
     .swatches { display: grid; grid-template-columns: repeat(8, 22px); gap: 5px; margin-bottom: 10px; max-height: 160px; overflow: auto; }
     input[type="color"] { width: 100%; height: 28px; padding: 2px; cursor: pointer; }
     .toast { color: #d9a441; font-size: 11px; margin-top: 6px; }
-    `,
-  ),
-);
+    `;
+shadow.append(h("style", {}, STYLE));
 
 
 const hoverBox = h("div", { class: "box hover" });
@@ -329,7 +326,15 @@ const panel = h(
 );
 panel.addEventListener("click", () => closePopover());
 const fab = h("button", { class: "fab", title: "Open Spark (Alt+S)", click: () => setOpen(true) }, "Spark");
-shadow.append(hoverBox, selectBox, ...handles, tagLabel, panel, fab);
+shadow.append(hoverBox, selectBox, ...handles, tagLabel);
+// In the viewport shell the panel lives outside the zoomed frame (mode.ts).
+const panelHost = shell ? document.createElement("spark-panel") : host;
+const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
+if (shell) {
+  panelHost.style.cssText = host.style.cssText;
+  panelRoot.append(h("style", {}, STYLE));
+}
+panelRoot.append(panel, fab);
 
 // Docking: the app gives up room on the right while the panel is open.
 const dockStyle = document.createElement("style");
@@ -350,7 +355,8 @@ function setOpen(v: boolean) {
   open = v;
   panel.classList.toggle("open", v);
   fab.classList.toggle("hidden", v);
-  document.documentElement.classList.toggle("spark-docked", v);
+  if (shell) shell.setDocked(v);
+  else document.documentElement.classList.toggle("spark-docked", v);
   setPicking(v);
   if (!v) select(null);
   try {
@@ -414,7 +420,7 @@ function label(el: Element | null) {
   tagLabel.textContent = `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}  ${Math.round(r.width)}×${Math.round(r.height)}`;
   tagLabel.style.display = "block";
   // Keep it on screen and out from under the panel.
-  const maxLeft = window.innerWidth - (open ? PANEL_W : 0) - tagLabel.offsetWidth - 4;
+  const maxLeft = window.innerWidth - (open && !shell ? PANEL_W : 0) - tagLabel.offsetWidth - 4;
   tagLabel.style.left = `${Math.max(0, Math.min(r.left, maxLeft))}px`;
   tagLabel.style.top = `${r.top > 22 ? r.top - 20 : r.bottom + 4}px`;
 }
@@ -882,7 +888,7 @@ document.addEventListener(
       return;
     }
     // Typing in the panel: its fields handle their own keys.
-    if (!open || e.composedPath().includes(host)) return;
+    if (!open || e.composedPath().includes(host) || e.composedPath().includes(panelHost)) return;
     if (e.key === "Escape") {
       if (closePopover()) return;
       if (selected) {
@@ -900,9 +906,9 @@ document.addEventListener(
   true,
 );
 // The panel's own keys never reach the app.
-shadow.addEventListener("keydown", (e) => {
+panelRoot.addEventListener("keydown", (e) => {
   if ((e as KeyboardEvent).key === "Escape") {
-    (shadow.activeElement as HTMLElement | null)?.blur();
+    (panelRoot.activeElement as HTMLElement | null)?.blur();
     closePopover();
   }
 });
@@ -912,6 +918,15 @@ shadow.addEventListener("keydown", (e) => {
 
 document.head.append(dockStyle);
 document.documentElement.append(host);
+if (shell) {
+  shell.mount(panelHost);
+  frameGlue(host, () => open, () => setOpen(!open));
+  const sh = shell;
+  window.addEventListener("pagehide", () => {
+    panelHost.remove();
+    sh.setDocked(false);
+  });
+}
 initChanges(skip, instancePath);
 render();
 let reopen = false;
