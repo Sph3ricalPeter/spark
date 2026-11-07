@@ -26,7 +26,10 @@ Zustand). Release and deploy are ported from dawg and described in
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);
   `css.ts` reads matched rules, authored values and tokens; `changes.ts` is
-  the changelog (instance, component or token level) and its live previews;
+  the changelog and its live previews: every edit starts as an override on
+  exactly one instance (owner path with list keys) and can be applied
+  upstream, Unity-prefab style, to any owning component or the original,
+  or moved to a CSS rule; tokens are always global;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Plan: the "Spark:

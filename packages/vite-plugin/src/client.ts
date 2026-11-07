@@ -19,11 +19,16 @@ import {
   initChanges,
   load,
   record,
-  renderInstances,
+  applyTo,
+  applyToRule,
+  coveredElements,
+  overridesOn,
+  pathFor,
+  renderOverrides,
   revert,
-  setCallResolver,
   type Change,
   type ChangeLog,
+  type PathEntry,
 } from "./changes.ts";
 import { authored, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
@@ -36,11 +41,12 @@ const ACCENT = "#4f8cff";
 
 type Fiber = {
   return: Fiber | null;
+  key: string | null;
   type: unknown;
   memoizedProps: Record<string, unknown> | null;
 };
 
-type Owner = { name: string; call: string | null };
+type Owner = PathEntry;
 
 type Field =
   | { prop: string; kind: "number"; step?: number; unit?: string; min?: number }
@@ -130,15 +136,37 @@ function ownersOf(el: Element): Owner[] {
     const name = componentName(f.type);
     if (!name) continue;
     const call = f.memoizedProps?.["data-spark-call"];
-    owners.push({ name, call: typeof call === "string" ? call : null });
+    owners.push({ name, call: typeof call === "string" ? call : null, key: f.key ?? null });
   }
   return owners;
 }
 
-/** The line that renders the instance of `comp` this element belongs to. */
-function instanceCall(el: Element, comp: string | null): string | null {
+/** The element's owners from the component it's written in up to the root.
+ * (Owners further in are only where it was passed as children, not its own.) */
+function instancePath(el: Element): PathEntry[] {
   const owners = ownersOf(el);
-  return (comp ? owners.find((o) => o.name === comp) : owners[0])?.call ?? null;
+  const comp = el.getAttribute("data-spark-comp");
+  const i = comp ? owners.findIndex((o) => o.name === comp) : 0;
+  return i < 0 ? owners : owners.slice(i);
+}
+
+/** What an override's scope means, in words (stored with the change for whoever applies it). */
+function scopeWords(path: PathEntry[], scope: number | null): string {
+  const comp = path[0]?.name ?? "?";
+  const at = (e: PathEntry) => `${e.name}${e.key !== null ? ` (key ${e.key})` : ""} at ${e.call ?? "root"}`;
+  if (scope === null) return `only this instance: ${path.map(at).join(", inside ")}`;
+  if (scope === 0) return `the ${comp} component itself: every ${comp} everywhere`;
+  const via = path.slice(0, scope).map((e) => e.call ?? "?").join(" → ");
+  return `in ${path[scope].name}: every ${comp} it renders through ${via}`;
+}
+
+/** The choices for where an override lives, narrowest first. */
+function scopeChoices(path: PathEntry[]): { scope: number | null; label: string }[] {
+  const comp = path[0]?.name ?? "?";
+  const out: { scope: number | null; label: string }[] = [{ scope: null, label: "Only this instance" }];
+  for (let k = path.length - 1; k >= 1; k--) out.push({ scope: k, label: `Apply to ${path[k].name} (every ${comp} it renders here)` });
+  out.push({ scope: 0, label: `Apply to ${comp} (original: every ${comp})` });
+  return out;
 }
 
 const skip = (n: Node) => host.contains(n) || (n instanceof Element && n.hasAttribute("data-spark"));
@@ -231,7 +259,8 @@ shadow.append(
     .change { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid #23252a; }
     .change .what { flex: 1; min-width: 0; }
     .change .lvl { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #d9a441; }
-    .change .where { color: #8a8f98; font-size: 11px; word-break: break-all; }
+    .change .where { color: #8a8f98; font-size: 11px; word-break: break-word; margin-bottom: 4px; }
+    .change.here { background: ${ACCENT}14; margin: 0 -12px; padding: 5px 12px; }
     .change code { font: 11px ui-monospace, monospace; color: #fff; word-break: break-all; }
     .change button { padding: 0 6px; }
     .fab {
@@ -316,8 +345,6 @@ let editing: HTMLElement | null = null;
 let editFrom = "";
 /** True while a resize handle is being dragged. */
 let resizing = false;
-/** What edits apply to: "instance", or the index of a matched rule. */
-let target: "instance" | number = "instance";
 
 function setOpen(v: boolean) {
   open = v;
@@ -400,7 +427,6 @@ function hover(el: Element | null) {
 
 function select(el: Element | null) {
   if (editing) stopTextEdit(true);
-  if (el !== selected) target = "instance";
   selected = el;
   place(selectBox, el);
   placeHandles();
@@ -431,10 +457,10 @@ function follow() {
     place(hoverBox, hovered);
     place(selectBox, selected);
     placeHandles();
-    if (resizing && selected) label(selected);
+    label(hovered ?? selected);
     if (selected && !selected.isConnected) select(null);
   }
-  if (++frame % 30 === 0) renderInstances();
+  if (++frame % 30 === 0) renderOverrides();
   requestAnimationFrame(follow);
 }
 
@@ -450,19 +476,20 @@ function elementInfo(el: Element) {
   };
 }
 
-/** Preview `prop: value` at the current level; `final` saves it and refreshes the panel. */
+/** Preview `prop: value` as an override on exactly this instance; `final` saves it and refreshes the panel. */
 function edit(el: Element, prop: string, value: string, final: boolean): boolean {
   value = value.trim();
   if (value && !CSS.supports(prop, value)) return false;
-  const rules = matchedRules(el, skip);
   const element = elementInfo(el);
-
-  if (target === "instance") {
-    const call = instanceCall(el, element.comp);
-    const prev = allChanges().find(
-      (c) => c.status === "pending" && c.level === "instance" && c.property === prop && c.element.src === element.src && c.instance?.call === call,
-    );
-    const from = prev?.from ?? authored(el, rules, prop) ?? getComputedStyle(el).getPropertyValue(prop);
+  const path = instancePath(el);
+  // Like a prefab: editing an instance adds an override on it, on top of anything applied upstream.
+  const mine = overridesOn(el).filter((c) => c.property === prop);
+  const existing = mine.filter((c) => (c.instance?.scope ?? null) === null).at(-1);
+  if (existing) {
+    record({ ...existing, to: value || existing.from });
+  } else {
+    const upstream = mine.at(-1);
+    const from = upstream?.to ?? authored(el, matchedRules(el, skip), prop) ?? getComputedStyle(el).getPropertyValue(prop);
     record({
       level: "instance",
       property: prop,
@@ -471,16 +498,8 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
       file: null,
       selector: null,
       element,
-      instance: { component: element.comp ?? "?", call },
+      instance: { component: path[0]?.name ?? element.comp ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
     });
-  } else {
-    const ref = rules[target];
-    if (!ref) return false;
-    const prev = allChanges().find(
-      (c) => c.status === "pending" && c.level === "component" && c.property === prop && c.selector === ref.selector && c.file === rel(ref.file),
-    );
-    const from = prev?.from ?? ref.rule.style.getPropertyValue(prop);
-    record({ level: "component", property: prop, from, to: value, file: rel(ref.file), selector: ref.selector, element, instance: null });
   }
   if (final) changed();
   return true;
@@ -569,10 +588,7 @@ function startTextEdit(el: HTMLElement) {
   if (selected !== el) select(el);
   editing = el;
   // Text already changed in Spark keeps its original "from".
-  const call = instanceCall(el, el.getAttribute("data-spark-comp"));
-  const prev = allChanges().find(
-    (c) => c.status === "pending" && c.property === "text" && c.element.src === el.getAttribute("data-spark-src") && c.instance?.call === call,
-  );
+  const prev = overridesOn(el).filter((c) => c.property === "text").at(-1);
   editFrom = prev?.from ?? el.textContent ?? "";
   el.setAttribute("contenteditable", "plaintext-only");
   if (el.contentEditable !== "plaintext-only") el.setAttribute("contenteditable", "true");
@@ -598,17 +614,21 @@ function stopTextEdit(keep: boolean) {
     el.textContent = editFrom;
     return;
   }
-  const element = elementInfo(el);
-  record({
-    level: "instance",
-    property: "text",
-    from: editFrom,
-    to: text,
-    file: null,
-    selector: null,
-    element,
-    instance: { component: element.comp ?? "?", call: instanceCall(el, element.comp) },
-  });
+  const existing = overridesOn(el).filter((c) => c.property === "text" && (c.instance?.scope ?? null) === null).at(-1);
+  if (existing) record({ ...existing, to: text });
+  else {
+    const path = instancePath(el);
+    record({
+      level: "instance",
+      property: "text",
+      from: editFrom,
+      to: text,
+      file: null,
+      selector: null,
+      element: elementInfo(el),
+      instance: { component: path[0]?.name ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
+    });
+  }
   changed();
   placeHandles();
 }
@@ -642,9 +662,8 @@ function render() {
   const el = selected;
   const rules = matchedRules(el, skip);
   const owners = ownersOf(el);
-  const comp = el.getAttribute("data-spark-comp");
-  const call = instanceCall(el, comp);
   const classes = Array.from(el.classList);
+  const path = instancePath(el);
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
   const pending = allChanges().filter((c) => c.status === "pending");
@@ -657,34 +676,21 @@ function render() {
     h("div", { class: "row" }, h("span", { class: "k" }, "Size"), h("span", { class: "v" }, `${Math.round(r.width)} × ${Math.round(r.height)}`)),
   );
 
-  // Where edits go
-  const sel = h("select", {}) as HTMLSelectElement;
-  sel.append(h("option", { value: "instance", selected: target === "instance" }, `This ${comp ?? "element"} only${call ? ` (${call})` : ""}`));
-  // Most specific-looking first: later rules win ties.
-  [...rules.entries()].reverse().forEach(([i, m]) =>
-    sel.append(h("option", { value: String(i), selected: target === i }, `Every match of ${m.selector}  · ${shortFile(m.file)}`)),
-  );
-  sel.addEventListener("change", () => {
-    target = sel.value === "instance" ? "instance" : Number(sel.value);
-    render();
-  });
   body.append(
-    h("h3", {}, "Apply edits to"),
-    sel,
-    h("div", { class: "hint" }, target === "instance" ? "Changes this one instance, at the line that renders it." : "Changes the CSS rule, so every element it matches."),
+    h(
+      "div",
+      { class: "hint" },
+      `Edits are overrides on this instance${path.length ? ` (${path.map((e) => e.name + (e.key !== null ? `[${e.key}]` : "")).join(" in ")})` : ""}. Apply them upstream from the list below.`,
+    ),
   );
 
   /** What a field shows: the pending edit, else the source's value (instance: falling back to computed). */
+  const overrides = overridesOn(el);
   const valueOf = (prop: string): { value: string; changed: boolean } => {
-    if (target === "instance") {
-      const c = pending.find((x) => x.level === "instance" && x.property === prop && x.element.src === el.getAttribute("data-spark-src") && x.instance?.call === call);
-      // Computed lengths come with long fractions (108.641px); two decimals is plenty.
-      const computed = cs.getPropertyValue(prop).replace(/(\.\d\d)\d+/g, "$1");
-      return { value: c?.to ?? authored(el, rules, prop) ?? computed, changed: !!c };
-    }
-    const ref = rules[target];
-    const c = pending.find((x) => x.level === "component" && x.property === prop && x.selector === ref?.selector && x.file === rel(ref?.file ?? null));
-    return { value: ref?.rule.style.getPropertyValue(prop) ?? "", changed: !!c };
+    const c = overrides.filter((x) => x.property === prop).at(-1);
+    // Computed lengths come with long fractions (108.641px); two decimals is plenty.
+    const computed = cs.getPropertyValue(prop).replace(/(\.\d\d)\d+/g, "$1");
+    return { value: c?.to ?? authored(el, rules, prop) ?? computed, changed: !!c };
   };
   const onValue = (prop: string): OnValue => (v, final) => {
     edit(el, prop, v, final);
@@ -752,9 +758,31 @@ function render() {
 }
 
 function describeChange(c: Change): string {
-  if (c.level === "token") return `${c.file ?? "?"}`;
-  if (c.level === "component") return `${c.selector} · ${c.file ?? "?"}`;
-  return `${c.instance?.component ?? "?"} at ${c.instance?.call ?? c.element.src ?? "?"}`;
+  if (c.level === "token") return `token · ${c.file ?? "?"}`;
+  if (c.level === "component") return `CSS rule ${c.selector} · ${c.file ?? "?"}`;
+  const n = coveredElements(c).length;
+  return `${c.instance?.appliesTo ?? c.instance?.component ?? "?"} · ${n} on screen`;
+}
+
+/** Where an override lives: its scope, or (style overrides) one of the CSS rules that match it. */
+function scopeSelect(c: Change): HTMLElement {
+  const path = pathFor(c);
+  const sel = h("select", { title: "Where this change lives" }) as HTMLSelectElement;
+  for (const o of scopeChoices(path)) sel.append(h("option", { value: String(o.scope), selected: o.scope === (c.instance?.scope ?? null) }, o.label));
+  const el = coveredElements(c)[0];
+  const rules = el && c.property !== "text" ? matchedRules(el, skip) : [];
+  for (const [i, m] of [...rules.entries()].reverse()) sel.append(h("option", { value: `rule:${i}` }, `Move to CSS rule ${m.selector} · ${shortFile(m.file)}`));
+  sel.addEventListener("change", () => {
+    if (sel.value.startsWith("rule:")) {
+      const m = rules[Number(sel.value.slice(5))];
+      applyToRule(c.id, rel(m.file), m.selector, m.rule.style.getPropertyValue(c.property));
+    } else {
+      const scope = sel.value === "null" ? null : Number(sel.value);
+      applyTo(c.id, scope, scopeWords(path, scope));
+    }
+    changed();
+  });
+  return sel;
 }
 
 function renderChanges() {
@@ -764,13 +792,22 @@ function renderChanges() {
     footer.append(h("div", { class: "empty" }, "Edits you make show up here."));
     return;
   }
+  const here = new Set(selected ? overridesOn(selected).map((c) => c.id) : []);
   for (const c of pending) {
     const what = c.property === "text" ? `text: "${c.from}" → "${c.to}"` : `${c.property}: ${c.from || "unset"} → ${c.to}`;
+    const kind = c.level === "instance" ? (c.instance?.scope ?? null) === null ? "override" : "applied upstream" : c.level === "component" ? "css rule" : "token";
     footer.append(
       h(
         "div",
-        { class: "change" },
-        h("div", { class: "what" }, h("div", { class: "lvl" }, c.level), h("code", {}, what), h("div", { class: "where" }, describeChange(c))),
+        { class: `change${here.has(c.id) ? " here" : ""}` },
+        h(
+          "div",
+          { class: "what" },
+          h("div", { class: "lvl" }, kind),
+          h("code", {}, what),
+          h("div", { class: "where" }, describeChange(c)),
+          c.level === "instance" && scopeSelect(c),
+        ),
         h(
           "button",
           {
@@ -875,8 +912,7 @@ shadow.addEventListener("keydown", (e) => {
 
 document.head.append(dockStyle);
 document.documentElement.append(host);
-initChanges(skip);
-setCallResolver(instanceCall);
+initChanges(skip, instancePath);
 render();
 let reopen = false;
 try {
