@@ -7,15 +7,25 @@
 //   runs in the shell's iframe. See mode.ts.
 // - Talks to the client over Vite's own HMR socket, so it works wherever hot
 //   reload works, including a Tauri window, and writes what the client sends
-//   into `.spark/` in the project root: selection.json and changes.json.
+//   into `.spark/` in the project root: selection.json and changes.json, and
+//   chats.json: the Ask popup's conversations, one Claude session per element.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { tagJsx } from "./tag.ts";
 import type { ChangeLog } from "./changes.ts";
-import { askPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
+import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
 import { run, running, stop, type RunEvent } from "./runner.ts";
+
+/** One Ask popup conversation (.spark/chats.json, by element key). */
+type Chat = {
+  /** The Claude session later prompts resume; null until the first reply. */
+  sessionId: string | null;
+  /** What the element was called when last asked about ("h2 in Card"). */
+  label: string;
+  messages: { role: "user" | "claude"; text: string; ok?: boolean; at: number }[];
+};
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODULES: Record<string, string> = {
@@ -179,7 +189,7 @@ export default function spark(): Plugin {
         } catch {
           // No changes yet.
         }
-        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes });
+        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes, chats: await loadChats() });
       });
       // The current selection, for the MCP server's get_selection (milestone 3).
       server.ws.on("spark:select", (data) => save("selection.json", data));
@@ -191,6 +201,20 @@ export default function spark(): Plugin {
         return save("changes.json", data);
       });
 
+      const loadChats = async (): Promise<Record<string, Chat>> => {
+        try {
+          return JSON.parse(await readFile(path.join(dir, "chats.json"), "utf8"));
+        } catch {
+          return {};
+        }
+      };
+      const updateChat = async (key: string, fn: (c: Chat) => Chat) => {
+        const chats = await loadChats();
+        chats[key] = fn(chats[key] ?? { sessionId: null, label: "", messages: [] });
+        await save("chats.json", chats);
+        server.ws.send("spark:chat", { key, chat: chats[key] });
+      };
+
       // Claude, from the panel: "Implement changes" and "Ask Claude".
       const loadLog = async (): Promise<ChangeLog> => {
         try {
@@ -199,15 +223,19 @@ export default function spark(): Plugin {
           return { version: 1, changes: [] };
         }
       };
-      const start = async (kind: "implement" | "ask", prompt: string, ids: string[]) => {
-        const emit = (e: RunEvent) => server.ws.send("spark:run", e);
+      const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { key: string; resume?: string; then: (e: RunEvent) => void }) => {
+        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done") ? { ...e, chat: chat.key } : e);
+        runningChat = chat?.key ?? null;
         run({
           cwd: root,
           prompt,
           kind,
           ids,
+          resume: chat?.resume,
           emit: (e) => {
+            if (e.type === "done" || e.type === "error") runningChat = null;
             emit(e);
+            if (e.type === "done" || e.type === "error") chat?.then(e);
             if (e.type !== "done" || e.applied.length === 0) return;
             // Mark what Claude applied, against the latest log (edits may have arrived meanwhile).
             void loadLog().then(async (log) => {
@@ -226,10 +254,46 @@ export default function spark(): Plugin {
         if (pending.length === 0) return;
         await start("implement", implementPrompt(pending), pending.map((c) => c.id));
       });
-      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null }) => {
+      // Ask Claude, from the popup on an element: a chat per element (its `chat` key),
+      // one Claude session that later prompts resume.
+      let runningChat: string | null = null;
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string }) => {
+        if (running()) return;
         const log = await loadLog();
         const pending = log.changes.filter((c) => c.status === "pending");
-        await start("ask", askPrompt(data.request, data.selection, pending), pending.map((c) => c.id));
+        const ids = pending.map((c) => c.id);
+        const key = data.chat;
+        if (!key) return start("ask", askPrompt(data.request, data.selection, pending), ids);
+        const before = (await loadChats())[key];
+        await updateChat(key, (c) => ({ ...c, label: data.selection?.label ?? c.label, messages: [...c.messages, { role: "user", text: data.request, at: Date.now() }] }));
+        const answer = (resumed: boolean) => (e: RunEvent) => {
+          if (e.type === "error") {
+            void updateChat(key, (c) => ({ ...c, messages: [...c.messages, { role: "claude", text: e.text, ok: false, at: Date.now() }] }));
+            return;
+          }
+          if (e.type !== "done") return;
+          // The session is gone (cleared history, another machine): start a new one with the full prompt.
+          if (!e.ok && resumed && /no conversation found|session/i.test(e.summary)) {
+            void start("ask", askPrompt(data.request, data.selection, pending), ids, { key, then: answer(false) });
+            return;
+          }
+          void updateChat(key, (c) => ({
+            ...c,
+            sessionId: e.sessionId ?? c.sessionId,
+            messages: [...c.messages, { role: "claude", text: e.summary || (e.ok ? "Done." : "Claude stopped."), ok: e.ok, at: Date.now() }],
+          }));
+        };
+        const resume = before?.sessionId ?? undefined;
+        const prompt = resume ? followupPrompt(data.request, data.selection, pending) : askPrompt(data.request, data.selection, pending);
+        await start("ask", prompt, ids, { key, resume, then: answer(!!resume) });
+      });
+      // "New chat" in the popup: forget the element's conversation and its session.
+      server.ws.on("spark:chat-reset", async (data: { chat: string }) => {
+        if (running() && runningChat === data.chat) return;
+        const chats = await loadChats();
+        delete chats[data.chat];
+        await save("chats.json", chats);
+        server.ws.send("spark:chat", { key: data.chat, chat: null });
       });
       // The empty Components view: Claude writes the *.spark.tsx files.
       // A component frame's case renamed in place (gallery.ts): rename its export.
@@ -246,7 +310,7 @@ export default function spark(): Plugin {
       });
       server.ws.on("spark:gallery-generate", () => start("ask", galleryPrompt(), []));
       server.ws.on("spark:stop", () => stop());
-      server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: running() }));
+      server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: running(), chat: running() ? runningChat : null }));
     },
   };
 }

@@ -39,11 +39,11 @@ import {
   breadth,
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
-import { closePopover, colorField, colorTokens, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
+import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
-import { draftVariable, renderVariables, resolvedLine, varButton, varsIn, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
+import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
 import type { RuleRef } from "./css.ts";
 
@@ -139,27 +139,6 @@ const ESSENTIALS: Record<Kind, string[]> = {
   media: ["width", "height", "border-radius", "opacity"],
   stack: ["gap", "flex-direction", "align-items", "justify-content", "padding", "background-color", "border-radius"],
   box: ["background-color", "border-radius", "width", "height", "padding", "display"],
-};
-/** Short labels for the Ask popup's fields (the full property name is in the tooltip). */
-const SHORT: Record<string, string> = {
-  color: "Color",
-  "background-color": "Fill",
-  "border-color": "Stroke",
-  "border-radius": "Radius",
-  "border-width": "Stroke",
-  "font-size": "Size",
-  "font-weight": "Weight",
-  "line-height": "Line",
-  "letter-spacing": "Letter",
-  "text-align": "Align",
-  width: "W",
-  height: "H",
-  opacity: "Opacity",
-  gap: "Gap",
-  "flex-direction": "Direction",
-  "align-items": "Align",
-  "justify-content": "Justify",
-  display: "Display",
 };
 /** What font-weight numbers are called, shown next to them. */
 const WEIGHTS: Record<string, string> = {
@@ -395,24 +374,46 @@ const host = document.createElement("spark-root");
 host.style.cssText = "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
 const shadow = host.attachShadow({ mode: "open" });
 /**
- * The Ask popup: a prompt row naming the selection, then its essential
- * properties as self-labelled fields (the label scrubs a number, like
- * Figma's), two to a row.
+ * The Ask popup: a small chat with Claude about the selected element (one
+ * Claude session per element), the prompt at the bottom naming the selection.
  */
 const ASK_STYLE = `
     .ask {
-      position: fixed; display: none; flex-direction: column; width: 392px; pointer-events: auto; padding: 6px;
+      position: fixed; display: none; flex-direction: column; width: 340px; pointer-events: auto; padding: 6px;
       background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: 10px;
       box-shadow: 0 12px 36px #0008, 0 2px 6px #0006;
-      color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
+      color: var(--sp-text); font: var(--sp-fs-md)/1.45 var(--sp-font);
     }
+    .ask-top { display: none; align-items: center; gap: 6px; height: 22px; padding: 0 2px 0 6px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+    .ask.has-chat .ask-top { display: flex; }
+    .ask-top .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ask-top button {
+      height: 20px; padding: 0 6px; border: none; background: none; color: var(--sp-text-dim); font: 500 var(--sp-fs-sm)/1 var(--sp-font); border-radius: var(--sp-r-sm);
+    }
+    .ask-top button:hover { background: var(--sp-field); color: var(--sp-text-strong); }
+    .ask-thread {
+      display: none; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; margin: 2px 0 6px; padding: 4px 4px 2px;
+      scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent;
+    }
+    .ask.has-chat .ask-thread { display: flex; }
+    /* No ligatures: replies are full of code, and Manrope draws "--" as a dash. */
+    .msg { max-width: 92%; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font-feature-settings: "liga" 0, "calt" 0; }
+    .msg.user {
+      align-self: flex-end; padding: 5px 9px; border-radius: 10px 10px 3px 10px;
+      background: color-mix(in srgb, var(--sp-accent) 22%, var(--sp-field)); color: var(--sp-text-strong);
+    }
+    .msg.claude { align-self: flex-start; padding: 1px 2px; color: var(--sp-text); }
+    .msg.claude.bad { color: var(--sp-danger); }
+    .msg.work { display: flex; align-items: center; gap: 8px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+    .msg.work .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sp-mono); }
+    .msg.work button { flex: none; height: 20px; padding: 0 6px; font-size: var(--sp-fs-sm); }
     .ask-main {
       display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 5px;
       background: var(--sp-bg); border: 1px solid var(--sp-line); border-radius: var(--sp-r-lg);
     }
     .ask-main:focus-within { border-color: var(--sp-accent); }
     .ask-tag {
-      flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 168px; height: 22px; padding: 0 7px 0 6px;
+      flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 150px; height: 22px; padding: 0 7px 0 6px;
       border-radius: var(--sp-r-sm); white-space: nowrap; cursor: default;
       background: color-mix(in srgb, var(--sp-accent) 16%, transparent); color: var(--sp-link); font: 600 var(--sp-fs-sm)/1 var(--sp-font);
     }
@@ -425,6 +426,7 @@ const ASK_STYLE = `
     }
     .ask-main input::placeholder { color: var(--sp-text-dim); }
     .ask-main input:focus { outline: none; border: none; }
+    .ask-main input:disabled { opacity: 1; }
     .ask .ib {
       flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
       border: none; background: none; color: var(--sp-text-dim); border-radius: var(--sp-r-md);
@@ -432,48 +434,6 @@ const ASK_STYLE = `
     .ask .ib:hover { background: var(--sp-line); color: var(--sp-text-strong); }
     .ask .ib.send { background: var(--sp-line-strong); color: var(--sp-text-dim); }
     .ask .ib.send.ready { background: var(--sp-accent); color: var(--sp-text-strong); }
-    .ask-edits { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-    .ask-head {
-      display: flex; align-items: center; gap: 6px; height: 20px; padding: 0 2px 0 4px; color: var(--sp-text-dim);
-      font: 600 var(--sp-fs-xs)/1 var(--sp-font); text-transform: uppercase; letter-spacing: .06em;
-    }
-    .ask-head .scope { margin-left: auto; display: flex; align-items: center; gap: 2px; text-transform: none; letter-spacing: 0; font: 500 var(--sp-fs-sm)/1 var(--sp-font); }
-    .ask-head .scope button.select {
-      height: 20px; width: auto; gap: 3px; padding: 0 2px 0 4px; border: none; background: none; color: var(--sp-text); font: inherit;
-    }
-    .ask-head .scope button.select:hover, .ask-head .scope button.select.open { color: var(--sp-text-strong); background: var(--sp-field); }
-    .ask-head .scope.wide button.select { color: var(--sp-warn); }
-    .ask-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-    .qf {
-      display: flex; align-items: center; min-width: 0; height: 28px;
-      background: var(--sp-field); border: 1px solid transparent; border-radius: var(--sp-r-md);
-    }
-    .qf:hover { border-color: var(--sp-line-strong); }
-    .qf:focus-within { border-color: var(--sp-accent); }
-    .qf .qk, .qf .num .grip {
-      flex: none; align-self: stretch; display: inline-flex; align-items: center; padding: 0 6px 0 8px;
-      color: var(--sp-text-dim); font: 500 var(--sp-fs-sm)/1 var(--sp-font); white-space: nowrap; cursor: default;
-    }
-    .qf .num .grip { cursor: ew-resize; }
-    .qf .num .grip:hover { color: var(--sp-text-strong); }
-    .qf.changed .qk, .qf.changed .num .grip { color: var(--sp-warn); }
-    .qf .with-var { flex: 1; min-width: 0; align-self: stretch; align-items: center; gap: 0; }
-    .qf .with-var > :first-child, .qf > .sel { flex: 1; min-width: 0; align-self: stretch; }
-    .qf .num, .qf .num:focus-within, .qf input, .qf input:focus, .qf button.select, .qf .num.changed, .qf input.changed, .qf button.select.changed {
-      border: none; outline: none; background: transparent; box-shadow: none;
-    }
-    .qf .num, .qf button.select { height: 100%; }
-    .qf input { height: 100%; padding: 0 4px 0 0; color: var(--sp-text-strong); font: var(--sp-fs-sm) var(--sp-mono); }
-    .qf .color { align-items: center; gap: 6px; height: 100%; }
-    .qf .swatch { width: 14px; height: 14px; border-radius: 3px; }
-    .qf button.select { padding: 0 8px 0 0; color: var(--sp-text-strong); font: var(--sp-fs-sm) var(--sp-mono); }
-    .qf button.select .sel-h { font-family: var(--sp-font); }
-    .qf .varbtn { width: 22px; height: 22px; margin-right: 2px; border: none; background: none; opacity: 0; }
-    .qf:hover .varbtn, .qf:focus-within .varbtn { opacity: 1; }
-    .qf .with-var > .var-pill { align-self: center; margin: 0 3px 0 0; }
-    /* The variable's name comes first; what it resolves to gives way. */
-    .qf .var-pill .nm { flex: 0 1 auto; }
-    .qf .var-pill .vl { flex: 0 100 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
 
 const STYLE = `${THEME}
@@ -759,12 +719,12 @@ const makeBtn = h(
 const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
 /** What's selected, as the start of the prompt (it replaces the floating tag label). */
 const askTag = h("span", { class: "ask-tag" });
-/** The quick edits' heading: what kind of element, and where its edits go. */
-const askHead = h("div", { class: "ask-head" });
-/** The selection's essential properties, under the prompt (render() fills it). */
-const askTools = h("div", { class: "ask-tools" });
-const askEdits = h("div", { class: "ask-edits" }, askHead, askTools);
-const askBox = h("div", { class: "ask" }, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn), askEdits);
+/** The conversation with Claude about the selected element (renderChat fills it). */
+const askThread = h("div", { class: "ask-thread" });
+const askTitle = h("span", { class: "grow" }, "Claude");
+const newChatBtn = h("button", { type: "button", title: "Forget this conversation; the next prompt starts a new Claude session", click: () => resetChat() }, "New chat");
+const askTop = h("div", { class: "ask-top" }, askTitle, newChatBtn);
+const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn));
 askBox.addEventListener("click", () => closePopover());
 shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
@@ -1358,7 +1318,7 @@ const isDelete = (e: KeyboardEvent) => (e.key === "Delete" || e.key === "Backspa
 // dev server (runner.ts); progress comes back as spark:run events.
 
 type RunEvent =
-  | { type: "start"; kind: "implement" | "ask"; ids: string[] }
+  | { type: "start"; kind: "implement" | "ask"; ids: string[]; chat?: string }
   | { type: "log"; text: string }
   | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number }
   | { type: "error"; text: string };
@@ -1375,8 +1335,8 @@ function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
   const el = selected;
-  const selection = el ? { ...snapshot(el), owners: instancePath(el), text: (el.textContent ?? "").trim().slice(0, 200) } : null;
-  import.meta.hot?.send("spark:ask", { request, selection });
+  const selection = el ? { ...snapshot(el), owners: instancePath(el), text: (el.textContent ?? "").trim().slice(0, 200), label: askOn?.label } : null;
+  import.meta.hot?.send("spark:ask", { request, selection, chat: el ? askOn?.key : undefined });
   askInput.value = "";
   sendBtn.classList.remove("ready");
   askInput.blur();
@@ -1393,55 +1353,88 @@ function askName(el: Element, path: PathEntry[]): { name: string; owner: string 
   return { name: el.tagName.toLowerCase() + (cls ? `.${cls}` : ""), owner: path[0]?.name ?? null, comp: false };
 }
 
-/** Fill the popup for the selection: its name, the kind heading with where edits go, and the quick fields. */
-function renderAsk(el: Element, path: PathEntry[], kind: Kind, fields: HTMLElement[]) {
+/** The element the popup is on: its chat key and what it's called. */
+let askOn: { key: string; label: string } | null = null;
+
+/** An element's chat: where it's written plus the instance it is (owners, list keys), so a
+ * conversation stays with one element across reloads, and each list item has its own. */
+function chatKey(el: Element, path: PathEntry[]): string {
+  const at = path.map((p) => `${p.name}@${p.call ?? "root"}${p.key !== null ? `#${p.key}` : ""}`).join(">");
+  return `${el.getAttribute("data-spark-src") ?? el.tagName.toLowerCase()}|${at}`;
+}
+
+/** Fill the popup for the selection: its name, then its conversation. */
+function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   const n = askName(el, path);
   const r = el.getBoundingClientRect();
   askTag.className = `ask-tag${n.comp ? " comp" : ""}`;
   askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
   askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
-
-  askHead.replaceChildren(h("span", {}, KIND_LABEL[kind]));
-  const chain = chainOf(path);
-  const step = targetStep(path);
-  if (step) {
-    const comp = path[0].name;
-    const short = (s: Step) => (s.key === "one" ? "This one only" : s.key === "base" ? `Every ${comp}` : `Every ${s.label}`);
-    const text = h("span", { class: "sel-v" }, short(step));
-    const btn = h("button", { class: "select", type: "button", title: `Edits go to ${step.words}` }, text, lucide("chevron-down", 12));
-    const wrap = h("div", { class: "sel" }, btn);
-    menuButton(
-      btn,
-      wrap,
-      () => chain.map((s) => ({ value: s.key, label: `${s.key === "one" ? "This one only" : s.label} · ${coverCount(path, s)} on screen` })),
-      () => step.key,
-      (v) => {
-        editTarget = v;
-        render();
-      },
-      "right",
-    );
-    askHead.append(h("span", { class: `scope${step.key === "one" ? " wide" : ""}` }, h("span", {}, "Edits go to"), wrap));
+  const key = chatKey(el, path);
+  const label = n.owner ? `${n.name} in ${n.owner}` : n.name;
+  if (askOn?.key !== key) {
+    askOn = { key, label };
+    renderChat();
   }
-  askTools.replaceChildren(...fields);
-  askEdits.style.display = fields.length ? "" : "none";
+}
+
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
+type Chat = { sessionId: string | null; label: string; messages: ChatMessage[] };
+/** Every element's conversation (.spark/chats.json), kept in step by the dev server. */
+let chats: Record<string, Chat> = {};
+/** The chat Claude is answering right now, if the run is one. */
+let runChat: string | null = null;
+
+/** The conversation on the selected element, with Claude's progress while it answers. */
+function renderChat() {
+  const chat = askOn ? chats[askOn.key] : undefined;
+  const answering = isRunning() && !!askOn && runChat === askOn.key;
+  const msgs = chat?.messages ?? [];
+  askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
+  askTitle.title = chat?.sessionId ? `Claude session ${chat.sessionId}` : "";
+  newChatBtn.toggleAttribute("disabled", answering);
+  const nodes: HTMLElement[] = msgs.map((m) => h("div", { class: `msg ${m.role}${m.ok === false ? " bad" : ""}` }, m.text));
+  if (answering) {
+    nodes.push(
+      h(
+        "div",
+        { class: "msg work" },
+        h("span", { class: "spin" }),
+        h("span", { class: "line grow" }, run?.lines.at(-1) ?? "Thinking…"),
+        h("button", { type: "button", click: () => import.meta.hot?.send("spark:stop", {}) }, "Stop"),
+      ),
+    );
+  }
+  const stick = askThread.scrollHeight - askThread.scrollTop - askThread.clientHeight < 24;
+  askThread.replaceChildren(...nodes);
+  if (stick || answering) askThread.scrollTop = askThread.scrollHeight;
+  const busy = isRunning();
+  askInput.placeholder = busy ? (answering ? "Claude is answering…" : "Claude is busy…") : msgs.length ? "Reply…" : "Ask Claude to change this…";
+  sendBtn.toggleAttribute("disabled", busy);
+}
+
+function resetChat() {
+  if (!askOn) return;
+  import.meta.hot?.send("spark:chat-reset", { chat: askOn.key });
+  askInput.focus();
 }
 
 type Box = { l: number; t: number; r: number; b: number };
 
 /**
- * Where the popup goes so it never covers the element: above it, else below,
- * else to its right or left; only an element bigger than the room around it
- * gets the popup over it, pinned to the side with more room.
+ * Where the popup goes so it never covers the element: to its left (a chat
+ * reads beside what it's about), else right, else above or below; only an
+ * element bigger than the room around it gets the popup over it, pinned to
+ * the side with more room.
  */
 function placeBeside(e: Box, w: number, hgt: number, room: Box, gap: number): { x: number; y: number } {
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
   const cx = clamp((e.l + e.r) / 2 - w / 2, room.l, room.r - w);
   const cy = clamp(e.t, room.t, room.b - hgt);
+  if (e.l - gap - w >= room.l) return { x: e.l - gap - w, y: cy };
+  if (e.r + gap + w <= room.r) return { x: e.r + gap, y: cy };
   if (e.t - gap - hgt >= room.t) return { x: cx, y: e.t - gap - hgt };
   if (e.b + gap + hgt <= room.b) return { x: cx, y: e.b + gap };
-  if (e.r + gap + w <= room.r) return { x: e.r + gap, y: cy };
-  if (e.l - gap - w >= room.l) return { x: e.l - gap - w, y: cy };
   return { x: cx, y: e.t - room.t >= room.b - e.b ? room.t : room.b - hgt };
 }
 
@@ -1452,7 +1445,7 @@ function placeBeside(e: Box, w: number, hgt: number, room: Box, gap: number): { 
  * canvas, so a small component frame doesn't squeeze it onto the element.
  */
 function placeAsk() {
-  const show = open && picking && !!selected && selected.isConnected && !editing && !resizing && !isRunning();
+  const show = open && picking && !!selected && selected.isConnected && !editing && !resizing;
   const hide = () => {
     askBox.style.display = "none";
   };
@@ -1523,13 +1516,24 @@ function renderRun() {
 }
 
 import.meta.hot?.on("spark:run", (e: RunEvent) => {
-  if (e.type === "start") run = { kind: e.kind, lines: [] };
+  if (e.type === "start") {
+    run = { kind: e.kind, lines: [] };
+    runChat = e.chat ?? null;
+  }
   else if (!run) run = { kind: "implement", lines: [] };
   if (e.type === "log") run.lines.push(e.text);
   if (e.type === "done") run.done = e;
   if (e.type === "error") run.error = e.text;
+  if (e.type === "done" || e.type === "error") runChat = null;
   renderRun();
   renderChanges();
+  renderChat();
+});
+// An element's conversation changed (a prompt, Claude's reply, New chat).
+import.meta.hot?.on("spark:chat", (d: { key: string; chat: Chat | null }) => {
+  if (d.chat) chats[d.key] = d.chat;
+  else delete chats[d.key];
+  renderChat();
 });
 // Claude marked changes applied: their previews give way to the real code.
 import.meta.hot?.on("spark:log", (log: ChangeLog) => {
@@ -1538,10 +1542,12 @@ import.meta.hot?.on("spark:log", (log: ChangeLog) => {
   resetHistory();
   render();
 });
-import.meta.hot?.on("spark:run-state", (s: { running: boolean }) => {
+import.meta.hot?.on("spark:run-state", (s: { running: boolean; chat?: string | null }) => {
   if (s.running && !run) {
-    run = { kind: "implement", lines: [] };
+    run = { kind: s.chat ? "ask" : "implement", lines: [] };
+    runChat = s.chat ?? null;
     renderRun();
+    renderChat();
   }
 });
 import.meta.hot?.send("spark:run-state", {});
@@ -1663,7 +1669,7 @@ function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement
 }
 
 /** A field with the "{ }" button: bind it to a variable, make one from its value, or unlink. */
-function withVar(field: HTMLElement, kind: VarKind | null, value: string, computed: string, set: (v: string) => void, compact = false): HTMLElement {
+function withVar(field: HTMLElement, kind: VarKind | null, value: string, computed: string, set: (v: string) => void): HTMLElement {
   const pendingValue = (name: string) => allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name)?.to;
   const el = selected;
   return varButton(field, {
@@ -1671,7 +1677,6 @@ function withVar(field: HTMLElement, kind: VarKind | null, value: string, comput
     value,
     skip,
     pendingValue,
-    compact: compact ? { resolved: computed } : undefined,
     use: (name) => set(`var(${name})`),
     unbind: () => set(computed.trim().replace(/(\.\d\d)\d+/g, "$1")),
     create: () => {
@@ -1801,8 +1806,8 @@ function render() {
     );
   };
 
-  /** One property's field: a full row for the panel, or just the field (compact) for the Ask popup. */
-  const fieldRow = (f: Field, compact = false): HTMLElement => {
+  /** One property's row in the panel. */
+  const fieldRow = (f: Field): HTMLElement => {
     if (f.kind === "sides") {
       const quad = h("div", { class: "quad" });
       const values: string[] = [];
@@ -1819,36 +1824,18 @@ function render() {
       const quadVar = withVar(quad, "size", same, computeds[0], (v) => {
         sideProps.forEach((p, i) => edit(el, p, v, i === sideProps.length - 1));
       });
-      return compact ? quadVar : row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable));
+      return row(f.prop, quadVar, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable));
     }
     const { value, changed } = valueOf(f.prop);
     const computed = cs.getPropertyValue(f.prop);
-    // The popup's fields carry their label inside: a number's scrub grip, else a label in front.
-    const short = SHORT[f.prop] ?? f.prop;
-    const bound = varsIn(value).length > 0;
     let field: HTMLElement;
-    if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed, label: compact ? short : undefined }, onValue(f.prop));
+    if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
     else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop), f.prop === "font-weight" ? WEIGHTS : {});
     else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
     else field = textField(value, changed, onValue(f.prop));
     if (f.kind !== "select") {
       const prop = f.prop;
-      field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true), compact);
-    }
-    if (compact) {
-      const c = overridden.get(f.prop);
-      const qf = h("div", { class: `qf${changed ? " changed" : ""}`, title: c ? `${f.prop}: set on ${stepLabel(c)}` : f.prop });
-      if (f.kind !== "number" || bound) {
-        // The label opens what the field opens: the color picker, the menu, the variable.
-        const k = h("span", { class: "qk" }, short);
-        k.addEventListener("click", (e) => {
-          e.stopPropagation();
-          qf.querySelector<HTMLElement>("button")?.click();
-        });
-        qf.append(k);
-      }
-      qf.append(field);
-      return qf;
+      field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
     }
     const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
     return row(f.prop, field, notes.length ? h("div", {}, ...notes) : null);
@@ -1878,7 +1865,7 @@ function render() {
       for (const f of rest) body.append(fieldRow(f));
     }
   }
-  renderAsk(el, path, kind, essentials.filter((f) => f.kind !== "sides").slice(0, 4).map((f) => fieldRow(f, true)));
+  renderAsk(el, path, kind);
   // Mark the fields an override sets, and say where it lives.
   const target = targetStep(path) ?? { scope: null };
   for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
@@ -2208,7 +2195,9 @@ if (shell) {
 } else if (reopen) setOpen(true);
 requestAnimationFrame(follow);
 
-import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null }) => {
+import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null; chats?: Record<string, Chat> }) => {
+  chats = info.chats ?? {};
+  renderChat();
   root = info.root;
   status.textContent = info.name;
   if (info.changes) load(info.changes.changes);

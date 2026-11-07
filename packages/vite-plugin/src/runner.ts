@@ -9,12 +9,15 @@
 //
 // Claude ends its reply with `APPLIED <id>` / `SKIPPED <id>: why` lines, one
 // per change it was given; those decide which changes are marked applied.
+//
+// Every run is a Claude session; "done" carries its id, and `resume` carries
+// on in an earlier one (the Ask popup's chat on an element).
 import { spawn, type ChildProcess } from "node:child_process";
 
 export type RunEvent =
-  | { type: "start"; kind: "implement" | "ask"; ids: string[] }
+  | { type: "start"; kind: "implement" | "ask"; ids: string[]; chat?: string }
   | { type: "log"; text: string }
-  | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number }
+  | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number; sessionId?: string; chat?: string }
   | { type: "error"; text: string };
 
 let current: ChildProcess | null = null;
@@ -47,12 +50,14 @@ export function parseVerdicts(text: string) {
   return { applied, skipped };
 }
 
-export function run(opts: { cwd: string; prompt: string; kind: "implement" | "ask"; ids: string[]; emit: (e: RunEvent) => void }) {
+export function run(opts: { cwd: string; prompt: string; kind: "implement" | "ask"; ids: string[]; resume?: string; emit: (e: RunEvent) => void }) {
   if (current) {
     opts.emit({ type: "error", text: "Claude is already running." });
     return;
   }
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"];
+  // A session id is a UUID; anything else never reaches the command line (it goes through a shell on Windows).
+  if (opts.resume && /^[\w-]+$/.test(opts.resume)) args.push("--resume", opts.resume);
   // claude is claude.cmd on Windows, which needs a shell to start.
   const child = spawn("claude", args, { cwd: opts.cwd, shell: process.platform === "win32", stdio: ["pipe", "pipe", "pipe"] });
   current = child;
@@ -61,6 +66,7 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
   let buf = "";
   let result = "";
   let cost: number | undefined;
+  let sessionId: string | undefined;
   let stderr = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
@@ -76,6 +82,7 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
       } catch {
         continue;
       }
+      if (typeof ev.session_id === "string") sessionId = ev.session_id;
       if (ev.type === "result") {
         result = typeof ev.result === "string" ? ev.result : "";
         cost = typeof ev.total_cost_usd === "number" ? ev.total_cost_usd : undefined;
@@ -100,7 +107,7 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
       .filter((l) => !/^\s*(APPLIED|SKIPPED)\b/.test(l))
       .join("\n")
       .trim();
-    opts.emit({ type: "done", ok, applied, skipped, summary: ok ? summary : stderr.trim().slice(-500) || `claude exited with ${code}`, cost });
+    opts.emit({ type: "done", ok, applied, skipped, summary: ok ? summary : stderr.trim().slice(-500) || `claude exited with ${code}`, cost, sessionId });
   });
   child.stdin.end(opts.prompt);
 }

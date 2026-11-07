@@ -61,6 +61,8 @@ export type AskSelection = {
   comp: string | null;
   owners: { name: string; call: string | null; key: string | null }[];
   text?: string;
+  /** What the popup calls it ("h2 in Card"). */
+  label?: string;
 };
 
 export function askPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
@@ -94,6 +96,19 @@ ${RULES.replace("- Change only what the changes ask for.", "- Change only what t
   the project does, and use it at the original spot so the app looks exactly the same.
 
 End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdicts(pending.map((c) => c.id))}` : ""}`;
+}
+
+/** A follow-up in an Ask chat: the session already has the rules and the earlier turns. */
+export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
+  const sel = selection ? `\n\nThe selected element now (it may have moved since your last turn):\n${JSON.stringify(selection, null, 2)}` : "";
+  const first = pending.length
+    ? `\n\nFirst apply these pending visual edits from Spark, as before:\n${JSON.stringify(pending, null, 2)}`
+    : "";
+  return `The person replied in Spark:
+
+"${request}"${sel}${first}
+
+Same rules as before. End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdicts(pending.map((c) => c.id))}` : ""}`;
 }
 
 /** Write the Components view's case files (gallery.ts) for the project's components. */
