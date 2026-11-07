@@ -145,7 +145,8 @@ function samePlace(a: Change, b: Pick<Change, "level" | "property" | "file" | "s
   return covers(probe, b.instance?.path ?? []);
 }
 
-export function record(c: Omit<Change, "id" | "at" | "status">): Change {
+/** Record an edit, merged into the pending change at the same place. An edit that ends where it started is dropped. */
+export function record(c: Omit<Change, "id" | "at" | "status">): Change | null {
   const existing = changes.find((x) => x.status === "pending" && samePlace(x, c));
   if (existing) {
     existing.to = c.to;
@@ -158,6 +159,8 @@ export function record(c: Omit<Change, "id" | "at" | "status">): Change {
     preview(existing);
     return existing;
   }
+  // Nothing changed (a text edit left as it was, a value retyped): no override.
+  if (c.to === c.from && !c.children) return null;
   const change: Change = { ...c, id: Math.random().toString(36).slice(2, 10), status: "pending", at: new Date().toISOString() };
   changes.push(change);
   preview(change);
