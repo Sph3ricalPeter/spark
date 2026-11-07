@@ -8,7 +8,7 @@
 // same thing the code change will do.
 import { eachRule } from "./css.ts";
 import { icon } from "./theme.ts";
-import { closePopover, colorField, h, numberField, showPopover, textField, type OnValue, type Token } from "./fields.ts";
+import { closePopover, colorField, displayColor, h, numberField, showPopover, textField, type OnValue, type Token } from "./fields.ts";
 
 export type VarKind = "color" | "size" | "other";
 
@@ -269,6 +269,17 @@ export const VARIABLES_STYLE = `
     .hint.bad { color: var(--sp-danger); }
     .with-var { display: flex; gap: 4px; align-items: flex-start; position: relative; }
     .with-var > :first-child { flex: 1; min-width: 0; }
+    /* A field bound to a variable, compact: the variable's name and what it resolves to. */
+    .var-pill {
+      display: flex; align-items: center; gap: 5px; min-width: 0; height: 20px; padding: 0 6px; border: none; border-radius: var(--sp-r-sm);
+      background: color-mix(in srgb, var(--sp-accent) 14%, transparent); color: var(--sp-link); font: var(--sp-fs-sm)/1 var(--sp-mono); text-align: left;
+    }
+    .var-pill:hover { background: color-mix(in srgb, var(--sp-accent) 24%, transparent); }
+    .var-pill .icon { opacity: .8; }
+    .var-pill .dot { flex: none; width: 10px; height: 10px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff30; }
+    .var-pill .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-pill .vl { flex: none; color: var(--sp-text-dim); }
+    .with-var.compact.is-bound > .varbtn { display: none; }
     .varbtn { flex: none; width: 22px; height: 22px; padding: 0; color: var(--sp-text-dim); }
     .varbtn.bound { color: var(--sp-link); border-color: #8fb4ff55; }
     .varbtn:hover { color: var(--sp-text-strong); }
@@ -351,15 +362,35 @@ export type VarPickOpts = {
   create: () => void;
   /** Put the resolved value back in place of the var() (unbind). */
   unbind?: () => void;
+  /**
+   * Compact (the Ask popup): a bound field shows the variable as a pill (its
+   * name and what it resolves to here) instead of the raw var(); a click on
+   * it opens the picker. The button itself only shows on hover.
+   */
+  compact?: { resolved: string };
 };
 
 /** The "var" button next to a field: use an existing variable, or create one from the value. */
 export function varButton(field: HTMLElement, o: VarPickOpts): HTMLElement {
   const bound = varsIn(o.value)[0] ?? null;
-  const btn = h("button", { class: `varbtn${bound ? " bound" : ""}`, title: bound ? `Uses ${bound}: change or unlink` : "Use a variable, or make one from this value" }, icon("braces", 13));
-  const wrap = h("div", { class: "with-var" }, field, btn);
-  btn.addEventListener("click", (e) => {
+  const btn = h("button", { class: `varbtn${bound ? " bound" : ""}`, type: "button", title: bound ? `Uses ${bound}: change or unlink` : "Use a variable, or make one from this value" }, icon("braces", 13));
+  let shown = field;
+  if (o.compact && bound) {
+    const resolved = o.compact.resolved.trim().replace(/(\.\d\d)\d+/g, "$1");
+    const dot = h("span", { class: "dot" });
+    if (o.kind === "color") dot.style.background = resolved;
+    shown = h(
+      "button",
+      { class: "var-pill", type: "button", title: `var(${bound}) = ${resolved}: change or unlink` },
+      o.kind === "color" ? dot : icon("braces", 11),
+      h("span", { class: "nm" }, bound.replace(/^--/, "")),
+      h("span", { class: "vl" }, o.kind === "color" ? displayColor(resolved) : resolved),
+    );
+  }
+  const wrap = h("div", { class: `with-var${o.compact ? " compact" : ""}${bound ? " is-bound" : ""}` }, shown, btn);
+  const openPicker = (e: Event) => {
     e.stopPropagation();
+    e.preventDefault();
     const pop = h("div", { class: "popover var-pop" });
     const all = collectVariables(o.skip).filter((v) => !o.kind || v.kind === o.kind);
     const q = h("input", { placeholder: `Search ${all.length} ${o.kind === "color" ? "color" : o.kind === "size" ? "size" : ""} variables`.replace("  ", " "), spellcheck: "false" }) as HTMLInputElement;
@@ -396,6 +427,8 @@ export function varButton(field: HTMLElement, o: VarPickOpts): HTMLElement {
     fill();
     pop.append(q, list);
     if (showPopover(wrap, pop)) q.focus();
-  });
+  };
+  btn.addEventListener("click", openPicker);
+  if (shown !== field) shown.addEventListener("click", openPicker);
   return wrap;
 }

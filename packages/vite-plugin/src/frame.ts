@@ -6,7 +6,8 @@
 // - Middle drag, and Space drag in edit mode, pan the canvas.
 // - The overlay is drawn inside the frame, so it scales with the canvas and
 //   stays on its elements; handles, outlines and the tag keep their on-screen
-//   size by dividing by the zoom.
+//   size by dividing by the zoom. (The Ask popup lives in the shell instead,
+//   next to the panel, so it can sit outside the frame.)
 import { shell } from "./mode.ts";
 
 // Box shadows, not borders or outlines: those snap to whole pixels of the
@@ -21,7 +22,6 @@ const COUNTER_ZOOM = `
     border: none; box-shadow: inset 0 0 0 calc(1px / var(--z, 1)) #4f8cff;
   }
   .tag { transform: scale(calc(1 / var(--z, 1))); transform-origin: 0 100%; }
-  .ask { transform: scale(calc(1 / var(--z, 1))); }
 `;
 
 function typing(e: Event) {

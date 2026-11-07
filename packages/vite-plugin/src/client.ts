@@ -17,7 +17,7 @@
 // Edits are previewed live and recorded as changes (see changes.ts), which
 // the dev server saves to .spark/changes.json.
 import { installFont } from "./fonts.ts";
-import { icon as lucide, THEME } from "./theme.ts";
+import { icon as lucide, THEME, type IconName } from "./theme.ts";
 import {
   allChanges,
   initChanges,
@@ -37,11 +37,11 @@ import {
   type PathEntry,
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
-import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
+import { closePopover, colorField, colorTokens, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
-import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
+import { draftVariable, renderVariables, resolvedLine, varButton, varsIn, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
 import type { RuleRef } from "./css.ts";
 
@@ -137,6 +137,47 @@ const ESSENTIALS: Record<Kind, string[]> = {
   media: ["width", "height", "border-radius", "opacity"],
   stack: ["gap", "flex-direction", "align-items", "justify-content", "padding", "background-color", "border-radius"],
   box: ["background-color", "border-radius", "width", "height", "padding", "display"],
+};
+/** Short labels for the Ask popup's fields (the full property name is in the tooltip). */
+const SHORT: Record<string, string> = {
+  color: "Color",
+  "background-color": "Fill",
+  "border-color": "Stroke",
+  "border-radius": "Radius",
+  "border-width": "Stroke",
+  "font-size": "Size",
+  "font-weight": "Weight",
+  "line-height": "Line",
+  "letter-spacing": "Letter",
+  "text-align": "Align",
+  width: "W",
+  height: "H",
+  opacity: "Opacity",
+  gap: "Gap",
+  "flex-direction": "Direction",
+  "align-items": "Align",
+  "justify-content": "Justify",
+  display: "Display",
+};
+/** What font-weight numbers are called, shown next to them. */
+const WEIGHTS: Record<string, string> = {
+  "100": "Thin",
+  "200": "Extra Light",
+  "300": "Light",
+  "400": "Regular",
+  "500": "Medium",
+  "600": "Semibold",
+  "700": "Bold",
+  "800": "Extra Bold",
+  "900": "Black",
+};
+const KIND_ICON: Record<Kind, IconName> = {
+  text: "type",
+  button: "rectangle-horizontal",
+  input: "text-cursor-input",
+  media: "image",
+  stack: "rows-2",
+  box: "square",
 };
 const INLINE = /^(B|I|EM|STRONG|SMALL|CODE|BR|SPAN|A|SUB|SUP|MARK|ABBR|KBD|S|U)$/;
 
@@ -252,6 +293,84 @@ function openInEditor(loc: string) {
 const host = document.createElement("spark-root");
 host.style.cssText = "all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;";
 const shadow = host.attachShadow({ mode: "open" });
+/**
+ * The Ask popup: a prompt row naming the selection, then its essential
+ * properties as self-labelled fields (the label scrubs a number, like
+ * Figma's), two to a row.
+ */
+const ASK_STYLE = `
+    .ask {
+      position: fixed; display: none; flex-direction: column; width: 392px; pointer-events: auto; padding: 6px;
+      background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: 10px;
+      box-shadow: 0 12px 36px #0008, 0 2px 6px #0006;
+      color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
+    }
+    .ask-main {
+      display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 5px;
+      background: var(--sp-bg); border: 1px solid var(--sp-line); border-radius: var(--sp-r-lg);
+    }
+    .ask-main:focus-within { border-color: var(--sp-accent); }
+    .ask-tag {
+      flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 168px; height: 22px; padding: 0 7px 0 6px;
+      border-radius: var(--sp-r-sm); white-space: nowrap; cursor: default;
+      background: color-mix(in srgb, var(--sp-accent) 16%, transparent); color: var(--sp-link); font: 600 var(--sp-fs-sm)/1 var(--sp-font);
+    }
+    .ask-tag.comp { background: color-mix(in srgb, var(--sp-component) 18%, transparent); color: color-mix(in srgb, var(--sp-component) 55%, #fff); }
+    .ask-tag .nm { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .ask-tag .in { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--sp-text-dim); font-weight: 500; }
+    .ask-main input {
+      flex: 1; min-width: 0; height: 100%; padding: 0 4px; border: none; background: none; outline: none;
+      color: var(--sp-text-strong); font: var(--sp-fs-md) var(--sp-font);
+    }
+    .ask-main input::placeholder { color: var(--sp-text-dim); }
+    .ask .ib {
+      flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
+      border: none; background: none; color: var(--sp-text-dim); border-radius: var(--sp-r-md);
+    }
+    .ask .ib:hover { background: var(--sp-line); color: var(--sp-text-strong); }
+    .ask .ib.send { background: var(--sp-line-strong); color: var(--sp-text-dim); }
+    .ask .ib.send.ready { background: var(--sp-accent); color: var(--sp-text-strong); }
+    .ask-edits { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+    .ask-head {
+      display: flex; align-items: center; gap: 6px; height: 20px; padding: 0 2px 0 4px; color: var(--sp-text-dim);
+      font: 600 var(--sp-fs-xs)/1 var(--sp-font); text-transform: uppercase; letter-spacing: .06em;
+    }
+    .ask-head .scope { margin-left: auto; display: flex; align-items: center; gap: 2px; text-transform: none; letter-spacing: 0; font: 500 var(--sp-fs-sm)/1 var(--sp-font); }
+    .ask-head .scope button.select {
+      height: 20px; width: auto; gap: 3px; padding: 0 2px 0 4px; border: none; background: none; color: var(--sp-text); font: inherit;
+    }
+    .ask-head .scope button.select:hover, .ask-head .scope button.select.open { color: var(--sp-text-strong); background: var(--sp-field); }
+    .ask-head .scope.wide button.select { color: var(--sp-warn); }
+    .ask-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+    .qf {
+      display: flex; align-items: center; min-width: 0; height: 28px;
+      background: var(--sp-field); border: 1px solid transparent; border-radius: var(--sp-r-md);
+    }
+    .qf:hover { border-color: var(--sp-line-strong); }
+    .qf:focus-within { border-color: var(--sp-accent); }
+    .qf .qk, .qf .num .grip {
+      flex: none; align-self: stretch; display: inline-flex; align-items: center; padding: 0 6px 0 8px;
+      color: var(--sp-text-dim); font: 500 var(--sp-fs-sm)/1 var(--sp-font); white-space: nowrap; cursor: default;
+    }
+    .qf .num .grip { cursor: ew-resize; }
+    .qf .num .grip:hover { color: var(--sp-text-strong); }
+    .qf.changed .qk, .qf.changed .num .grip { color: var(--sp-warn); }
+    .qf .with-var { flex: 1; min-width: 0; align-self: stretch; align-items: center; gap: 0; }
+    .qf .with-var > :first-child, .qf > .sel { flex: 1; min-width: 0; align-self: stretch; }
+    .qf .num, .qf .num:focus-within, .qf input, .qf input:focus, .qf button.select, .qf .num.changed, .qf input.changed, .qf button.select.changed {
+      border: none; outline: none; background: transparent; box-shadow: none;
+    }
+    .qf .num, .qf button.select { height: 100%; }
+    .qf input { height: 100%; padding: 0 4px 0 0; color: var(--sp-text-strong); font: var(--sp-fs-sm) var(--sp-mono); }
+    .qf .color { align-items: center; gap: 6px; height: 100%; }
+    .qf .swatch { width: 14px; height: 14px; border-radius: 3px; }
+    .qf button.select { padding: 0 8px 0 0; color: var(--sp-text-strong); font: var(--sp-fs-sm) var(--sp-mono); }
+    .qf button.select .sel-h { font-family: var(--sp-font); }
+    .qf .varbtn { width: 22px; height: 22px; margin-right: 2px; border: none; background: none; opacity: 0; }
+    .qf:hover .varbtn, .qf:focus-within .varbtn { opacity: 1; }
+    .qf .var-pill { margin: 0 3px 0 0; }
+`;
+
 const STYLE = `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
@@ -300,18 +419,7 @@ const STYLE = `${THEME}
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .ask {
-      position: fixed; display: none; flex-direction: column; gap: 4px; width: 360px; box-sizing: border-box;
-      pointer-events: auto; padding: 3px;
-      background: #1b1c20; border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-lg); box-shadow: 0 6px 24px rgba(0,0,0,.4);
-      color: var(--sp-text); font: var(--sp-fs-md)/1.4 var(--sp-font);
-    }
-    .ask:focus-within { border-color: var(--sp-accent); }
-    .ask-main { display: flex; align-items: center; gap: 2px; }
-    .ask-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; padding: 4px 4px 2px; border-top: 1px solid var(--sp-line); }
-    .ask-tools .tool { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .ask-tools .tool-k { flex: none; width: 52px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ask-tools .tool > :last-child { flex: 1; min-width: 0; }
+    ${ASK_STYLE}
     .all-head {
       display: flex; align-items: center; width: 100%; margin-top: var(--sp-4); padding: var(--sp-2) 0; border: none; border-top: 1px solid var(--sp-line);
       border-radius: 0; background: none; color: var(--sp-text-dim); font-weight: 600; text-align: left;
@@ -319,18 +427,6 @@ const STYLE = `${THEME}
     .all-head::before { content: "▸"; margin-right: 6px; }
     .all-head.open::before { content: "▾"; }
     .all-head:hover { color: var(--sp-text-strong); }
-    .ask-tag {
-      flex: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      margin-right: var(--sp-1); padding: 2px 6px; border-radius: var(--sp-r-sm);
-      background: var(--sp-accent); color: var(--sp-text-strong); font: 600 var(--sp-fs-sm)/1.4 var(--sp-font);
-    }
-    .ask input { flex: 1; min-width: 0; border: none; background: none; padding: 4px 0; outline: none; font-family: var(--sp-font); }
-    .ask .ib {
-      display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0;
-      border: none; background: none; color: var(--sp-text-dim); border-radius: 5px;
-    }
-    .ask .ib:hover { background: var(--sp-line); color: var(--sp-text-strong); }
-    .ask .ib.send { background: var(--sp-accent); color: var(--sp-text-strong); }
     .seg button { border-radius: 0; }
     .seg button:first-child { border-radius: var(--sp-r-sm) 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
@@ -400,24 +496,45 @@ const STYLE = `${THEME}
     .num .grip:hover { color: var(--sp-text-strong); }
     .num input { border: none; background: transparent; padding-left: 0; min-width: 0; }
     .num input:focus { outline: none; }
-    .num select.unit {
-      flex: none; width: auto; border: none; background: transparent; color: var(--sp-text-dim);
-      padding: 0 4px 0 2px; font: var(--sp-fs-xs) var(--sp-mono); cursor: pointer;
-      appearance: none; -webkit-appearance: none; text-align: right;
+    .num { position: relative; }
+    .num .unit {
+      flex: none; align-self: stretch; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 20px;
+      border: none; background: transparent; color: var(--sp-text-dim); padding: 0 6px 0 2px; font: var(--sp-fs-xs) var(--sp-mono);
     }
-    .num select.unit:hover { color: var(--sp-text-strong); }
-    .num select.unit:focus { outline: none; color: var(--sp-text-strong); }
+    .num .unit:hover, .num .unit.open { color: var(--sp-text-strong); }
+    .num .unit:focus-visible { outline: none; color: var(--sp-text-strong); }
     /* A keyword stands in for the number. */
     .num.kw input { color: var(--sp-text); font-style: italic; }
-    /* The keyword is already in the input: the dropdown shrinks to a caret. */
-    .num.kw select.unit {
-      width: 16px; color: transparent;
-      background: no-repeat center / 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%238fb4ff'/%3E%3C/svg%3E");
-    }
-    .num.kw select.unit option, .num.kw select.unit optgroup { color: var(--sp-text); }
     /* Four sides share a row: their unit shows while you edit one. */
-    .quad .num select.unit { display: none; }
-    .quad .num:focus-within select.unit { display: block; }
+    .quad .num .unit { display: none; }
+    .quad .num:focus-within .unit { display: inline-flex; }
+    /* Dropdowns: Spark's own menu, not the native list. */
+    .sel { position: relative; min-width: 0; }
+    button.select {
+      display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 24px; padding: 0 6px 0 8px; text-align: left;
+    }
+    button.select .sel-v { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.select .sel-h { flex: 1; min-width: 0; color: var(--sp-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.select > .icon { margin-left: auto; color: var(--sp-text-dim); }
+    button.select:hover > .icon, button.select.open > .icon { color: var(--sp-text-strong); }
+    button.select.open, button.select:focus-visible { outline: none; border-color: var(--sp-accent); }
+    button.select.changed { border-color: var(--sp-warn); }
+    .popover.menu { top: calc(100% + 4px); width: max-content; min-width: 100%; max-width: 280px; max-height: 260px; overflow: auto; padding: 4px; z-index: 6; }
+    .popover.menu.left { left: 0; right: auto; }
+    .popover.menu.right { right: 0; left: auto; min-width: 112px; }
+    .popover.menu:focus { outline: none; }
+    .menu-group {
+      padding: 6px 8px 3px 26px; color: var(--sp-text-dim); font: 600 var(--sp-fs-xs)/1 var(--sp-font); text-transform: uppercase; letter-spacing: .06em;
+    }
+    .menu-item {
+      display: flex; align-items: center; gap: 6px; width: 100%; height: 24px; padding: 0 10px 0 4px; border: none; border-radius: var(--sp-r-sm);
+      background: none; color: var(--sp-text); font: var(--sp-fs-md)/1 var(--sp-font); text-align: left; white-space: nowrap;
+    }
+    .menu-item.active { background: var(--sp-accent); color: var(--sp-text-strong); }
+    .menu-check { flex: none; width: 16px; display: inline-flex; justify-content: center; }
+    .menu-label { flex: 1; }
+    .menu-hint { margin-left: 12px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+    .menu-item.active .menu-hint { color: #ffffffbb; }
     .num input { flex: 1; }
     .quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
     .color { display: flex; gap: 6px; position: relative; }
@@ -481,7 +598,7 @@ const panel = h(
 panel.addEventListener("click", () => closePopover());
 const fab = h("button", { class: "fab", title: "Open Spark (Alt+S)", click: () => setOpen(true) }, "Spark");
 // Ask Claude, right on the selection.
-const askInput = h("input", { placeholder: "Ask Claude about this…" }) as HTMLInputElement;
+const askInput = h("input", { placeholder: "Ask Claude to change this…", spellcheck: "false" }) as HTMLInputElement;
 const stopKeys = (e: Event) => e.stopPropagation();
 askInput.addEventListener("keyup", stopKeys);
 askInput.addEventListener("keypress", stopKeys);
@@ -494,6 +611,7 @@ askInput.addEventListener("keydown", (e) => {
   // Tab stays in the prompt: it neither moves focus to the buttons nor switches mode.
   else if (e.key === "Tab") e.preventDefault();
 });
+askInput.addEventListener("input", () => sendBtn.classList.toggle("ready", !!askInput.value.trim()));
 const makeBtn = h(
   "button",
   {
@@ -501,25 +619,23 @@ const makeBtn = h(
     title: "Make component: have Claude extract this into its own component",
     click: () => {
       askInput.value = "Extract this into its own component called ";
+      sendBtn.classList.add("ready");
       askInput.focus();
     },
   },
   lucide("component"),
 );
 const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
-/** What's selected, as the start of the ask row (it replaces the floating tag label). */
+/** What's selected, as the start of the prompt (it replaces the floating tag label). */
 const askTag = h("span", { class: "ask-tag" });
-/** The selection's essential properties, right under the prompt (render() fills it). */
+/** The quick edits' heading: what kind of element, and where its edits go. */
+const askHead = h("div", { class: "ask-head" });
+/** The selection's essential properties, under the prompt (render() fills it). */
 const askTools = h("div", { class: "ask-tools" });
-const askBox = h("div", { class: "ask" }, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn), askTools);
-
-function renderAskTools(tools: [string, HTMLElement][]) {
-  askTools.replaceChildren(
-    ...tools.map(([prop, field]) => h("div", { class: "tool", title: prop }, h("span", { class: "tool-k" }, prop.replace("background-color", "fill").replace("border-radius", "radius")), field)),
-  );
-  askTools.style.display = tools.length ? "" : "none";
-}
-shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel, askBox);
+const askEdits = h("div", { class: "ask-edits" }, askHead, askTools);
+const askBox = h("div", { class: "ask" }, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn), askEdits);
+askBox.addEventListener("click", () => closePopover());
+shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
 const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
@@ -528,6 +644,9 @@ if (shell) {
   panelRoot.append(h("style", {}, STYLE));
 }
 panelRoot.append(panel, fab);
+// On the board the popup lives in the shell too, so it can sit outside a small
+// frame (over the canvas) instead of on top of the element it's about.
+panelRoot.append(askBox);
 
 // Spark's own buttons and dropdowns never keep focus: Tab and Esc are Spark's
 // shortcuts, not focus moves, and the first Esc mustn't go to a dropdown.
@@ -1119,47 +1238,118 @@ function sendAsk() {
   const selection = el ? { ...snapshot(el), owners: instancePath(el), text: (el.textContent ?? "").trim().slice(0, 200) } : null;
   import.meta.hot?.send("spark:ask", { request, selection });
   askInput.value = "";
+  sendBtn.classList.remove("ready");
   askInput.blur();
 }
 
+/** The selection's name for the popup: the component when it's an instance's root
+ * element ("Button in Primary"), else the element ("h2 in Card"). */
+function askName(el: Element, path: PathEntry[]): { name: string; owner: string | null; comp: boolean } {
+  const parent = el.parentElement?.closest("[data-spark-src]");
+  const pp = parent ? instancePath(parent) : [];
+  const isRoot = path.length > 0 && (pp.length !== path.length || pp[0]?.name !== path[0].name);
+  if (isRoot) return { name: path[0].name, owner: path[1]?.name ?? null, comp: true };
+  const cls = el.classList[0];
+  return { name: el.tagName.toLowerCase() + (cls ? `.${cls}` : ""), owner: path[0]?.name ?? null, comp: false };
+}
+
+/** Fill the popup for the selection: its name, the kind heading with where edits go, and the quick fields. */
+function renderAsk(el: Element, path: PathEntry[], kind: Kind, fields: HTMLElement[]) {
+  const n = askName(el, path);
+  const r = el.getBoundingClientRect();
+  askTag.className = `ask-tag${n.comp ? " comp" : ""}`;
+  askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
+  askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), n.owner ? h("span", { class: "in" }, `in ${n.owner}`) : null);
+
+  askHead.replaceChildren(h("span", {}, KIND_LABEL[kind]));
+  if (path.length) {
+    const comp = path[0].name;
+    const short = (scope: number | null) => (scope === null ? "This instance" : scope === 0 ? `Every ${comp}` : `Every ${comp} in ${path[scope].name}`);
+    const choices = [null, ...path.map((_, k) => k).slice(1), 0];
+    const text = h("span", { class: "sel-v" }, short(editScope));
+    const btn = h("button", { class: "select", type: "button", title: `Edits go to ${scopeWords(path, editScope)}` }, text, lucide("chevron-down", 12));
+    const wrap = h("div", { class: "sel" }, btn);
+    menuButton(
+      btn,
+      wrap,
+      () =>
+        choices.map((scope) => ({
+          value: scope === null ? "" : String(scope),
+          label: scope === null ? "This instance only" : scope === 0 ? `${comp} itself: every ${comp}` : `Every ${comp} in ${path[scope].name}`,
+        })),
+      () => (editScope === null ? "" : String(editScope)),
+      (v) => {
+        editScope = v === "" ? null : Number(v);
+        render();
+      },
+      "right",
+    );
+    askHead.append(h("span", { class: `scope${editScope !== null ? " wide" : ""}` }, h("span", {}, "Edits go to"), wrap));
+  }
+  askTools.replaceChildren(...fields);
+  askEdits.style.display = fields.length ? "" : "none";
+}
+
+type Box = { l: number; t: number; r: number; b: number };
+
 /**
- * The ask box sits above the selection (over its tag label), centered on it;
- * below it when there's no room. In the zoomed canvas it keeps its screen
- * size (frame.ts scales it by 1/zoom about the edge that touches the element).
+ * Where the popup goes so it never covers the element: above it, else below,
+ * else to its right or left; only an element bigger than the room around it
+ * gets the popup over it, pinned to the side with more room.
+ */
+function placeBeside(e: Box, w: number, hgt: number, room: Box, gap: number): { x: number; y: number } {
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
+  const cx = clamp((e.l + e.r) / 2 - w / 2, room.l, room.r - w);
+  const cy = clamp(e.t, room.t, room.b - hgt);
+  if (e.t - gap - hgt >= room.t) return { x: cx, y: e.t - gap - hgt };
+  if (e.b + gap + hgt <= room.b) return { x: cx, y: e.b + gap };
+  if (e.r + gap + w <= room.r) return { x: e.r + gap, y: cy };
+  if (e.l - gap - w >= room.l) return { x: e.l - gap - w, y: cy };
+  return { x: cx, y: e.t - room.t >= room.b - e.b ? room.t : room.b - hgt };
+}
+
+/**
+ * The popup sits next to the selection, out of its way (placeBeside). On the
+ * board it lives in the shell, over the canvas, at its screen size: the
+ * element's box is mapped out of its zoomed frame, and the room is the
+ * canvas, so a small component frame doesn't squeeze it onto the element.
  */
 function placeAsk() {
   const show = open && picking && !!selected && selected.isConnected && !editing && !resizing && !isRunning();
-  if (!show) {
+  const hide = () => {
     askBox.style.display = "none";
-    return;
-  }
+  };
+  if (!show) return hide();
   const el = selected!;
   const r = el.getBoundingClientRect();
-  const comp = el.getAttribute("data-spark-comp");
-  // "Button in Card": an instance and the component it sits in.
-  const owners = instancePath(el);
-  const tag = owners[1] ? `${owners[0].name} in ${owners[1].name}` : `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}`;
-  if (askTag.textContent !== tag) askTag.textContent = tag;
-  askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${owners.map((o) => o.name).join(" › ") || "no component"}`;
-  // The row names the selection, so its floating label goes (unless something else is hovered).
+  let e: Box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+  let room: Box;
+  const fe = shell ? (window.frameElement as HTMLElement | null) : null;
+  if (fe) {
+    const f = fe.getBoundingClientRect();
+    const z = fe.offsetWidth ? f.width / fe.offsetWidth : 1;
+    // Only the part of the element its frame shows.
+    e = {
+      l: Math.max(f.left, f.left + e.l * z),
+      t: Math.max(f.top, f.top + e.t * z),
+      r: Math.min(f.right, f.left + e.r * z),
+      b: Math.min(f.bottom, f.top + e.b * z),
+    };
+    const c = (fe.closest(".canvas") ?? fe.ownerDocument.documentElement).getBoundingClientRect();
+    room = { l: c.left, t: c.top, r: c.right, b: c.bottom };
+  } else {
+    room = { l: 0, t: 0, r: window.innerWidth - (open ? PANEL_W : 0), b: window.innerHeight };
+  }
+  // Scrolled or panned out of sight: no popup.
+  if (e.r <= room.l || e.l >= room.r || e.b <= room.t || e.t >= room.b || e.r <= e.l || e.b <= e.t) return hide();
+  // The popup names the selection, so its floating label goes (unless something else is hovered).
   if (!hovered || hovered === el) tagLabel.style.display = "none";
   askBox.style.display = "flex";
-  const z = parseFloat(getComputedStyle(askBox).getPropertyValue("--z")) || 1;
-  const w = askBox.offsetWidth;
-  const hgt = askBox.offsetHeight;
-  const gap = 8 / z;
-  const top = r.top;
-  const right = window.innerWidth - (!shell ? PANEL_W : 0);
-  const half = w / 2 / z;
-  const cx = Math.max(half + 4, Math.min(r.left + r.width / 2, right - half - 4));
-  askBox.style.left = `${cx - w / 2}px`;
-  if (top - gap - hgt / z >= 4) {
-    askBox.style.transformOrigin = "50% 100%";
-    askBox.style.top = `${top - gap - hgt}px`;
-  } else {
-    askBox.style.transformOrigin = "50% 0";
-    askBox.style.top = `${Math.min(r.bottom + gap, window.innerHeight - hgt / z - 4)}px`;
-  }
+  const pad = 8;
+  const inner = { l: room.l + pad, t: room.t + pad, r: room.r - pad, b: room.b - pad };
+  const { x, y } = placeBeside(e, askBox.offsetWidth, askBox.offsetHeight, inner, 10);
+  askBox.style.left = `${Math.round(x)}px`;
+  askBox.style.top = `${Math.round(y)}px`;
 }
 
 function renderRun() {
@@ -1294,7 +1484,7 @@ function row(name: string | HTMLElement, field: HTMLElement, below?: HTMLElement
 }
 
 /** A field with the "{ }" button: bind it to a variable, make one from its value, or unlink. */
-function withVar(field: HTMLElement, kind: VarKind | null, value: string, computed: string, set: (v: string) => void): HTMLElement {
+function withVar(field: HTMLElement, kind: VarKind | null, value: string, computed: string, set: (v: string) => void, compact = false): HTMLElement {
   const pendingValue = (name: string) => allChanges().find((c) => c.status === "pending" && c.level === "token" && c.property === name)?.to;
   const el = selected;
   return varButton(field, {
@@ -1302,6 +1492,7 @@ function withVar(field: HTMLElement, kind: VarKind | null, value: string, comput
     value,
     skip,
     pendingValue,
+    compact: compact ? { resolved: computed } : undefined,
     use: (name) => set(`var(${name})`),
     unbind: () => set(computed.trim().replace(/(\.\d\d)\d+/g, "$1")),
     create: () => {
@@ -1453,17 +1644,35 @@ function render() {
     }
     const { value, changed } = valueOf(f.prop);
     const computed = cs.getPropertyValue(f.prop);
+    // The popup's fields carry their label inside: a number's scrub grip, else a label in front.
+    const short = SHORT[f.prop] ?? f.prop;
+    const bound = varsIn(value).length > 0;
     let field: HTMLElement;
-    if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
-    else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
+    if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed, label: compact ? short : undefined }, onValue(f.prop));
+    else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop), f.prop === "font-weight" ? WEIGHTS : {});
     else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
     else field = textField(value, changed, onValue(f.prop));
     if (f.kind !== "select") {
       const prop = f.prop;
-      field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true));
+      field = withVar(field, f.kind === "color" ? "color" : f.kind === "number" ? "size" : null, value, computed, (v) => edit(el, prop, v, true), compact);
+    }
+    if (compact) {
+      const c = overridden.get(f.prop);
+      const qf = h("div", { class: `qf${changed ? " changed" : ""}`, title: c ? `${f.prop}: overridden ${scopeLabel(path, c.instance?.scope ?? null)}` : f.prop });
+      if (f.kind !== "number" || bound) {
+        // The label opens what the field opens: the color picker, the menu, the variable.
+        const k = h("span", { class: "qk" }, short);
+        k.addEventListener("click", (e) => {
+          e.stopPropagation();
+          qf.querySelector<HTMLElement>("button")?.click();
+        });
+        qf.append(k);
+      }
+      qf.append(field);
+      return qf;
     }
     const notes = [resolvedLine(value, computed, jumpToVariable), inheritLine(f.prop, changed)].filter((x): x is HTMLElement => !!x);
-    return compact ? field : row(f.prop, field, notes.length ? h("div", {}, ...notes) : null);
+    return row(f.prop, field, notes.length ? h("div", {}, ...notes) : null);
   };
 
   // The essentials for this kind of element first; everything else, by category, under "All properties".
@@ -1490,7 +1699,7 @@ function render() {
       for (const f of rest) body.append(fieldRow(f));
     }
   }
-  renderAskTools(essentials.filter((f) => f.kind !== "sides").slice(0, 4).map((f) => [f.prop, fieldRow(f, true)]));
+  renderAsk(el, path, kind, essentials.filter((f) => f.kind !== "sides").slice(0, 4).map((f) => fieldRow(f, true)));
   // Mark the fields an override sets, and say where it lives.
   for (const k of Array.from(body.querySelectorAll<HTMLElement>(".row > .k[title]"))) {
     const name = k.title;

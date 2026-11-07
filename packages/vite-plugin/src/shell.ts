@@ -816,8 +816,10 @@ canvas.addEventListener("auxclick", (e) => e.preventDefault());
 
 /** True when keys belong to a text field, not to shortcuts. */
 function typing(e: Event) {
-  const t = e.composedPath()[0];
-  return t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+  // Not instanceof: the panels' and the Ask popup's fields are made by the
+  // frame's client, so they're another window's HTMLElement.
+  const t = e.composedPath()[0] as HTMLElement | undefined;
+  return !!t && typeof t.tagName === "string" && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 }
 
 /** Ctrl +, Ctrl -, Ctrl 0, anywhere outside the app. */

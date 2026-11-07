@@ -45,6 +45,8 @@ export const THEME = `
     --sp-link: #8fb4ff;
     --sp-warn: #d9a441;
     --sp-danger: #e5534b;
+    /* Native controls (scrollbars, any <select> popup) follow the dark theme. */
+    color-scheme: dark;
   }
   /* Native dropdown lists are drawn by the browser: dark, like the rest of
      Spark, and never transparent text from the select they open from. */
@@ -69,6 +71,14 @@ const ICONS = {
     "M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1",
     "M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1",
   ],
+  "chevron-down": ["m6 9 6 6 6-6"],
+  type: ["M12 4v16", "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2", "M9 20h6"],
+  square: ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"],
+  "rectangle-horizontal": ["M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"],
+  "text-cursor-input": ["M5 4h1a3 3 0 0 1 3 3 3 3 0 0 1 3-3h1", "M13 20h-1a3 3 0 0 1-3-3 3 3 0 0 1-3 3H5", "M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1", "M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7", "M9 7v10"],
+  image: ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M9 7a2 2 0 1 0 0 4 2 2 0 0 0 0-4z", "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"],
+  "rows-2": ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M3 12h18"],
+  check: ["M20 6 9 17l-5-5"],
 } as const;
 
 export type IconName = keyof typeof ICONS;
