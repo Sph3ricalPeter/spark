@@ -18,6 +18,8 @@ export type ClientHooks = {
   win: Window;
   /** The client's panel host, mounted in the shell; only the active frame's shows. */
   panel: HTMLElement;
+  /** The client's change list (with Implement changes), mounted in the sidebar's Changes tab; only the active frame's shows. */
+  changes?: HTMLElement;
   setOpen(open: boolean): void;
   setPicking(edit: boolean): void;
   /** Another frame became active: drop the selection here. */
@@ -45,6 +47,8 @@ export type ShellApi = {
   isActive(win: Window): boolean;
   /** This frame's selection came or went (the chat pins hide while another frame has one). */
   setSelected?(win: Window, has: boolean): void;
+  /** How many changes are pending (the bar's Changes button shows it). */
+  setChangeCount?(n: number): void;
   /** Is an element selected in a frame other than this one? */
   selectedElsewhere?(win: Window): boolean;
   /** The panel was opened or closed (in the active frame): all frames follow, the canvas docks. */

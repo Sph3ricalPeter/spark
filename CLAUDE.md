@@ -50,7 +50,9 @@ Zustand). Release and deploy are ported from dawg and described in
   more) and one component frame per `*.spark.tsx`, sized to its cases and
   draggable by its title; the board keeps the clients in step (one mode,
   the selected frame's panel, one change list and undo history), and view
-  mode focuses the selected frame. `frame.ts` is its side in the app and
+  mode focuses the selected frame. Its left sidebar (`sidebar.ts`) has the
+  Chats and Changes tabs (each with a bar button); the change list and
+  Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
   `runner.ts` runs the local `claude -p` for "Implement changes" and the
   Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends

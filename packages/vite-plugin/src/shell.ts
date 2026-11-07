@@ -299,7 +299,7 @@ const side = sidebar((open) => {
 const bar = h(
   "div",
   { class: "bar" },
-  side.toggle,
+  side.buttons,
   h("span", { class: "sep" }),
   addBtn,
   h("span", { class: "sep" }),
@@ -447,6 +447,7 @@ function removeFrame(f: Frame) {
   const hooks = win && clients.get(win);
   if (hooks) {
     hooks.panel.remove();
+    hooks.changes?.remove();
     clients.delete(win);
   }
   f.el.remove();
@@ -485,6 +486,7 @@ function syncComponents(files: string[]) {
     const win = f.iframe.contentWindow;
     if (win && clients.has(win)) {
       clients.get(win)!.panel.remove();
+      clients.get(win)!.changes?.remove();
       clients.delete(win);
     }
     f.el.remove();
@@ -902,7 +904,10 @@ function activate(win: Window) {
 /** Only the selected frame's panel shows. */
 function showPanels() {
   const win = selected()?.iframe.contentWindow;
-  for (const [w, hooks] of clients) hooks.panel.style.display = w === win ? "" : "none";
+  for (const [w, hooks] of clients) {
+    hooks.panel.style.display = w === win ? "" : "none";
+    if (hooks.changes) hooks.changes.style.display = w === win ? "" : "none";
+  }
 }
 
 /** The bar's View/Edit: the active client switches, which tells the board. */
@@ -924,15 +929,20 @@ const api: ShellApi = {
     for (const [w, old] of clients) {
       if (w.closed || !frameOf(w)) {
         old.panel.remove();
+        old.changes?.remove();
         clients.delete(w);
       }
     }
     clients.set(hooks.win, hooks);
     root.append(hooks.panel);
+    if (hooks.changes) changesTab.append(hooks.changes);
     if (frameOf(hooks.win) === selected()) activate(hooks.win);
     else showPanels();
     hooks.setOpen(docked);
     hooks.setPicking(edit);
+  },
+  setChangeCount(n) {
+    side.setCount("Changes", n);
   },
   isActive(win) {
     return selected().iframe.contentWindow === win;
@@ -1105,12 +1115,15 @@ function openChat(chat: ChatRef): boolean {
   return false;
 }
 const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
-side.addTab("Chats", chatList.el);
+side.addTab("Chats", chatList.el, "message-circle", "Chats with Claude, on every element");
+// Changes: the active frame's change list and Implement changes (each client mounts its own; showPanels picks).
+const changesTab = h("div", { class: "changes-side" });
+side.addTab("Changes", changesTab, "git-compare", "Pending changes, and Implement changes");
 let chatData: ChatRef[] = [];
 let runningChat: string | null = null;
 const showChats = () => {
   chatList.update(chatData as Parameters<typeof chatList.update>[0], runningChat);
-  side.setCount(chatList.openCount());
+  side.setCount("Chats", chatList.openCount());
 };
 import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | null }) => {
   chatData = d.chats;

@@ -80,6 +80,7 @@ const ICONS = {
   "rows-2": ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M3 12h18"],
   check: ["M20 6 9 17l-5-5"],
   "message-circle": ["M7.9 20A9 9 0 1 0 4 16.1L2 22Z"],
+  "git-compare": ["M21 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0", "M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0", "M13 6h3a2 2 0 0 1 2 2v7", "M11 18H8a2 2 0 0 1-2-2V9"],
 } as const;
 
 export type IconName = keyof typeof ICONS;

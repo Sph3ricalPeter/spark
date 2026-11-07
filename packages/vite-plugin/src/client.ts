@@ -517,6 +517,9 @@ const STYLE = `${THEME}
     input.bad { border-color: var(--sp-danger); }
     .body { flex: 1; overflow: auto; padding: 12px; }
     .footer { border-top: 1px solid var(--sp-line); padding: 10px 12px; max-height: 40%; overflow: auto; }
+    /* On the board the change list is the sidebar's Changes tab (shell.ts), not the panel's footer. */
+    .changes-tab { color: var(--sp-text); font: var(--sp-fs-md)/1.45 var(--sp-font); }
+    .changes-tab .footer { border-top: none; max-height: none; overflow: visible; }
     .empty { color: var(--sp-text-dim); }
     h3 { margin: 16px 0 6px; font-size: var(--sp-fs-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--sp-text-dim); }
     h3:first-child { margin-top: 0; }
@@ -765,6 +768,14 @@ if (shell) {
   panelRoot.append(h("style", {}, STYLE));
 }
 panelRoot.append(panel, fab);
+// On the board the change list lives in the sidebar's Changes tab, out of the inspector's way.
+const changesHost = shell ? document.createElement("spark-changes") : null;
+if (changesHost) {
+  changesHost.style.cssText = "display: block; height: 100%;";
+  const r = changesHost.attachShadow({ mode: "open" });
+  r.append(h("style", {}, STYLE), h("div", { class: "changes-tab" }, footer));
+  dropFocus(r);
+}
 // On the board the popup lives in the shell too, so it can sit outside a small
 // frame (over the canvas) instead of on top of the element it's about.
 panelRoot.append(askBox);
@@ -2206,6 +2217,7 @@ function renderChanges() {
   ) as HTMLButtonElement;
   implementBtn.disabled = pending.length === 0 || isRunning();
   footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
+  shell?.setChangeCount?.(pending.length);
   // A run going: what Claude is doing now, and Stop. Its transcript and result are in the Chats list.
   if (run?.kind === "implement" && isRunning()) {
     implementBtn.replaceChildren("Stop");
@@ -2442,6 +2454,7 @@ if (shell) {
   shell.register({
     win: window,
     panel: panelHost,
+    changes: changesHost ?? undefined,
     setOpen,
     setPicking,
     deselect: () => select(null),

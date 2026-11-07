@@ -1,8 +1,11 @@
-// The board's left sidebar (shell.ts): a panel of tabs. Chats is the first:
-// every chat with Claude about an element (chats.ts), newest first, with its
-// element, state and model; clicking one opens it on its element.
+// The board's left sidebar (shell.ts): a panel of tabs. Chats: every chat
+// with Claude about an element (chats.ts), newest first, with its element,
+// state and model; clicking one opens it on its element. Changes: the
+// pending edits and Implement changes (the active frame's client renders it).
 //
-// Add a tab with `addTab(name, element)`.
+// Add a tab with `addTab(name, element, icon, title)`: it gets a button on the
+// bar that opens the sidebar on it (`buttons` lists them, `setCount` shows a
+// count on one).
 import { h } from "./fields.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
@@ -22,10 +25,12 @@ export const SIDEBAR_STYLE = `
     height: 24px; padding: 0 8px; border: none; background: none; color: var(--sp-text-dim); font-weight: 600; min-width: 0;
   }
   .side-head .tab.on { color: var(--sp-text-strong); background: var(--sp-field); }
+  .side-head .tab .count { margin-left: 4px; color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
   .side-head .grow { flex: 1; }
   .side-head .close { border: none; background: none; color: var(--sp-text-dim); min-width: 24px; height: 24px; padding: 0; }
   .side-head .close:hover { color: var(--sp-text-strong); background: var(--sp-field); }
   .side-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent; }
+  .bar .side-buttons { display: contents; }
   .bar .side-toggle { display: inline-flex; align-items: center; gap: 6px; }
   .bar .side-toggle.on { background: var(--sp-line-strong); color: var(--sp-text-strong); }
   .bar .side-toggle .count { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
@@ -70,53 +75,84 @@ export const SIDEBAR_STYLE = `
 export function sidebar(onToggle: (open: boolean) => void) {
   const STORE = "spark:sidebar";
   let open = false;
+  let current = "";
   try {
     open = localStorage.getItem(STORE) === "1";
+    current = localStorage.getItem(`${STORE}-tab`) ?? "";
   } catch {
     // Starts closed.
   }
-  const tabs = new Map<string, { btn: HTMLElement; el: HTMLElement }>();
-  let current = "";
+  const tabs = new Map<string, { btn: HTMLElement; bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement }>();
   const tabRow = h("div", { class: "side-head" });
   const grow = h("span", { class: "grow" });
   const close = h("button", { class: "close", title: "Close the sidebar", click: () => setOpen(false) }, icon("x"));
   tabRow.append(grow, close);
   const body = h("div", { class: "side-body" });
   const el = h("div", { class: "sidebar" }, tabRow, body);
-  const count = h("span", { class: "count" });
-  const toggle = h("button", { class: "side-toggle", title: "Chats with Claude, on every element" }, icon("message-circle", 13), "Chats", count);
-  toggle.addEventListener("click", () => setOpen(!open));
+  const buttons = h("span", { class: "side-buttons" });
 
+  function mark() {
+    for (const [n, t] of tabs) {
+      t.btn.classList.toggle("on", n === current);
+      t.bar.classList.toggle("on", open && n === current);
+    }
+  }
   function show(name: string) {
     current = name;
-    for (const [n, t] of tabs) t.btn.classList.toggle("on", n === name);
+    try {
+      localStorage.setItem(`${STORE}-tab`, name);
+    } catch {
+      // Not remembered.
+    }
     body.replaceChildren(tabs.get(name)?.el ?? "");
+    mark();
   }
   function setOpen(v: boolean) {
     open = v;
-    toggle.classList.toggle("on", v);
     try {
       localStorage.setItem(STORE, v ? "1" : "0");
     } catch {
       // Not remembered.
     }
+    mark();
     onToggle(v);
   }
   return {
     el,
-    toggle,
-    /** Shown on the bar's button (open chats). */
-    setCount: (n: number) => (count.textContent = n ? String(n) : ""),
+    /** For the bar: a button per tab (added as tabs are), each opening the sidebar on its tab, or closing it when it's already showing. */
+    buttons,
+    /** A count on a tab and its bar button (open chats, pending changes); 0 hides it. */
+    setCount: (name: string, n: number) => {
+      for (const c of tabs.get(name)?.counts ?? []) c.textContent = n ? String(n) : "";
+    },
     isOpen: () => open,
     setOpen,
-    addTab(name: string, content: HTMLElement) {
-      const btn = h("button", { class: "tab", click: () => show(name) }, name);
+    /** Open the sidebar on a tab. */
+    showTab: (name: string) => {
+      show(name);
+      if (!open) setOpen(true);
+    },
+    addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string) {
+      const counts = [h("span", { class: "count" }), h("span", { class: "count" })];
+      const btn = h("button", { class: "tab", click: () => show(name) }, name, counts[0]);
       tabRow.insertBefore(btn, grow);
-      tabs.set(name, { btn, el: content });
-      if (!current) show(name);
+      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), name, counts[1]);
+      bar.addEventListener("click", () => {
+        if (open && current === name) setOpen(false);
+        else {
+          show(name);
+          if (!open) setOpen(true);
+        }
+      });
+      buttons.append(bar);
+      tabs.set(name, { btn, bar, counts, el: content });
+      if (!current || !tabs.has(current) || current === name) show(current && tabs.has(current) ? current : name);
     },
     /** Start in the state it was left in. */
-    init: () => setOpen(open),
+    init: () => {
+      if (!tabs.has(current)) show(tabs.keys().next().value ?? "");
+      setOpen(open);
+    },
   };
 }
 
