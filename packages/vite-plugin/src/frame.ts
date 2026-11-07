@@ -121,7 +121,8 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
   // Alt+S also works with focus outside the app (the bar, the panel).
   const parentDoc = window.parent.document;
   const altS = (e: KeyboardEvent) => {
-    if (e.altKey && e.code === "KeyS") {
+    // Every frame on the board has a client: only the selected one toggles.
+    if (e.altKey && e.code === "KeyS" && s.isActive(window)) {
       e.preventDefault();
       toggle();
     }

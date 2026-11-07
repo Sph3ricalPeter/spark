@@ -30,6 +30,8 @@ Zustand). Release and deploy are ported from dawg and described in
   `data-spark-call` to component call sites; `client.ts` is the overlay and
   docked panel (Shadow DOM, no React; Alt+S). View mode (default) leaves the
   app usable; edit mode (Tab or Alt+E; the View/Edit island in the canvas bar shows which) picks elements, Esc steps back out to view.
+  Spark's own buttons and dropdowns never keep focus: Tab and Esc are
+  always Spark's shortcuts except while typing in a text field.
   Edit mode has selection handles to resize,
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);
@@ -40,14 +42,18 @@ Zustand). Release and deploy are ported from dawg and described in
   or moved to a CSS rule; tokens are always global;
   `reorder.ts` drags an element along its flex/grid parent (previewed
   with CSS `order`, recorded as a "children-order" override on the parent);
-  `shell.ts` is the viewport canvas (zoom, pan, device sizes) the app runs
-  inside as an iframe, with `frame.ts` its side in the app and `mode.ts`
-  deciding which page is which;
+  `shell.ts` is the board: an infinite canvas (zoom, pan) of frames, each an
+  iframe with its own client: app frames at device sizes ("+ Frame" adds
+  more) and one component frame per `*.spark.tsx`, sized to its cases and
+  draggable by its title; the board keeps the clients in step (one mode,
+  the selected frame's panel, one change list and undo history), and view
+  mode focuses the selected frame. `frame.ts` is its side in the app and
+  `mode.ts` decides which page is which;
   `runner.ts` runs the local `claude -p` for "Implement changes" and the
   Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
-  `gallery.ts` is the Components view (App / Components in the canvas bar,
-  `?spark=components`): every `*.spark.tsx` next to a component exports one
+  `gallery.ts` renders a component frame (`?spark=components&file=…`;
+  the board lists the files through `/@spark/cases`): a `*.spark.tsx` next to a component exports one
   function per case, rendered alone with the app's global CSS and React;
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;

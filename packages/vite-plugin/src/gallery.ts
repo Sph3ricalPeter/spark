@@ -13,6 +13,10 @@
 // `tauri`: an object of command name → (args) => result, which fakes Tauri's
 // `invoke` when the page isn't running inside Tauri.
 //
+// On the board (shell.ts) each file gets a frame of its own
+// (`?spark=components&file=/src/ui/Meter.spark.tsx`): its cases in a row, no
+// title (the frame has one), and the frame is sized to them.
+//
 // The page runs in the shell's frame (`?spark=components`) instead of the app,
 // with the app's global CSS (see index.ts), and the Spark client loads on top
 // as usual, so every case can be selected, edited, and implemented. Runs with
@@ -38,6 +42,11 @@ const STYLE = `
     font: 12px/1.4 ${UI_FONT};
   }
   .spark-gallery * { box-sizing: border-box; }
+  /* One file in its own board frame (shell.ts): as big as its cases, no title. */
+  .spark-gallery.one { min-height: 0; width: max-content; padding: 24px; }
+  .spark-gallery.one .spark-gallery-file { margin: 0; }
+  .spark-gallery.one .spark-gallery-cases { flex-wrap: nowrap; }
+  .spark-gallery.one .spark-gallery-empty { margin: 0; }
   .spark-gallery-file { margin: 0 0 40px; }
   .spark-gallery-file > h2 {
     all: unset; display: block; margin: 0 0 12px; font: 600 13px/1.2 ${UI_FONT}; color: #8a8f98;
@@ -102,6 +111,10 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
     document.head.append(style);
   }
   // The app's own mount point stays empty; the gallery gets its own.
+  const params = new URLSearchParams(location.search);
+  const one = params.has("file");
+  const only = params.get("file");
+  if (only) files = Object.fromEntries(Object.entries(files).filter(([p]) => p === only));
   const g = window as unknown as { __sparkGallery?: ReturnType<typeof CreateRoot> };
   if (!g.__sparkGallery) {
     // The app's empty mount points (#root and friends) would take up the page.
@@ -109,8 +122,15 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
       if (child instanceof HTMLElement && child.tagName === "DIV" && child.childNodes.length === 0) child.style.display = "none";
     }
     const el = document.createElement("div");
-    el.className = "spark-gallery";
+    el.className = one ? "spark-gallery one" : "spark-gallery";
     document.body.append(el);
+    if (one) {
+      // The board sizes the frame to the cases (with the page's own margin around them).
+      new ResizeObserver(() => {
+        const r = el.getBoundingClientRect();
+        window.parent.__sparkShell?.contentSize(window, r.right + r.left, r.bottom + r.top);
+      }).observe(el);
+    }
     g.__sparkGallery = createRoot(el);
   }
 
@@ -137,7 +157,7 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
       return h(
         "section",
         { key: path, className: "spark-gallery-file" },
-        h("h2", {}, fileTitle(path), h("code", {}, path.replace(/^\//, ""))),
+        one ? null : h("h2", {}, fileTitle(path), h("code", {}, path.replace(/^\//, ""))),
         h(
           "div",
           { className: "spark-gallery-cases" },

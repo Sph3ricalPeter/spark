@@ -28,6 +28,13 @@ const ENTRY = "/@spark/entry";
 const ENTRY_ID = "\0spark-entry:";
 const COMPONENTS = "/@spark/components";
 const COMPONENTS_ID = "\0spark-components:";
+/** The board's list of case files (shell.ts), live as files come and go. */
+const CASES = "/@spark/cases";
+const CASES_ID = "\0spark-cases";
+const CASES_MODULE = [
+  `export default Object.keys(import.meta.glob(["/**/*.spark.{tsx,jsx}", "!**/node_modules/**"]));`,
+  `if (import.meta.hot) import.meta.hot.accept((m) => m && window.dispatchEvent(new CustomEvent("spark:cases", { detail: m.default })));`,
+].join("\n");
 
 /** Side-effect stylesheet imports (`import "./styles.css"`): the app's global CSS. */
 const CSS_IMPORT = /^\s*import\s+["']([^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?)["']/gm;
@@ -100,12 +107,14 @@ export default function spark(): Plugin {
 
     resolveId(id) {
       if (id in MODULES) return MODULES[id];
+      if (id === CASES) return CASES_ID;
       if (id.startsWith(`${ENTRY}?src=`)) return ENTRY_ID + decodeURIComponent(id.slice(ENTRY.length + 5));
       if (id.startsWith(`${COMPONENTS}?entry=`)) return COMPONENTS_ID + decodeURIComponent(id.slice(COMPONENTS.length + 7));
       return null;
     },
 
     load(id) {
+      if (id === CASES_ID) return CASES_MODULE;
       if (id.startsWith(ENTRY_ID)) return entryModule(id.slice(ENTRY_ID.length));
       if (id.startsWith(COMPONENTS_ID)) return componentsModule(root, id.slice(COMPONENTS_ID.length));
       return null;

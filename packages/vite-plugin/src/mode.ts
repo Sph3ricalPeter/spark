@@ -13,13 +13,33 @@
 
 export type Mode = "shell" | "frame" | "page";
 
-/** What the shell offers the client running in its iframe. */
+/** What a client in one of the shell's frames hands the shell. */
+export type ClientHooks = {
+  win: Window;
+  /** The client's panel host, mounted in the shell; only the active frame's shows. */
+  panel: HTMLElement;
+  setOpen(open: boolean): void;
+  setPicking(edit: boolean): void;
+  /** Another frame became active: drop the selection here. */
+  deselect(): void;
+  /** Another frame changed the change list (an edit, undo, redo): show this one. */
+  restore(changes: unknown[]): void;
+};
+
+/**
+ * What the shell offers the clients running in its frames. The board has
+ * several frames (app viewports and component frames), each with its own
+ * client; the shell keeps them in step: one mode, one open panel (the active
+ * frame's), one change list and one undo history.
+ */
 export type ShellApi = {
   /** The canvas zoom, read every frame by the client to keep handles a constant size. */
   readonly zoom: number;
-  /** Where the client mounts its panel and the Spark button. */
-  mount(el: HTMLElement): void;
-  /** The panel is open: the canvas gives up room on the right. */
+  /** A client loaded in a frame. The shell sends it the current mode and panel state. */
+  register(hooks: ClientHooks): void;
+  /** Is this frame the active one (its panel shows, the shell's keys go to it)? */
+  isActive(win: Window): boolean;
+  /** The panel was opened or closed (in the active frame): all frames follow, the canvas docks. */
   setDocked(docked: boolean): void;
   /** Ctrl+wheel or a pinch over the app, at a point in the app's own coordinates. */
   wheelZoom(x: number, y: number, deltaY: number): void;
@@ -30,10 +50,18 @@ export type ShellApi = {
   /** Space held inside the app: dragging pans the canvas. */
   space(down: boolean): void;
   /**
-   * The client's view/edit mode, for the mode island over the canvas.
-   * `toggle` is how the island's buttons switch it.
+   * The client's view/edit mode, for the mode island over the canvas; every
+   * frame follows. `toggle` is kept for compatibility and unused.
    */
-  setMode(edit: boolean, toggle: (edit: boolean) => void): void;
+  setMode(edit: boolean, toggle?: (edit: boolean) => void): void;
+  /** A saved edit: the shell records an undo step and sends the list to the other frames. */
+  commit(changes: unknown[], from: Window): void;
+  /** Undo (-1) or redo (1): the list to show, or null at the end of the history. Other frames get it too. */
+  step(dir: -1 | 1, from: Window): unknown[] | null;
+  /** The list was loaded or Claude applied changes: the history starts over from it. */
+  resetHistory(changes: unknown[]): void;
+  /** A component frame's content size, so the frame hugs it. */
+  contentSize(win: Window, w: number, h: number): void;
 };
 
 declare global {

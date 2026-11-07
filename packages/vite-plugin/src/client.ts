@@ -456,6 +456,32 @@ if (shell) {
 }
 panelRoot.append(panel, fab);
 
+// Spark's own buttons and dropdowns never keep focus: Tab and Esc are Spark's
+// shortcuts, not focus moves, and the first Esc mustn't go to a dropdown.
+function dropFocus(r: ShadowRoot) {
+  r.addEventListener("click", (e) => {
+    const b = (e.composedPath()[0] as Element | undefined)?.closest?.("button");
+    if (b && r.activeElement === b) b.blur();
+  });
+  r.addEventListener("change", (e) => {
+    const t = e.composedPath()[0];
+    if (t instanceof HTMLSelectElement) t.blur();
+  });
+}
+dropFocus(shadow);
+if (panelRoot !== shadow) dropFocus(panelRoot);
+// A press in the app takes focus out of the panel (the overlay may keep the
+// press from focusing anything itself).
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    const path = e.composedPath();
+    if (path.includes(panelHost) || path.includes(host)) return;
+    (panelRoot.activeElement as HTMLElement | null)?.blur();
+  },
+  true,
+);
+
 // Docking: the app gives up room on the right while the panel is open.
 const dockStyle = document.createElement("style");
 dockStyle.setAttribute("data-spark", "dock");
@@ -750,17 +776,28 @@ let step = 0;
 
 function remember() {
   const now = snapshotChanges();
+  // On the board the history is shared by every frame's client.
+  if (shell) return shell.commit(now, window);
   if (JSON.stringify(now) === JSON.stringify(history[step])) return;
   history = [...history.slice(0, step + 1), now].slice(-MAX_STEPS);
   step = history.length - 1;
 }
 
 function resetHistory() {
+  if (shell) return shell.resetHistory(snapshotChanges());
   history = [snapshotChanges()];
   step = 0;
 }
 
 function undoRedo(dir: -1 | 1) {
+  if (shell) {
+    const list = shell.step(dir, window);
+    if (!list) return;
+    if (editing) stopTextEdit(true);
+    restore(list as Change[]);
+    save();
+    return;
+  }
   const to = step + dir;
   if (to < 0 || to >= history.length) return;
   if (editing) stopTextEdit(true);
@@ -1396,7 +1433,8 @@ function plainTab(e: KeyboardEvent) {
 function textEntry(e: Event): boolean {
   const t = e.composedPath()[0] as HTMLElement | undefined;
   if (!t || !t.tagName) return false;
-  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  // A dropdown isn't typed into: Tab and Esc stay Spark's there.
+  if (t.isContentEditable || t.tagName === "TEXTAREA") return true;
   if (t.tagName !== "INPUT") return false;
   return !/^(button|submit|reset|checkbox|radio|range|color|file|image)$/.test((t as HTMLInputElement).type);
 }
@@ -1461,6 +1499,8 @@ document.addEventListener(
 // Esc and Alt+E through.
 const panelKeys = (e: Event) => {
   const k = e as KeyboardEvent;
+  // On the board every frame has a client: only the selected frame's answers.
+  if (shell && !shell.isActive(window)) return;
   if ((k.altKey && k.code === "KeyE") || (plainTab(k) && !textEntry(k))) {
     k.preventDefault();
     setPicking(!picking);
@@ -1475,8 +1515,8 @@ const panelKeys = (e: Event) => {
     removeSelected();
   } else if (k.key === "Escape") {
     const t = k.composedPath()[0] as HTMLElement | undefined;
-    // Esc in a field leaves the field; otherwise it steps out like in the app.
-    if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName ?? "")) {
+    // Esc while typing leaves the field; otherwise it steps out like in the app.
+    if (t && textEntry(k)) {
       t.blur();
       closePopover();
     } else {
@@ -1495,14 +1535,11 @@ document.head.append(dockStyle);
 installFont();
 document.documentElement.append(host);
 if (shell) {
-  shell.mount(panelHost);
   // Space-drag pans only in edit mode: in view mode Space belongs to the app.
   frameGlue(host, () => picking, () => setOpen(!open));
-  const sh = shell;
   window.addEventListener("pagehide", () => {
     keyTarget.removeEventListener("keydown", panelKeys, true);
     panelHost.remove();
-    sh.setDocked(false);
   });
 }
 initChanges(skip, instancePath);
@@ -1524,8 +1561,21 @@ try {
 } catch {
   // Storage may be off.
 }
-if (reopen) setOpen(true);
-shell?.setMode(picking, setPicking);
+if (shell) {
+  // On the board the shell sends the panel state and the mode.
+  shell.register({
+    win: window,
+    panel: panelHost,
+    setOpen,
+    setPicking,
+    deselect: () => select(null),
+    restore: (list) => {
+      if (editing) stopTextEdit(true);
+      restore(list as Change[]);
+      render();
+    },
+  });
+} else if (reopen) setOpen(true);
 requestAnimationFrame(follow);
 
 import.meta.hot?.on("spark:ready", (info: { name: string; root: string; changes: ChangeLog | null }) => {
