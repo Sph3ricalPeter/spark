@@ -59,11 +59,13 @@ type Fiber = {
 type Owner = PathEntry;
 
 type Field =
-  | { prop: string; kind: "number"; step?: number; unit?: string; min?: number }
+  | { prop: string; kind: "number"; step?: number; unit?: string; min?: number; keywords?: string[] }
   | { prop: string; kind: "select"; options: string[] }
   | { prop: string; kind: "color" }
   | { prop: string; kind: "text" }
   | { prop: string; kind: "sides"; step?: number };
+
+const SIZE_KEYWORDS = ["auto", "fit-content", "min-content", "max-content", "inherit"];
 
 /** The properties the panel edits, grouped as they're shown. */
 const FIELDS: { group: string; fields: Field[] }[] = [
@@ -79,7 +81,7 @@ const FIELDS: { group: string; fields: Field[] }[] = [
         kind: "select",
         options: ["normal", "flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly", "start", "end"],
       },
-      { prop: "gap", kind: "number", min: 0 },
+      { prop: "gap", kind: "number", min: 0, keywords: ["normal"] },
       { prop: "position", kind: "select", options: ["static", "relative", "absolute", "fixed", "sticky"] },
       { prop: "overflow", kind: "select", options: ["visible", "hidden", "auto", "scroll", "clip"] },
     ],
@@ -87,8 +89,8 @@ const FIELDS: { group: string; fields: Field[] }[] = [
   {
     group: "Size and spacing",
     fields: [
-      { prop: "width", kind: "number", min: 0 },
-      { prop: "height", kind: "number", min: 0 },
+      { prop: "width", kind: "number", min: 0, keywords: SIZE_KEYWORDS },
+      { prop: "height", kind: "number", min: 0, keywords: SIZE_KEYWORDS },
       { prop: "padding", kind: "sides" },
       { prop: "margin", kind: "sides" },
     ],
@@ -98,10 +100,10 @@ const FIELDS: { group: string; fields: Field[] }[] = [
     fields: [
       { prop: "color", kind: "color" },
       { prop: "font-family", kind: "text" },
-      { prop: "font-size", kind: "number", min: 0 },
+      { prop: "font-size", kind: "number", min: 0, keywords: ["inherit", "smaller", "larger"] },
       { prop: "font-weight", kind: "select", options: ["100", "200", "300", "400", "500", "600", "700", "800", "900"] },
-      { prop: "line-height", kind: "number", step: 0.1, unit: "", min: 0 },
-      { prop: "letter-spacing", kind: "number" },
+      { prop: "line-height", kind: "number", step: 0.1, unit: "", min: 0, keywords: ["normal", "inherit"] },
+      { prop: "letter-spacing", kind: "number", keywords: ["normal", "inherit"] },
       { prop: "text-align", kind: "select", options: ["start", "left", "center", "right", "end", "justify"] },
       { prop: "text-transform", kind: "select", options: ["none", "uppercase", "lowercase", "capitalize"] },
     ],
@@ -330,6 +332,14 @@ const STYLE = `
     }
     .num select.unit:hover { color: #fff; }
     .num select.unit:focus { outline: none; color: #fff; }
+    /* A keyword stands in for the number. */
+    .num.kw input { color: #b9bdc5; font-style: italic; }
+    /* The keyword is already in the input: the dropdown shrinks to a caret. */
+    .num.kw select.unit {
+      width: 16px; color: transparent;
+      background: no-repeat center / 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%238fb4ff'/%3E%3C/svg%3E");
+    }
+    .num.kw select.unit option, .num.kw select.unit optgroup { color: #d6d8dc; }
     /* Four sides share a row: their unit shows while you edit one. */
     .quad .num select.unit { display: none; }
     .quad .num:focus-within select.unit { display: block; }
@@ -1117,7 +1127,7 @@ function render() {
           const { value, changed } = valueOf(prop);
           values.push(value);
           computeds.push(cs.getPropertyValue(prop).trim());
-          quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined }, onValue(prop)));
+          quad.append(numberField(value, { computed: cs.getPropertyValue(prop), label: side[0].toUpperCase(), changed, min: f.prop === "padding" ? 0 : undefined, keywords: f.prop === "margin" ? ["auto"] : [] }, onValue(prop)));
         }
         body.append(row(f.prop, quad, resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable)));
         continue;
@@ -1125,7 +1135,7 @@ function render() {
       const { value, changed } = valueOf(f.prop);
       const computed = cs.getPropertyValue(f.prop);
       let field: HTMLElement;
-      if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, changed }, onValue(f.prop));
+      if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
       else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop));
       else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
       else field = textField(value, changed, onValue(f.prop));

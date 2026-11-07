@@ -77,36 +77,63 @@ export type NumberOpts = {
   changed?: boolean;
   /** A short label shown inside the field (T, R, B, L). */
   label?: string;
+  /** Keywords the property takes instead of a number (auto, normal…), offered in the unit dropdown. */
+  keywords?: string[];
 };
 
 /** Units offered in a field's dropdown; a value's own unit is added when it isn't here. */
 const UNITS = ["px", "%", "em", "rem", "vw", "vh"];
+/** For a unitless field that also takes lengths (line-height: 1.4, 20px, 1.2em). */
+const UNITS_UNITLESS = ["", "px", "em", "%"];
+/** Keywords go in the same dropdown, after the units, with this prefix in its value. */
+const KW = "=";
 
 /**
  * A number with its unit in a dropdown on the right: the input holds only the
- * number, so one click selects it and you just type the new value. Keywords
- * and expressions (auto, var(--x), calc(…)) can still be typed in the input;
- * the dropdown then shows "–" until a unit is picked.
+ * number, so one click selects it and you just type the new value.
+ *
+ * Properties that also take keywords (line-height: normal, width: auto,
+ * margin: auto…) list them in the same dropdown, under the units: picking
+ * one replaces the number with the keyword; typing a number or picking a unit
+ * brings the number back. Anything else (var(--x), calc(…)) can still be
+ * typed, and the dropdown shows "–" for it.
  */
 export function numberField(value: string, opts: NumberOpts, onValue: OnValue): HTMLElement {
   const step = opts.step ?? 1;
   const unitDefault = opts.unit ?? "px";
+  const keywords = opts.keywords ?? [];
   const parsed = parse(value);
-  // A unitless field (opacity, line-height 1.4) has no dropdown.
-  const unitless = unitDefault === "" && (!parsed || parsed.unit === "");
-  let unit = parsed?.unit || (parsed ? unitDefault : "");
+  const units = unitDefault === "" ? UNITS_UNITLESS : UNITS;
+  // A unitless field with no keywords (opacity) has no dropdown.
+  const noDropdown = unitDefault === "" && keywords.length === 0 && (!parsed || parsed.unit === "");
+  /** The last number's unit, kept while a keyword is shown so a number comes back in it. */
+  let unit = parsed ? parsed.unit || unitDefault : unitDefault;
 
   const input = h("input", { value: parsed ? String(parsed.n) : value, spellcheck: "false" }) as HTMLInputElement;
   const grip = h("span", { class: "grip", title: "Drag to change · Alt: slower · Shift: ×10" }, opts.label ?? "↔");
-  const unitSel = h("select", { class: "unit", title: "Unit" }) as HTMLSelectElement;
-  const fillUnits = () => {
-    const list = [...UNITS];
-    if (unit && !list.includes(unit)) list.unshift(unit);
-    unitSel.replaceChildren(...(unit ? [] : [h("option", { value: "" }, "–")]), ...list.map((u) => h("option", { value: u }, u)));
-    unitSel.value = unit;
+  const unitSel = h("select", { class: "unit", title: keywords.length ? "Unit or keyword" : "Unit" }) as HTMLSelectElement;
+  /** What the dropdown shows for the input as it is now. */
+  const selection = () => {
+    const v = input.value.trim();
+    if (parse(v)) return unit;
+    if (keywords.includes(v)) return KW + v;
+    return null;
   };
-  if (!unitless) fillUnits();
-  const wrap = h("label", { class: `num${opts.changed ? " changed" : ""}` }, grip, input, !unitless && unitSel);
+  const fillUnits = () => {
+    const sel = selection();
+    const list = [...units];
+    if (!list.includes(unit)) list.unshift(unit);
+    const opt = (u: string) => h("option", { value: u }, u === "" ? "x" : u);
+    unitSel.replaceChildren(
+      ...(sel === null ? [h("option", { value: "?" }, "–")] : []),
+      ...list.map(opt),
+      ...(keywords.length ? [h("optgroup", { label: "Keyword" }, ...keywords.map((k) => h("option", { value: KW + k }, k)))] : []),
+    );
+    unitSel.value = sel ?? "?";
+    wrap.classList.toggle("kw", sel !== null && sel.startsWith(KW));
+  };
+  const wrap = h("label", { class: `num${opts.changed ? " changed" : ""}` }, grip, input, !noDropdown && unitSel);
+  if (!noDropdown) fillUnits();
   keepKeys(input);
   keepKeys(unitSel);
 
@@ -114,28 +141,16 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
   const full = () => {
     const p = parse(input.value);
     if (!p) return input.value.trim();
-    return `${p.n}${p.unit || unit || (unitless ? "" : unitDefault)}`;
+    return `${p.n}${p.unit || (noDropdown ? "" : unit)}`;
   };
-  /** Show `v` split into number and unit. */
+  /** Show `v`: a number goes in the input and its unit in the dropdown. */
   const show = (v: string) => {
     const p = parse(v);
-    if (p) {
-      input.value = String(p.n);
-      if (!unitless && (p.unit || unit) !== unit) {
-        unit = p.unit || unit;
-        fillUnits();
-      } else if (!unitless && !unit) {
-        unit = unitDefault;
-        fillUnits();
-      }
-    } else {
-      input.value = v;
-      if (!unitless && unit) {
-        unit = "";
-        fillUnits();
-      }
-    }
+    input.value = p ? String(p.n) : v;
+    if (p && (p.unit || noDropdown)) unit = p.unit;
+    if (!noDropdown) fillUnits();
   };
+  show(value);
   const current = () => parse(full()) ?? parse(opts.computed) ?? { n: 0, unit: unitDefault };
   const clamp = (n: number) => (opts.min !== undefined ? Math.max(opts.min, n) : n);
 
@@ -161,7 +176,7 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     } else if (k.key === "ArrowUp" || k.key === "ArrowDown") {
       k.preventDefault();
       const { n, unit: cu } = current();
-      const u = cu || (unitless ? "" : unitDefault);
+      const u = cu || (noDropdown ? "" : unit);
       const one = stepFor(u, step);
       const s = one * (k.shiftKey ? 10 : 1);
       const v = fmt(clamp(nudge(n, k.key === "ArrowUp" ? s : -s, one)), u, one);
@@ -176,12 +191,18 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     onValue(v, true);
   });
   unitSel.addEventListener("change", () => {
-    // Same number, new unit (a keyword starts from the computed number).
-    const p = parse(input.value) ?? parse(opts.computed);
-    unit = unitSel.value;
-    fillUnits();
-    if (!p || !unit) return;
-    const v = `${p.n}${unit}`;
+    const pick = unitSel.value;
+    if (pick === "?") return;
+    let v: string;
+    if (pick.startsWith(KW)) {
+      v = pick.slice(KW.length);
+    } else {
+      // Same number, new unit; from a keyword, start at the computed number.
+      // A unitless line-height from "normal" starts at its usual 1.2.
+      const p = parse(input.value) ?? parse(opts.computed) ?? { n: pick === "" ? 1.2 : 0, unit: pick };
+      unit = pick;
+      v = `${p.n}${pick}`;
+    }
     show(v);
     onValue(v, true);
   });
@@ -194,7 +215,7 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     const x0 = p.clientX;
     const first = full();
     let last = first;
-    const u = start.unit || (unitless ? "" : unitDefault);
+    const u = start.unit || (noDropdown ? "" : unit);
     const one = stepFor(u, step);
     // Steps accumulate from each move, so pressing or releasing Alt or Shift
     // mid-drag changes the rate from there on without a jump.
