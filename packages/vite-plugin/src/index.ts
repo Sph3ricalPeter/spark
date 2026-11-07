@@ -169,7 +169,7 @@ export default function spark(): Plugin {
       // Spark's UI font (fonts.ts), bundled so it works offline.
       server.middlewares.use("/@spark/fonts", (req, res, next) => {
         const name = path.basename((req.url ?? "").split("?")[0]);
-        if (!/^manrope-[\w-]+\.woff2$/.test(name)) return next();
+        if (!/^inter-[\w-]+\.woff2$/.test(name)) return next();
         readFile(path.join(here, "..", "assets", "fonts", name)).then(
           (buf) => {
             res.setHeader("Content-Type", "font/woff2");

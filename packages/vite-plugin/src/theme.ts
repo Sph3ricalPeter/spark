@@ -11,7 +11,7 @@ import { UI_FONT } from "./fonts.ts";
 
 export const THEME = `
   :host {
-    /* Type: Manrope for UI, the system monospace for values and code. */
+    /* Type: Inter for UI, the system monospace for values and code. */
     --sp-font: ${UI_FONT};
     --sp-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
     --sp-fs-xs: 10px;

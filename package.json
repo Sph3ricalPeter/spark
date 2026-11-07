@@ -14,7 +14,7 @@
     "fixture": "vite --config examples/fixture/vite.config.ts"
   },
   "dependencies": {
-    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-process": "^2.4.0",

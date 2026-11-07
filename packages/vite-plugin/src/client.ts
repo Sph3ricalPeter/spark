@@ -401,7 +401,7 @@ const ASK_STYLE = `
       scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent;
     }
     .ask.has-chat .ask-thread { display: flex; }
-    /* No ligatures: replies are full of code, and Manrope draws "--" as a dash. */
+    /* No ligatures: replies are full of code, and the UI font may draw "--" as a dash. */
     .msg { max-width: 92%; overflow-wrap: anywhere; user-select: text; font-feature-settings: "liga" 0, "calt" 0; }
     .msg.user { white-space: pre-wrap; }
     .msg.user {

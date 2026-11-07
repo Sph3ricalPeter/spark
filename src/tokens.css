@@ -31,8 +31,8 @@
   /* The window's close button on hover (as Windows draws it). */
   --win-close: #c42b1c;
 
-  /* Type. Manrope everywhere, numbers included. */
-  --font: "Manrope Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* Type. Inter everywhere, numbers included. */
+  --font: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: var(--font);
   --fs-xs: 10px;
   --fs-sm: 11px;

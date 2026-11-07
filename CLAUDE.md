@@ -61,7 +61,7 @@ Zustand). Release and deploy are ported from dawg and described in
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
-  shadow root's :host: Manrope via `fonts.ts`, served from `assets/fonts`,
+  shadow root's :host: Inter via `fonts.ts`, served from `assets/fonts`,
   a 4-step font scale, 3 radii, a spacing scale, colors) plus inlined Lucide
   icons; style Spark's UI with those, not literals;
   `index.ts` injects the client and saves `.spark/selection.json` and

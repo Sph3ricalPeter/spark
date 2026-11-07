@@ -1,6 +1,6 @@
-// Spark's own UI font: Manrope (variable weight), bundled with the plugin so
+// Spark's own UI font: Inter (variable weight), bundled with the plugin so
 // it works offline. The dev server serves the files at /@spark/fonts/ (see
-// index.ts). The family is registered as "Spark Manrope" so it can't match
+// index.ts). The family is registered as "Spark Inter" so it can't match
 // anything the app being edited asks for, even in the app's own document.
 const RANGES = {
   latin:
@@ -10,7 +10,7 @@ const RANGES = {
 };
 
 /** The font stack for Spark's UI text (monospace stays monospace). */
-export const UI_FONT = `"Spark Manrope", ui-sans-serif, system-ui, sans-serif`;
+export const UI_FONT = `"Spark Inter", ui-sans-serif, system-ui, sans-serif`;
 
 /** Register the font in a document. @font-face doesn't work inside a shadow root, so it goes in the head. */
 export function installFont(doc: Document = document) {
@@ -18,8 +18,8 @@ export function installFont(doc: Document = document) {
   const css = Object.entries(RANGES)
     .map(
       ([subset, range]) =>
-        `@font-face { font-family: "Spark Manrope"; font-style: normal; font-display: swap; font-weight: 200 800; ` +
-        `src: url("/@spark/fonts/manrope-${subset}-wght-normal.woff2") format("woff2-variations"); unicode-range: ${range}; }`,
+        `@font-face { font-family: "Spark Inter"; font-style: normal; font-display: swap; font-weight: 100 900; ` +
+        `src: url("/@spark/fonts/inter-${subset}-wght-normal.woff2") format("woff2-variations"); unicode-range: ${range}; }`,
     )
     .join("\n");
   const style = doc.createElement("style");

@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-// Manrope (OFL, Google) ships with the app as one variable font.
-import "@fontsource-variable/manrope/wght.css";
+// Inter (OFL) ships with the app as one variable font.
+import "@fontsource-variable/inter/wght.css";
 import "./tokens.css";
 import "./styles.css";
 import { App } from "./App";
