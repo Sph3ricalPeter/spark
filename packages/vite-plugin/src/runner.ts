@@ -17,7 +17,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 export type RunEvent =
   | { type: "start"; kind: "implement" | "ask"; ids: string[]; chat?: string }
   | { type: "log"; text: string }
-  | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number; sessionId?: string; chat?: string }
+  /** The session started: its id and the model answering (from the CLI's init event). */
+  | { type: "session"; sessionId: string; model?: string; chat?: string }
+  | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number; sessionId?: string; model?: string; chat?: string }
   | { type: "error"; text: string };
 
 let current: ChildProcess | null = null;
@@ -67,6 +69,7 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
   let result = "";
   let cost: number | undefined;
   let sessionId: string | undefined;
+  let model: string | undefined;
   let stderr = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
@@ -83,6 +86,10 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
         continue;
       }
       if (typeof ev.session_id === "string") sessionId = ev.session_id;
+      if (ev.type === "system" && ev.subtype === "init") {
+        if (typeof ev.model === "string") model = ev.model;
+        if (sessionId) opts.emit({ type: "session", sessionId, model });
+      }
       if (ev.type === "result") {
         result = typeof ev.result === "string" ? ev.result : "";
         cost = typeof ev.total_cost_usd === "number" ? ev.total_cost_usd : undefined;
@@ -107,7 +114,7 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
       .filter((l) => !/^\s*(APPLIED|SKIPPED)\b/.test(l))
       .join("\n")
       .trim();
-    opts.emit({ type: "done", ok, applied, skipped, summary: ok ? summary : stderr.trim().slice(-500) || `claude exited with ${code}`, cost, sessionId });
+    opts.emit({ type: "done", ok, applied, skipped, summary: ok ? summary : stderr.trim().slice(-500) || `claude exited with ${code}`, cost, sessionId, model });
   });
   child.stdin.end(opts.prompt);
 }

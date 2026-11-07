@@ -24,6 +24,8 @@ type Chat = {
   sessionId: string | null;
   /** What the element was called when last asked about ("h2 in Card"). */
   label: string;
+  /** The model that last answered (claude-sonnet-5-5). */
+  model?: string;
   messages: { role: "user" | "claude"; text: string; ok?: boolean; at: number }[];
 };
 
@@ -224,7 +226,7 @@ export default function spark(): Plugin {
         }
       };
       const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { key: string; resume?: string; then: (e: RunEvent) => void }) => {
-        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done") ? { ...e, chat: chat.key } : e);
+        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done" || e.type === "session") ? { ...e, chat: chat.key } : e);
         runningChat = chat?.key ?? null;
         run({
           cwd: root,
@@ -235,7 +237,7 @@ export default function spark(): Plugin {
           emit: (e) => {
             if (e.type === "done" || e.type === "error") runningChat = null;
             emit(e);
-            if (e.type === "done" || e.type === "error") chat?.then(e);
+            if (e.type === "done" || e.type === "error" || e.type === "session") chat?.then(e);
             if (e.type !== "done" || e.applied.length === 0) return;
             // Mark what Claude applied, against the latest log (edits may have arrived meanwhile).
             void loadLog().then(async (log) => {
@@ -271,6 +273,10 @@ export default function spark(): Plugin {
             void updateChat(key, (c) => ({ ...c, messages: [...c.messages, { role: "claude", text: e.text, ok: false, at: Date.now() }] }));
             return;
           }
+          if (e.type === "session") {
+            if (e.model) void updateChat(key, (c) => ({ ...c, model: e.model }));
+            return;
+          }
           if (e.type !== "done") return;
           // The session is gone (cleared history, another machine): start a new one with the full prompt.
           if (!e.ok && resumed && /no conversation found|session/i.test(e.summary)) {
@@ -280,6 +286,7 @@ export default function spark(): Plugin {
           void updateChat(key, (c) => ({
             ...c,
             sessionId: e.sessionId ?? c.sessionId,
+            model: e.model ?? c.model,
             messages: [...c.messages, { role: "claude", text: e.summary || (e.ok ? "Done." : "Claude stopped."), ok: e.ok, at: Date.now() }],
           }));
         };

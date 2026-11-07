@@ -387,6 +387,10 @@ const ASK_STYLE = `
     .ask-top { display: none; align-items: center; gap: 6px; height: 22px; padding: 0 2px 0 6px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
     .ask.has-chat .ask-top { display: flex; }
     .ask-top .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ask-top .model {
+      margin-left: 6px; padding: 2px 6px; border-radius: var(--sp-r-sm); background: var(--sp-field);
+      color: var(--sp-text); font: 500 var(--sp-fs-xs)/1 var(--sp-font);
+    }
     .ask-top button {
       height: 20px; padding: 0 6px; border: none; background: none; color: var(--sp-text-dim); font: 500 var(--sp-fs-sm)/1 var(--sp-font); border-radius: var(--sp-r-sm);
     }
@@ -1325,6 +1329,7 @@ const isDelete = (e: KeyboardEvent) => (e.key === "Delete" || e.key === "Backspa
 type RunEvent =
   | { type: "start"; kind: "implement" | "ask"; ids: string[]; chat?: string }
   | { type: "log"; text: string }
+  | { type: "session"; sessionId: string; model?: string; chat?: string }
   | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number }
   | { type: "error"; text: string };
 
@@ -1384,7 +1389,16 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
 }
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
-type Chat = { sessionId: string | null; label: string; messages: ChatMessage[] };
+type Chat = { sessionId: string | null; label: string; model?: string; messages: ChatMessage[] };
+
+/** "claude-sonnet-5-5" (or with a date) as people say it: "Sonnet 5.5". */
+function modelName(id: string): string {
+  const m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[.*\])?$/i);
+  if (!m) return id;
+  return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+}
+/** The model answering the running chat, as soon as its session starts. */
+let runModel: string | null = null;
 /** Every element's conversation (.spark/chats.json), kept in step by the dev server. */
 let chats: Record<string, Chat> = {};
 /** The chat Claude is answering right now, if the run is one. */
@@ -1396,7 +1410,9 @@ function renderChat() {
   const answering = isRunning() && !!askOn && runChat === askOn.key;
   const msgs = chat?.messages ?? [];
   askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
-  askTitle.title = chat?.sessionId ? `Claude session ${chat.sessionId}` : "";
+  const model = (answering && runModel) || chat?.model;
+  askTitle.replaceChildren("Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : []));
+  askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
   newChatBtn.toggleAttribute("disabled", answering);
   const nodes: HTMLElement[] = msgs.map((m) => h("div", { class: `msg ${m.role}${m.ok === false ? " bad" : ""}` }, m.text));
   if (answering) {
@@ -1524,8 +1540,9 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
   if (e.type === "start") {
     run = { kind: e.kind, lines: [] };
     runChat = e.chat ?? null;
-  }
-  else if (!run) run = { kind: "implement", lines: [] };
+    runModel = null;
+  } else if (!run) run = { kind: "implement", lines: [] };
+  if (e.type === "session") runModel = e.model ?? null;
   if (e.type === "log") run.lines.push(e.text);
   if (e.type === "done") run.done = e;
   if (e.type === "error") run.error = e.text;
