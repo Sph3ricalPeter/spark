@@ -657,9 +657,36 @@ function place(box: HTMLElement, el: Element | null) {
   });
 }
 
-/** Tint the selection's margin (outside) and padding (inside). */
+/** Alt is held: the selection shows its margin and padding. */
+let altHeld = false;
+{
+  const track = (e: KeyboardEvent) => {
+    if (e.altKey !== altHeld) {
+      altHeld = e.altKey;
+      placeBoxModel();
+    }
+  };
+  const drop = () => {
+    altHeld = false;
+    placeBoxModel();
+  };
+  // Keys go to the app's document or, on the board, to the shell's.
+  for (const doc of shell ? [document, window.parent.document] : [document]) {
+    doc.addEventListener("keydown", track, true);
+    doc.addEventListener("keyup", track, true);
+  }
+  window.addEventListener("blur", drop);
+  // This page's functions die with it: don't leave them on the shell.
+  if (shell)
+    window.addEventListener("pagehide", () => {
+      window.parent.document.removeEventListener("keydown", track, true);
+      window.parent.document.removeEventListener("keyup", track, true);
+    });
+}
+
+/** Tint the selection's margin (outside) and padding (inside) while Alt is held. */
 function placeBoxModel() {
-  const show = !!selected && selected.isConnected && picking && !editing;
+  const show = altHeld && !!selected && selected.isConnected && picking && !editing;
   if (!show) {
     marginBox.style.display = paddingBox.style.display = "none";
     return;
