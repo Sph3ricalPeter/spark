@@ -37,6 +37,9 @@ Zustand). Release and deploy are ported from dawg and described in
   `shell.ts` is the viewport canvas (zoom, pan, device sizes) the app runs
   inside as an iframe, with `frame.ts` its side in the app and `mode.ts`
   deciding which page is which;
+  `runner.ts` runs the local `claude -p` for "Implement changes" and the
+  Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends
+  with `APPLIED <id>` / `SKIPPED <id>: why` lines);
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Plan: the "Spark:

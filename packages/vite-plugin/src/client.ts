@@ -234,6 +234,28 @@ const STYLE = `
     button { cursor: pointer; }
     button.on { background: ${ACCENT}; border-color: ${ACCENT}; color: #fff; }
     .seg { display: inline-flex; }
+    .grow { flex: 1; }
+    .changes-head { display: flex; align-items: center; gap: 8px; }
+    .changes-head h3 { margin: 0; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .run { display: none; padding: 10px 12px; border-top: 1px solid #2a2c31; }
+    .run-head { display: flex; align-items: center; gap: 8px; color: #fff; font-weight: 600; }
+    .run-sum { margin-top: 6px; white-space: pre-wrap; }
+    .run-err { margin-top: 6px; color: #ff8a80; white-space: pre-wrap; }
+    .run-log { margin-top: 6px; color: #8a8f98; font-family: ui-monospace, monospace; font-size: 11px; }
+    .run-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .spin {
+      width: 10px; height: 10px; border-radius: 50%; border: 2px solid #33363c; border-top-color: ${ACCENT};
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .ask {
+      position: fixed; display: none; width: 300px; pointer-events: auto; padding: 8px;
+      background: #1b1c20; border: 1px solid #33363c; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+      color: #d6d8dc; font: 12px/1.4 system-ui, sans-serif;
+    }
+    .ask input { width: 100%; box-sizing: border-box; padding: 6px 8px; }
+    .ask-row { display: flex; gap: 6px; margin-top: 6px; }
     .seg button { border-radius: 0; }
     .seg button:first-child { border-radius: 4px 0 0 4px; }
     .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
@@ -329,6 +351,8 @@ const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
 const body = h("div", { class: "body" });
 const footer = h("div", { class: "footer" });
+/** Claude's current or last run: progress, then its summary. */
+const runBox = h("div", { class: "run" });
 /** What the body shows: the selection's inspector, or the app's variables. */
 type View = "inspect" | "variables";
 let view: View = "inspect";
@@ -339,11 +363,46 @@ const panel = h(
   h("header", {}, "Spark", status, modeToggle, h("button", { title: "Close (Alt+S)", click: () => setOpen(false) }, "×")),
   h("nav", { class: "tabs" }, tabs.inspect, tabs.variables),
   body,
+  runBox,
   footer,
 );
 panel.addEventListener("click", () => closePopover());
 const fab = h("button", { class: "fab", title: "Open Spark (Alt+S)", click: () => setOpen(true) }, "Spark");
-shadow.append(hoverBox, selectBox, ...handles, tagLabel);
+// Ask Claude, right on the selection.
+const askInput = h("input", { placeholder: "Ask Claude about this…" }) as HTMLInputElement;
+const stopKeys = (e: Event) => e.stopPropagation();
+askInput.addEventListener("keyup", stopKeys);
+askInput.addEventListener("keypress", stopKeys);
+askInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") {
+    e.preventDefault();
+    sendAsk();
+  } else if (e.key === "Escape") askInput.blur();
+});
+const askBox = h(
+  "div",
+  { class: "ask" },
+  askInput,
+  h(
+    "div",
+    { class: "ask-row" },
+    h(
+      "button",
+      {
+        title: "Have Claude extract the selection into its own component",
+        click: () => {
+          askInput.value = "Extract this into its own component called ";
+          askInput.focus();
+        },
+      },
+      "Make component",
+    ),
+    h("span", { class: "grow" }),
+    h("button", { class: "on", click: () => sendAsk() }, "Ask"),
+  ),
+);
+shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
 const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
@@ -530,6 +589,7 @@ function follow() {
     label(hovered ?? selected);
     if (selected && !selected.isConnected) select(null);
   }
+  placeAsk();
   if (++frame % 30 === 0) renderOverrides();
   requestAnimationFrame(follow);
 }
@@ -704,6 +764,107 @@ function stopTextEdit(keep: boolean) {
   changed();
   placeHandles();
 }
+
+// ---------------------------------------------------------------------------
+// Claude: "Implement changes" and "Ask Claude" run the local claude CLI on the
+// dev server (runner.ts); progress comes back as spark:run events.
+
+type RunEvent =
+  | { type: "start"; kind: "implement" | "ask"; ids: string[] }
+  | { type: "log"; text: string }
+  | { type: "done"; ok: boolean; applied: string[]; skipped: { id: string; why: string }[]; summary: string; cost?: number }
+  | { type: "error"; text: string };
+
+let run: { kind: "implement" | "ask"; lines: string[]; done?: Extract<RunEvent, { type: "done" }>; error?: string } | null = null;
+const isRunning = () => !!run && !run.done && !run.error;
+
+function implement() {
+  if (isRunning()) return;
+  import.meta.hot?.send("spark:implement", {});
+}
+
+function sendAsk() {
+  const request = askInput.value.trim();
+  if (!request || isRunning()) return;
+  const el = selected;
+  const selection = el ? { ...snapshot(el), owners: instancePath(el), text: (el.textContent ?? "").trim().slice(0, 200) } : null;
+  import.meta.hot?.send("spark:ask", { request, selection });
+  askInput.value = "";
+  askInput.blur();
+}
+
+/** The ask box sits just under the selection (or above it near the bottom). */
+function placeAsk() {
+  const show = open && picking && !!selected && selected.isConnected && !editing && !resizing && !isRunning();
+  if (!show) {
+    askBox.style.display = "none";
+    return;
+  }
+  const r = selected!.getBoundingClientRect();
+  askBox.style.display = "block";
+  const w = askBox.offsetWidth;
+  const hgt = askBox.offsetHeight;
+  const maxLeft = window.innerWidth - (!shell ? PANEL_W : 0) - w - 8;
+  askBox.style.left = `${Math.max(4, Math.min(r.left, maxLeft))}px`;
+  const below = r.bottom + 8;
+  askBox.style.top = `${below + hgt < window.innerHeight ? below : Math.max(4, r.top - hgt - 28)}px`;
+}
+
+function renderRun() {
+  if (!run) {
+    runBox.replaceChildren();
+    runBox.style.display = "none";
+    return;
+  }
+  runBox.style.display = "block";
+  const what = run.kind === "implement" ? "Implementing changes" : "Claude is working";
+  const head = isRunning()
+    ? h("div", { class: "run-head" }, h("span", { class: "spin" }), h("span", { class: "grow" }, `${what}…`), h("button", { click: () => import.meta.hot?.send("spark:stop", {}) }, "Stop"))
+    : h(
+        "div",
+        { class: "run-head" },
+        h("span", { class: "grow" }, run.error ? "Couldn't run Claude" : run.done?.ok ? "Done" : "Claude stopped"),
+        h("button", { title: "Dismiss", click: () => ((run = null), renderRun()) }, "×"),
+      );
+  const parts: (HTMLElement | false)[] = [head];
+  if (run.error) parts.push(h("div", { class: "run-err" }, run.error));
+  if (run.done) {
+    const d = run.done;
+    if (d.summary) parts.push(h("div", { class: d.ok ? "run-sum" : "run-err" }, d.summary));
+    if (d.applied.length || d.skipped.length || d.cost !== undefined) {
+      const bits = [];
+      if (d.applied.length || d.skipped.length) bits.push(`${d.applied.length} applied · ${d.skipped.length} skipped`);
+      if (d.cost !== undefined) bits.push(`$${d.cost.toFixed(2)}`);
+      parts.push(h("div", { class: "hint" }, bits.join(" · ")));
+    }
+    for (const s of d.skipped) parts.push(h("div", { class: "run-err" }, `Skipped: ${s.why}`));
+  }
+  if (isRunning()) parts.push(h("div", { class: "run-log" }, ...run.lines.slice(-6).map((l) => h("div", {}, l))));
+  runBox.replaceChildren(...parts.filter((p): p is HTMLElement => !!p));
+}
+
+import.meta.hot?.on("spark:run", (e: RunEvent) => {
+  if (e.type === "start") run = { kind: e.kind, lines: [] };
+  else if (!run) run = { kind: "implement", lines: [] };
+  if (e.type === "log") run.lines.push(e.text);
+  if (e.type === "done") run.done = e;
+  if (e.type === "error") run.error = e.text;
+  renderRun();
+  renderChanges();
+});
+// Claude marked changes applied: their previews give way to the real code.
+import.meta.hot?.on("spark:log", (log: ChangeLog) => {
+  load(log.changes);
+  renderOverrides();
+  render();
+});
+import.meta.hot?.on("spark:run-state", (s: { running: boolean }) => {
+  if (s.running && !run) {
+    run = { kind: "implement", lines: [] };
+    renderRun();
+  }
+});
+import.meta.hot?.send("spark:run-state", {});
 
 // ---------------------------------------------------------------------------
 // The panel's contents
@@ -895,7 +1056,13 @@ function scopeSelect(c: Change): HTMLElement {
 
 function renderChanges() {
   const pending = allChanges().filter((c) => c.status === "pending");
-  footer.replaceChildren(h("h3", {}, `Changes (${pending.length})`));
+  const implementBtn = h(
+    "button",
+    { class: "on", title: "Have Claude apply these changes to the code", click: () => implement() },
+    "Implement changes",
+  ) as HTMLButtonElement;
+  implementBtn.disabled = pending.length === 0 || isRunning();
+  footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
   if (pending.length === 0) {
     footer.append(h("div", { class: "empty" }, "Edits you make show up here."));
     return;

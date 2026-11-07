@@ -13,6 +13,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { tagJsx } from "./tag.ts";
+import type { ChangeLog } from "./changes.ts";
+import { askPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
+import { run, running, stop, type RunEvent } from "./runner.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODULES: Record<string, string> = {
@@ -118,7 +121,55 @@ export default function spark(): Plugin {
       // The current selection, for the MCP server's get_selection (milestone 3).
       server.ws.on("spark:select", (data) => save("selection.json", data));
       // Every edit, at the level it was made: what Claude applies to the code.
-      server.ws.on("spark:changes", (data) => save("changes.json", data));
+      // Changes Claude applied stay applied, even when a client that hasn't heard yet saves its list.
+      const appliedIds = new Set<string>();
+      server.ws.on("spark:changes", (data: ChangeLog) => {
+        for (const c of data.changes ?? []) if (appliedIds.has(c.id)) c.status = "applied";
+        return save("changes.json", data);
+      });
+
+      // Claude, from the panel: "Implement changes" and "Ask Claude".
+      const loadLog = async (): Promise<ChangeLog> => {
+        try {
+          return JSON.parse(await readFile(path.join(dir, "changes.json"), "utf8"));
+        } catch {
+          return { version: 1, changes: [] };
+        }
+      };
+      const start = async (kind: "implement" | "ask", prompt: string, ids: string[]) => {
+        const emit = (e: RunEvent) => server.ws.send("spark:run", e);
+        run({
+          cwd: root,
+          prompt,
+          kind,
+          ids,
+          emit: (e) => {
+            emit(e);
+            if (e.type !== "done" || e.applied.length === 0) return;
+            // Mark what Claude applied, against the latest log (edits may have arrived meanwhile).
+            void loadLog().then(async (log) => {
+              const done = new Set(e.applied.filter((id) => ids.includes(id)));
+              for (const id of done) appliedIds.add(id);
+              for (const c of log.changes) if (done.has(c.id)) c.status = "applied";
+              await save("changes.json", log);
+              server.ws.send("spark:log", log);
+            });
+          },
+        });
+      };
+      server.ws.on("spark:implement", async (data: { ids?: string[] }) => {
+        const log = await loadLog();
+        const pending = log.changes.filter((c) => c.status === "pending" && (!data?.ids || data.ids.includes(c.id)));
+        if (pending.length === 0) return;
+        await start("implement", implementPrompt(pending), pending.map((c) => c.id));
+      });
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null }) => {
+        const log = await loadLog();
+        const pending = log.changes.filter((c) => c.status === "pending");
+        await start("ask", askPrompt(data.request, data.selection, pending), pending.map((c) => c.id));
+      });
+      server.ws.on("spark:stop", () => stop());
+      server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: running() }));
     },
   };
 }
