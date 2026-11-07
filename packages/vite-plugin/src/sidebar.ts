@@ -21,11 +21,7 @@ export const SIDEBAR_STYLE = `
   .side-open .sidebar { display: flex; }
   .side-open .canvas { left: ${SIDEBAR_W}px; }
   .side-head { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--sp-line); flex: none; }
-  .side-head .tab {
-    height: 24px; padding: 0 8px; border: none; background: none; color: var(--sp-text-dim); font-weight: 600; min-width: 0;
-  }
-  .side-head .tab.on { color: var(--sp-text-strong); background: var(--sp-field); }
-  .side-head .tab .count { margin-left: 4px; color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
+  .side-head .title { padding: 0 6px; color: var(--sp-text-strong); font-weight: 600; }
   .side-head .grow { flex: 1; }
   .side-head .close { border: none; background: none; color: var(--sp-text-dim); min-width: 24px; height: 24px; padding: 0; }
   .side-head .close:hover { color: var(--sp-text-strong); background: var(--sp-field); }
@@ -82,18 +78,20 @@ export function sidebar(onToggle: (open: boolean) => void) {
   } catch {
     // Starts closed.
   }
-  const tabs = new Map<string, { btn: HTMLElement; bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement }>();
+  const tabs = new Map<string, { bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement }>();
   const tabRow = h("div", { class: "side-head" });
   const grow = h("span", { class: "grow" });
   const close = h("button", { class: "close", title: "Close the sidebar", click: () => setOpen(false) }, icon("x"));
-  tabRow.append(grow, close);
+  // The bar's buttons pick the tab; the head just names it.
+  const title = h("span", { class: "title" });
+  tabRow.append(title, grow, close);
   const body = h("div", { class: "side-body" });
   const el = h("div", { class: "sidebar" }, tabRow, body);
   const buttons = h("span", { class: "side-buttons" });
 
   function mark() {
     for (const [n, t] of tabs) {
-      t.btn.classList.toggle("on", n === current);
+      if (n === current) title.textContent = n;
       t.bar.classList.toggle("on", open && n === current);
     }
   }
@@ -133,10 +131,8 @@ export function sidebar(onToggle: (open: boolean) => void) {
       if (!open) setOpen(true);
     },
     addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string) {
-      const counts = [h("span", { class: "count" }), h("span", { class: "count" })];
-      const btn = h("button", { class: "tab", click: () => show(name) }, name, counts[0]);
-      tabRow.insertBefore(btn, grow);
-      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), name, counts[1]);
+      const counts = [h("span", { class: "count" })];
+      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), name, counts[0]);
       bar.addEventListener("click", () => {
         if (open && current === name) setOpen(false);
         else {
@@ -145,7 +141,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
         }
       });
       buttons.append(bar);
-      tabs.set(name, { btn, bar, counts, el: content });
+      tabs.set(name, { bar, counts, el: content });
       if (!current || !tabs.has(current) || current === name) show(current && tabs.has(current) ? current : name);
     },
     /** Start in the state it was left in. */
