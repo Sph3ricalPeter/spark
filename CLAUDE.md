@@ -39,9 +39,11 @@ Zustand). Release and deploy are ported from dawg and described in
   the changelog and its live previews: an override lives on a step of
   the element's chain, prefab style: the component itself (base), its
   variants (variant props read from the fiber, `variant="ghost"`, then
-  `ghost small`), or this one instance (owner path with list keys). Edits go
-  to the element's own variant by default (the inspector's chain picks
-  another), text to the one instance; each override can be moved along the
+  `ghost small`), or this one instance (owner path with list keys). Like Unity
+  prefabs, changes flow only down: an edit in an app frame is an override
+  on that one instance by default and reaches the component only through an
+  explicit apply upstream; editing a case in a component frame edits the
+  component's own variant (or base), which every instance gets; each override can be moved along the
   chain or to a CSS rule; tokens are always global;
   `reorder.ts` drags an element along its flex/grid parent (previewed
   with CSS `order`, recorded as a "children-order" override on the parent);

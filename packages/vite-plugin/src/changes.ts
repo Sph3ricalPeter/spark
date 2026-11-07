@@ -3,8 +3,9 @@
 // Edits work like prefab overrides along a chain: the component itself (the
 // base: every instance), its variants (instances with some variant props
 // set, `variant="ghost"`, then `variant="ghost" small`: a variant of a
-// variant), and the one instance. An edit goes to the selection's own level
-// unless the inspector says otherwise, and can be moved along the chain.
+// variant), and the one instance. Changes only flow down, as with Unity
+// prefabs: an edit on an instance stays on it unless applied upstream; an
+// edit to a component frame's case goes to that variant (client.ts targetStep).
 // Older lists can also hold overrides scoped to an owner ("every Button in
 // Card"). A token edit is always global; an override can also be applied to
 // a matched CSS rule.

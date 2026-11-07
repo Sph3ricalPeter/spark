@@ -339,10 +339,20 @@ function coverCount(path: PathEntry[], step: Step): number {
 }
 
 /** The step new edits to `path` go to: the one picked, else the element's own variant (or the base). */
+/** A component frame (gallery.ts): its cases are the components and their variants themselves, not uses of them. */
+const inComponentFrame = new URLSearchParams(location.search).get("spark") === "components";
+
+/**
+ * The step new edits to `path` go to: the one picked, else, like a prefab,
+ * this one instance (an override that never reaches the component unless
+ * applied upstream). Editing a case in a component frame is editing the
+ * component's own definition, so there the default is its variant (or base),
+ * which flows down to every instance.
+ */
 function targetStep(path: PathEntry[]): Step | null {
   const chain = chainOf(path);
   if (!chain.length) return null;
-  return chain.find((s) => s.key === editTarget) ?? chain.at(-2)!;
+  return chain.find((s) => s.key === editTarget) ?? (inComponentFrame ? chain.at(-2)! : chain.at(-1)!);
 }
 
 const skip = (n: Node) => host.contains(n) || (n instanceof Element && n.hasAttribute("data-spark"));
@@ -1635,6 +1645,8 @@ function keepSelection(now: number) {
 /** Fill the popup for the selection: its name, then its conversation. */
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   const n = askName(el, path);
+  // Already a component (its instance's root element): there's nothing to extract.
+  makeBtn.style.display = n.comp ? "none" : "";
   const r = el.getBoundingClientRect();
   askTag.style.setProperty("--role", ROLE_COLOR[roleOf(el)]);
   askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
