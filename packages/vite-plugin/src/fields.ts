@@ -79,21 +79,80 @@ export type NumberOpts = {
   label?: string;
 };
 
+/** Units offered in a field's dropdown; a value's own unit is added when it isn't here. */
+const UNITS = ["px", "%", "em", "rem", "vw", "vh"];
+
+/**
+ * A number with its unit in a dropdown on the right: the input holds only the
+ * number, so one click selects it and you just type the new value. Keywords
+ * and expressions (auto, var(--x), calc(…)) can still be typed in the input;
+ * the dropdown then shows "–" until a unit is picked.
+ */
 export function numberField(value: string, opts: NumberOpts, onValue: OnValue): HTMLElement {
   const step = opts.step ?? 1;
   const unitDefault = opts.unit ?? "px";
-  const input = h("input", { value, spellcheck: "false" }) as HTMLInputElement;
-  const grip = h("span", { class: "grip", title: "Drag to change · Alt: slower · Shift: ×10" }, opts.label ?? "↔");
-  const wrap = h("label", { class: `num${opts.changed ? " changed" : ""}` }, grip, input);
-  keepKeys(input);
+  const parsed = parse(value);
+  // A unitless field (opacity, line-height 1.4) has no dropdown.
+  const unitless = unitDefault === "" && (!parsed || parsed.unit === "");
+  let unit = parsed?.unit || (parsed ? unitDefault : "");
 
-  const current = () => parse(input.value) ?? parse(opts.computed) ?? { n: 0, unit: unitDefault };
-  const clamp = (n: number) => (opts.min !== undefined ? Math.max(opts.min, n) : n);
-  const normalize = (v: string) => {
-    const p = parse(v);
-    // "12" means 12px for a length.
-    return p && !p.unit && unitDefault ? `${p.n}${unitDefault}` : v.trim();
+  const input = h("input", { value: parsed ? String(parsed.n) : value, spellcheck: "false" }) as HTMLInputElement;
+  const grip = h("span", { class: "grip", title: "Drag to change · Alt: slower · Shift: ×10" }, opts.label ?? "↔");
+  const unitSel = h("select", { class: "unit", title: "Unit" }) as HTMLSelectElement;
+  const fillUnits = () => {
+    const list = [...UNITS];
+    if (unit && !list.includes(unit)) list.unshift(unit);
+    unitSel.replaceChildren(...(unit ? [] : [h("option", { value: "" }, "–")]), ...list.map((u) => h("option", { value: u }, u)));
+    unitSel.value = unit;
   };
+  if (!unitless) fillUnits();
+  const wrap = h("label", { class: `num${opts.changed ? " changed" : ""}` }, grip, input, !unitless && unitSel);
+  keepKeys(input);
+  keepKeys(unitSel);
+
+  /** The field's whole CSS value. */
+  const full = () => {
+    const p = parse(input.value);
+    if (!p) return input.value.trim();
+    return `${p.n}${p.unit || unit || (unitless ? "" : unitDefault)}`;
+  };
+  /** Show `v` split into number and unit. */
+  const show = (v: string) => {
+    const p = parse(v);
+    if (p) {
+      input.value = String(p.n);
+      if (!unitless && (p.unit || unit) !== unit) {
+        unit = p.unit || unit;
+        fillUnits();
+      } else if (!unitless && !unit) {
+        unit = unitDefault;
+        fillUnits();
+      }
+    } else {
+      input.value = v;
+      if (!unitless && unit) {
+        unit = "";
+        fillUnits();
+      }
+    }
+  };
+  const current = () => parse(full()) ?? parse(opts.computed) ?? { n: 0, unit: unitDefault };
+  const clamp = (n: number) => (opts.min !== undefined ? Math.max(opts.min, n) : n);
+
+  // One click puts the whole number up for replacing: select it on focus,
+  // and don't let that click's mouseup drop the selection to a caret.
+  let hasFocus = false;
+  let clicked = false;
+  input.addEventListener("mousedown", () => (clicked = !hasFocus));
+  input.addEventListener("focus", () => {
+    hasFocus = true;
+    input.select();
+  });
+  input.addEventListener("blur", () => (hasFocus = false));
+  input.addEventListener("mouseup", (e) => {
+    if (clicked) e.preventDefault();
+    clicked = false;
+  });
 
   input.addEventListener("keydown", (e) => {
     const k = e as KeyboardEvent;
@@ -101,17 +160,30 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
       input.blur();
     } else if (k.key === "ArrowUp" || k.key === "ArrowDown") {
       k.preventDefault();
-      const { n, unit } = current();
-      const u = unit || unitDefault;
+      const { n, unit: cu } = current();
+      const u = cu || (unitless ? "" : unitDefault);
       const one = stepFor(u, step);
       const s = one * (k.shiftKey ? 10 : 1);
-      input.value = fmt(clamp(nudge(n, k.key === "ArrowUp" ? s : -s, one)), u, one);
-      onValue(input.value, true);
+      const v = fmt(clamp(nudge(n, k.key === "ArrowUp" ? s : -s, one)), u, one);
+      show(v);
+      input.select();
+      onValue(v, true);
     }
   });
   input.addEventListener("change", () => {
-    input.value = normalize(input.value);
-    onValue(input.value, true);
+    const v = full();
+    show(v);
+    onValue(v, true);
+  });
+  unitSel.addEventListener("change", () => {
+    // Same number, new unit (a keyword starts from the computed number).
+    const p = parse(input.value) ?? parse(opts.computed);
+    unit = unitSel.value;
+    fillUnits();
+    if (!p || !unit) return;
+    const v = `${p.n}${unit}`;
+    show(v);
+    onValue(v, true);
   });
 
   grip.addEventListener("pointerdown", (e) => {
@@ -120,8 +192,9 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
     grip.setPointerCapture(p.pointerId);
     const start = current();
     const x0 = p.clientX;
-    let last = input.value;
-    const u = start.unit || unitDefault;
+    const first = full();
+    let last = first;
+    const u = start.unit || (unitless ? "" : unitDefault);
     const one = stepFor(u, step);
     // Steps accumulate from each move, so pressing or releasing Alt or Shift
     // mid-drag changes the rate from there on without a jump.
@@ -135,17 +208,18 @@ export function numberField(value: string, opts: NumberOpts, onValue: OnValue): 
       if (!steps) return;
       carry -= steps;
       n = clamp(nudge(n, steps * one * (ev.shiftKey ? 10 : 1), one));
-      last = fmt(n, u, one);
-      if (last !== input.value) {
-        input.value = last;
-        onValue(last, false);
+      const v = fmt(n, u, one);
+      if (v !== last) {
+        last = v;
+        show(v);
+        onValue(v, false);
       }
     };
     const up = () => {
       grip.removeEventListener("pointermove", move as EventListener);
       grip.removeEventListener("pointerup", up);
       grip.removeEventListener("pointercancel", up);
-      if (last !== value) onValue(last, true);
+      if (last !== first) onValue(last, true);
     };
     grip.addEventListener("pointermove", move as EventListener);
     grip.addEventListener("pointerup", up);

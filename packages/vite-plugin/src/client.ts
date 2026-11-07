@@ -323,6 +323,17 @@ const STYLE = `
     .num .grip:hover { color: #fff; }
     .num input { border: none; background: transparent; padding-left: 0; min-width: 0; }
     .num input:focus { outline: none; }
+    .num select.unit {
+      flex: none; width: auto; border: none; background: transparent; color: #8a8f98;
+      padding: 0 4px 0 2px; font: 10px ui-monospace, monospace; cursor: pointer;
+      appearance: none; -webkit-appearance: none; text-align: right;
+    }
+    .num select.unit:hover { color: #fff; }
+    .num select.unit:focus { outline: none; color: #fff; }
+    /* Four sides share a row: their unit shows while you edit one. */
+    .quad .num select.unit { display: none; }
+    .quad .num:focus-within select.unit { display: block; }
+    .num input { flex: 1; }
     .quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
     .color { display: flex; gap: 6px; position: relative; }
     .swatch {
