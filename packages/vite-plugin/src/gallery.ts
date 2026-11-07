@@ -44,6 +44,8 @@ const STYLE = `
   .spark-gallery * { box-sizing: border-box; }
   /* One file in its own board frame (shell.ts): as big as its cases, no title. */
   .spark-gallery.one { min-height: 0; width: max-content; padding: 24px; }
+  /* A component frame never scrolls: the board sizes it to the cases. */
+  html.spark-one, html.spark-one body { overflow: hidden !important; }
   .spark-gallery.one .spark-gallery-file { margin: 0; }
   .spark-gallery.one .spark-gallery-cases { flex-wrap: nowrap; }
   .spark-gallery.one.stack .spark-gallery-cases { flex-direction: column; }
@@ -143,11 +145,27 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
       const arrange = () => {
         const widest = Math.max(0, ...Array.from(el.querySelectorAll(".spark-gallery-case"), (c) => c.getBoundingClientRect().width));
         el.classList.toggle("stack", layout === "column" || (layout === "auto" && widest > STACK_W));
-        // The board sizes the frame to the cases (with the page's own margin around them).
+        // The board sizes the frame to the cases (with the page's own margin
+        // around them), and to anything that sticks out of them.
         const r = el.getBoundingClientRect();
-        window.parent.__sparkShell?.contentSize(window, r.right + r.left, r.bottom + r.top, el.classList.contains("stack"));
+        let right = r.right;
+        let bottom = r.bottom;
+        for (const d of Array.from(el.querySelectorAll("*"))) {
+          const dr = d.getBoundingClientRect();
+          if (!dr.width && !dr.height) continue;
+          right = Math.max(right, dr.right);
+          bottom = Math.max(bottom, dr.bottom);
+        }
+        window.parent.__sparkShell?.contentSize(window, right + r.left, bottom + r.top, el.classList.contains("stack"));
       };
-      new ResizeObserver(arrange).observe(el);
+      document.documentElement.classList.add("spark-one");
+      // The cases can change size on their own (fonts, images, state): measure again.
+      const ro = new ResizeObserver(() => arrange());
+      ro.observe(el);
+      new MutationObserver(() => {
+        for (const c of Array.from(el.querySelectorAll(".spark-gallery-stage"))) ro.observe(c);
+      }).observe(el, { childList: true, subtree: true });
+      void document.fonts?.ready.then(arrange);
       (window as unknown as { __sparkLayout?: (v: string) => void }).__sparkLayout = (v) => {
         layout = v;
         arrange();
