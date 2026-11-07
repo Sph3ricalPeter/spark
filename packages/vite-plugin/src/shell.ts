@@ -327,7 +327,8 @@ bar.addEventListener("change", (e) => {
 function blurChrome() {
   let el = document.activeElement;
   while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
-  if (el instanceof HTMLElement && el !== document.body) el.blur();
+  // Duck-typed: a panel's fields belong to its frame's window, not this one.
+  if (el && el !== document.body && typeof (el as HTMLElement).blur === "function") (el as HTMLElement).blur();
 }
 
 const stage = h("div", { class: "stage" });
