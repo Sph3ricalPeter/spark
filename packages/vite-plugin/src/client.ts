@@ -1048,7 +1048,12 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
   const scope = step?.scope ?? null;
   const variant = step?.variant;
   const want = { scope, variant };
-  const mine = overridesOn(el).filter((c) => c.property === prop);
+  let mine = overridesOn(el).filter((c) => c.property === prop);
+  // A narrower override of this property on this element would hide the edit
+  // here (it wins over a wider one): the edit replaces it, so what you change
+  // is what you see. Narrower ones that don't cover this element stay.
+  for (const c of mine.filter((c) => breadth(c.instance) > breadth(want))) revert(c.id);
+  mine = mine.filter((c) => breadth(c.instance) <= breadth(want));
   const existing = mine.filter((c) => sameStep(c.instance, want)).at(-1);
   if (existing) {
     record({ ...existing, to: value || existing.from });
