@@ -46,6 +46,10 @@ export const THEME = `
     --sp-warn: #d9a441;
     --sp-danger: #e5534b;
   }
+  /* Native dropdown lists are drawn by the browser: dark, like the rest of
+     Spark, and never transparent text from the select they open from. */
+  select { color-scheme: dark; }
+  select option, select optgroup { background-color: var(--sp-field); color: var(--sp-text); font-style: normal; }
   .icon { flex: none; vertical-align: -2px; }
   button:has(> .icon:only-child) { display: inline-flex; align-items: center; justify-content: center; }
 `;
