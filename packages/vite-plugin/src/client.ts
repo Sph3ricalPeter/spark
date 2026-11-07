@@ -256,6 +256,9 @@ const STYLE = `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
     .box { position: fixed; pointer-events: none; display: none; }
+    .bm { position: fixed; pointer-events: none; display: none; box-sizing: border-box; border-style: solid; }
+    .bm.margin { border-color: var(--sp-margin); }
+    .bm.padding { border-color: var(--sp-padding); }
     .hover { outline: 1px dashed var(--sp-accent); background: ${ACCENT}14; }
     .selected { outline: 2px solid var(--sp-accent); }
     .tag {
@@ -439,6 +442,9 @@ shadow.append(h("style", {}, STYLE));
 
 const hoverBox = h("div", { class: "box hover" });
 const selectBox = h("div", { class: "box selected" });
+// The selection's margin and padding, tinted like devtools' box model.
+const marginBox = h("div", { class: "bm margin" });
+const paddingBox = h("div", { class: "bm padding" });
 const tagLabel = h("div", { class: "tag" });
 const DIRS = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
 type Dir = (typeof DIRS)[number];
@@ -513,7 +519,7 @@ function renderAskTools(tools: [string, HTMLElement][]) {
   );
   askTools.style.display = tools.length ? "" : "none";
 }
-shadow.append(hoverBox, selectBox, ...handles, tagLabel, askBox);
+shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel, askBox);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
 const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
@@ -651,7 +657,39 @@ function place(box: HTMLElement, el: Element | null) {
   });
 }
 
+/** Tint the selection's margin (outside) and padding (inside). */
+function placeBoxModel() {
+  const show = !!selected && selected.isConnected && picking && !editing;
+  if (!show) {
+    marginBox.style.display = paddingBox.style.display = "none";
+    return;
+  }
+  const r = selected!.getBoundingClientRect();
+  const cs = getComputedStyle(selected!);
+  const px = (v: string) => Math.max(0, parseFloat(v) || 0);
+  const [mt, mr, mb, ml] = [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].map(px);
+  const [bt, br, bb, bl] = [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(px);
+  const [pt, pr, pb, pl] = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px);
+  Object.assign(marginBox.style, {
+    display: mt || mr || mb || ml ? "block" : "none",
+    left: `${r.left - ml}px`,
+    top: `${r.top - mt}px`,
+    width: `${r.width + ml + mr}px`,
+    height: `${r.height + mt + mb}px`,
+    borderWidth: `${mt}px ${mr}px ${mb}px ${ml}px`,
+  });
+  Object.assign(paddingBox.style, {
+    display: pt || pr || pb || pl ? "block" : "none",
+    left: `${r.left + bl}px`,
+    top: `${r.top + bt}px`,
+    width: `${Math.max(0, r.width - bl - br)}px`,
+    height: `${Math.max(0, r.height - bt - bb)}px`,
+    borderWidth: `${pt}px ${pr}px ${pb}px ${pl}px`,
+  });
+}
+
 function placeHandles() {
+  placeBoxModel();
   const show = !!selected && selected.isConnected && picking && !editing;
   const r = show ? selected!.getBoundingClientRect() : null;
   for (const el of handles) {
