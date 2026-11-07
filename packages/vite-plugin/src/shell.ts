@@ -472,13 +472,17 @@ function moveFrame(f: Frame, e: PointerEvent) {
   const t = e.currentTarget as HTMLElement;
   t.setPointerCapture(e.pointerId);
   shellEl.classList.add("moving");
-  let x = e.clientX;
-  let y = e.clientY;
+  // Where the frame would be without snapping; Ctrl snaps it to the visible grid.
+  const x0 = f.x;
+  const y0 = f.y;
+  const cx = e.clientX;
+  const cy = e.clientY;
   const move = (ev: PointerEvent) => {
-    f.x += (ev.clientX - x) / z;
-    f.y += (ev.clientY - y) / z;
-    x = ev.clientX;
-    y = ev.clientY;
+    const rx = x0 + (ev.clientX - cx) / z;
+    const ry = y0 + (ev.clientY - cy) / z;
+    const g = gridStep();
+    f.x = ev.ctrlKey || ev.metaKey ? Math.round(rx / g) * g : rx;
+    f.y = ev.ctrlKey || ev.metaKey ? Math.round(ry / g) * g : ry;
     if (f.kind === "component") f.placed = true;
     apply();
   };
@@ -508,6 +512,13 @@ function clampZ(v: number) {
   return Math.min(MAX_Z, Math.max(MIN_Z, v));
 }
 
+/** The board's grid in world pixels: 16, coarser when zoomed out so the dots stay apart. */
+function gridStep() {
+  let g = 16;
+  while (g * z < 10) g *= 4;
+  return g;
+}
+
 /** Component frames nobody moved: a column to the right of the app frames. */
 function layout() {
   const apps = frames.filter((f) => f.kind === "app");
@@ -532,6 +543,10 @@ function apply() {
   layout();
   const sel = selected();
   stage.style.transform = `translate(${px}px, ${py}px) scale(${z})`;
+  // The dot grid is on the board, so it pans and zooms with the frames.
+  const g = gridStep() * z;
+  canvas.style.backgroundSize = `${g}px ${g}px`;
+  canvas.style.backgroundPosition = `${px - g / 2}px ${py - g / 2}px`;
   stage.style.setProperty("--z", String(z));
   for (const f of frames) {
     f.el.style.transform = `translate(${f.x}px, ${f.y}px)`;
