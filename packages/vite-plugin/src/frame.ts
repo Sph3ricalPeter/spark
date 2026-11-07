@@ -13,13 +13,13 @@ import { shell } from "./mode.ts";
 // Box shadows, not borders or outlines: those snap to whole pixels of the
 // frame, which a zoom then blows up.
 const COUNTER_ZOOM = `
-  .box.hover { outline: none; box-shadow: 0 0 0 calc(1px / var(--z, 1)) #4f8cff; }
-  .box.selected { outline: none; box-shadow: 0 0 0 calc(2px / var(--z, 1)) #4f8cff; }
+  .box.hover { outline: none; box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--hov, #4f8cff); }
+  .box.selected { outline: none; box-shadow: 0 0 0 calc(2px / var(--z, 1)) var(--sel, #4f8cff); }
   .box.selected.editing { box-shadow: 0 0 0 calc(2px / var(--z, 1)) #d9a441; }
   .handle {
     width: calc(8px / var(--z, 1)); height: calc(8px / var(--z, 1));
     margin: calc(-4px / var(--z, 1)) 0 0 calc(-4px / var(--z, 1));
-    border: none; box-shadow: inset 0 0 0 calc(1px / var(--z, 1)) #4f8cff;
+    border: none; box-shadow: inset 0 0 0 calc(1px / var(--z, 1)) var(--sel, #4f8cff);
   }
   .tag { transform: scale(calc(1 / var(--z, 1))); transform-origin: 0 100%; }
   .pin { transform: scale(calc(1 / var(--z, 1))); }

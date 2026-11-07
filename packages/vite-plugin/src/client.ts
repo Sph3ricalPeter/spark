@@ -449,12 +449,12 @@ const STYLE = `${THEME}
     .bm { position: fixed; pointer-events: none; display: none; box-sizing: border-box; border-style: solid; }
     .bm.margin { border-color: var(--sp-margin); }
     .bm.padding { border-color: var(--sp-padding); }
-    .hover { outline: 1px dashed var(--sp-accent); background: ${ACCENT}14; }
-    .selected { outline: 2px solid var(--sp-accent); }
+    .hover { outline: 1px dashed var(--hov, var(--sp-accent)); background: color-mix(in srgb, var(--hov, var(--sp-accent)) 8%, transparent); }
+    .selected { outline: 2px solid var(--sel, var(--sp-accent)); }
     .tag {
       position: fixed; display: none; pointer-events: none;
       font: 600 var(--sp-fs-sm)/1 var(--sp-font);
-      background: var(--sp-accent); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
+      background: var(--tag, var(--sp-accent)); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
     }
     .panel {
       position: fixed; top: 0; right: 0; bottom: 0; width: ${PANEL_W}px;
@@ -581,7 +581,7 @@ const STYLE = `${THEME}
     .fab.hidden { display: none; }
     .handle {
       position: fixed; width: 8px; height: 8px; margin: -4px 0 0 -4px; display: none;
-      background: var(--sp-text-strong); border: 1px solid var(--sp-accent); pointer-events: auto;
+      background: var(--sp-text-strong); border: 1px solid var(--sel, var(--sp-accent)); pointer-events: auto;
     }
     .handle[data-dir="n"], .handle[data-dir="s"] { cursor: ns-resize; }
     .handle[data-dir="e"], .handle[data-dir="w"] { cursor: ew-resize; }
@@ -970,7 +970,35 @@ function placeHandles() {
   }
 }
 
+// Selection colors say what an element is: blue for the page's own markup,
+// purple for the component a component frame shows (its definition), pink
+// for an instance of a component or anything inside one.
+type Role = "plain" | "definition" | "instance";
+const ROLE_COLOR: Record<Role, string> = { plain: "var(--sp-accent)", definition: "var(--sp-component)", instance: "var(--sp-instance)" };
+/** The component a component frame shows ("/src/ui/Meter.spark.tsx" → "Meter"). */
+const frameComponent = (() => {
+  const q = new URLSearchParams(location.search);
+  const file = q.get("spark") === "components" ? q.get("file") : null;
+  return file ? file.split("/").pop()!.replace(/\.spark\.[jt]sx?$/, "") : null;
+})();
+
+function roleOf(el: Element): Role {
+  const comp = el.getAttribute("data-spark-comp");
+  if (comp && comp === frameComponent) return "definition";
+  // The outermost tagged element is the page's own markup (App, or a case).
+  let top = el;
+  for (let p = el.parentElement?.closest("[data-spark-comp]"); p; p = p.parentElement?.closest("[data-spark-comp]")) top = p;
+  return !comp || comp === top.getAttribute("data-spark-comp") ? "plain" : "instance";
+}
+
+/** Color the overlay part `prop` (--sel, --hov, --tag) for `el`. */
+function roleColor(prop: string, el: Element | null) {
+  if (el) host.style.setProperty(prop, ROLE_COLOR[roleOf(el)]);
+  else host.style.removeProperty(prop);
+}
+
 function label(el: Element | null) {
+  roleColor("--tag", el);
   if (!el) {
     tagLabel.style.display = "none";
     return;
@@ -987,6 +1015,7 @@ function label(el: Element | null) {
 
 function hover(el: Element | null) {
   hovered = el;
+  roleColor("--hov", el);
   place(hoverBox, el);
   label(el ?? selected);
 }
@@ -1016,6 +1045,7 @@ function select(el: Element | null) {
   if (el) view = "inspect";
   markTab();
   selected = el;
+  roleColor("--sel", el);
   rememberSelection(el);
   if (!el) restoreKey = null;
   place(selectBox, el);

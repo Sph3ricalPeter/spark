@@ -39,6 +39,8 @@ export const THEME = `
     --sp-accent: #4f8cff;
     /* Components (Figma's purple): component frames on the board. */
     --sp-component: #a77bff;
+    /* An instance of a component, or an element inside one (selection colors). */
+    --sp-instance: #ff5fa8;
     /* The selection's box model, like browser devtools. */
     --sp-margin: #f6a04d59;
     --sp-padding: #7ccf6a59;
