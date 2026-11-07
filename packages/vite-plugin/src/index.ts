@@ -210,12 +210,19 @@ export default function spark(): Plugin {
           return {};
         }
       };
-      const updateChat = async (key: string, fn: (c: Chat) => Chat) => {
-        const chats = await loadChats();
-        chats[key] = fn(chats[key] ?? { sessionId: null, label: "", messages: [] });
-        await save("chats.json", chats);
-        server.ws.send("spark:chat", { key, chat: chats[key] });
-      };
+      /** Chats re-filed under a new key (spark:chat-move), so a reply in flight lands in the right one. */
+      const movedTo = new Map<string, string>();
+      /** chats.json changes one at a time, so a reply and a move never overwrite each other. */
+      let chatQueue: Promise<unknown> = Promise.resolve();
+      const serial = (fn: () => Promise<void>) => (chatQueue = chatQueue.then(fn, fn));
+      const updateChat = (key: string, fn: (c: Chat) => Chat) =>
+        serial(async () => {
+          for (let n = 0; movedTo.has(key) && n < 20; n++) key = movedTo.get(key)!;
+          const chats = await loadChats();
+          chats[key] = fn(chats[key] ?? { sessionId: null, label: "", messages: [] });
+          await save("chats.json", chats);
+          server.ws.send("spark:chat", { key, chat: chats[key] });
+        });
 
       // Claude, from the panel: "Implement changes" and "Ask Claude".
       const loadLog = async (): Promise<ChangeLog> => {
@@ -294,13 +301,29 @@ export default function spark(): Plugin {
         const prompt = resume ? followupPrompt(data.request, data.selection, pending) : askPrompt(data.request, data.selection, pending);
         await start("ask", prompt, ids, { key, resume, then: answer(!!resume) });
       });
+      // A chat's element moved (Claude's edit shifted its lines): file the chat under its new key.
+      server.ws.on("spark:chat-move", (data: { from: string; to: string }) =>
+        serial(async () => {
+          const chats = await loadChats();
+          if (!chats[data.from] || chats[data.to]) return;
+          chats[data.to] = chats[data.from];
+          delete chats[data.from];
+          movedTo.set(data.from, data.to);
+          if (runningChat === data.from) runningChat = data.to;
+          await save("chats.json", chats);
+          server.ws.send("spark:chat", { key: data.from, chat: null, movedTo: data.to });
+          server.ws.send("spark:chat", { key: data.to, chat: chats[data.to] });
+        }),
+      );
       // "New chat" in the popup: forget the element's conversation and its session.
       server.ws.on("spark:chat-reset", async (data: { chat: string }) => {
         if (running() && runningChat === data.chat) return;
-        const chats = await loadChats();
-        delete chats[data.chat];
-        await save("chats.json", chats);
-        server.ws.send("spark:chat", { key: data.chat, chat: null });
+        await serial(async () => {
+          const chats = await loadChats();
+          delete chats[data.chat];
+          await save("chats.json", chats);
+          server.ws.send("spark:chat", { key: data.chat, chat: null });
+        });
       });
       // The empty Components view: Claude writes the *.spark.tsx files.
       // A component frame's case renamed in place (gallery.ts): rename its export.

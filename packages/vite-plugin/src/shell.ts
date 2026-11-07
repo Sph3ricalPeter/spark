@@ -363,7 +363,8 @@ function fileTitle(file: string) {
 
 function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Frame> = {}): Frame {
   const iframe = document.createElement("iframe");
-  iframe.setAttribute("data-spark-frame", "");
+  // The id lets a frame's client keep its own state (its selection across reloads).
+  iframe.setAttribute("data-spark-frame", id);
   const name = h("span", { class: "name" });
   const meta = h("span", { class: "meta" });
   // App frames run the real app at a chosen size; component frames render

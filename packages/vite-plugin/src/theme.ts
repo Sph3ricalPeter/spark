@@ -77,6 +77,7 @@ const ICONS = {
   image: ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M9 7a2 2 0 1 0 0 4 2 2 0 0 0 0-4z", "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"],
   "rows-2": ["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M3 12h18"],
   check: ["M20 6 9 17l-5-5"],
+  "message-circle": ["M7.9 20A9 9 0 1 0 4 16.1L2 22Z"],
 } as const;
 
 export type IconName = keyof typeof ICONS;

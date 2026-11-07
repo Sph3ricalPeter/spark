@@ -41,6 +41,7 @@ import {
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, h, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
+import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
 import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
@@ -401,7 +402,8 @@ const ASK_STYLE = `
     }
     .ask.has-chat .ask-thread { display: flex; }
     /* No ligatures: replies are full of code, and Manrope draws "--" as a dash. */
-    .msg { max-width: 92%; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font-feature-settings: "liga" 0, "calt" 0; }
+    .msg { max-width: 92%; overflow-wrap: anywhere; user-select: text; font-feature-settings: "liga" 0, "calt" 0; }
+    .msg.user { white-space: pre-wrap; }
     .msg.user {
       align-self: flex-end; padding: 5px 9px; border-radius: 10px 10px 3px 10px;
       background: color-mix(in srgb, var(--sp-accent) 22%, var(--sp-field)); color: var(--sp-text-strong);
@@ -479,7 +481,7 @@ const STYLE = `${THEME}
     button:disabled { opacity: 0.5; cursor: default; }
     .run { display: none; padding: 10px 12px; border-top: 1px solid var(--sp-line); }
     .run-head { display: flex; align-items: center; gap: 8px; color: var(--sp-text-strong); font-weight: 600; }
-    .run-sum { margin-top: 6px; white-space: pre-wrap; }
+    .run-sum { margin-top: 6px; }
     .run-err { margin-top: 6px; color: #ff8a80; white-space: pre-wrap; }
     .run-log { margin-top: 6px; color: var(--sp-text-dim); font-family: var(--sp-mono); font-size: var(--sp-fs-sm); }
     .run-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -489,6 +491,18 @@ const STYLE = `${THEME}
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     ${ASK_STYLE}
+    /* A chat's pin: a speech-bubble badge on the element's top-right corner, like a comment. */
+    .pin {
+      position: fixed; display: none; width: 22px; height: 22px; padding: 0; pointer-events: auto; cursor: pointer;
+      align-items: center; justify-content: center; border: 2px solid var(--sp-bg); border-radius: 50% 50% 50% 2px;
+      background: var(--sp-accent); color: var(--sp-text-strong); box-shadow: 0 2px 8px #0008;
+      transform-origin: 0 100%;
+    }
+    .pin:hover { filter: brightness(1.12); }
+    .pin.busy::after {
+      content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--sp-accent);
+      animation: spin .8s linear infinite;
+    }
     .all-head {
       display: flex; align-items: center; width: 100%; margin-top: var(--sp-4); padding: var(--sp-2) 0; border: none; border-top: 1px solid var(--sp-line);
       border-radius: 0; background: none; color: var(--sp-text-dim); font-weight: 600; text-align: left;
@@ -662,6 +676,7 @@ const STYLE = `${THEME}
     .cp-fields input { width: 100%; }
     .toast { color: var(--sp-warn); font-size: var(--sp-fs-sm); margin-top: 6px; }
     .row .k .link { font-size: inherit; }
+    ${MARKDOWN_STYLE}
     ${VARIABLES_STYLE}
     ${PAGE_STYLE}`;
 shadow.append(h("style", {}, STYLE));
@@ -745,7 +760,9 @@ const newChatBtn = h("button", { type: "button", title: "Forget this conversatio
 const askTop = h("div", { class: "ask-top" }, askTitle, newChatBtn);
 const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn));
 askBox.addEventListener("click", () => closePopover());
-shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel);
+/** Pins on the elements that have a chat with Claude (refreshPins/placePins). */
+const pinLayer = h("div", { class: "pins" });
+shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel, pinLayer);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
 const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
@@ -1006,10 +1023,13 @@ function select(el: Element | null) {
   if (el) view = "inspect";
   markTab();
   selected = el;
+  rememberSelection(el);
+  if (!el) restoreKey = null;
   place(selectBox, el);
   placeHandles();
   label(el);
   render();
+  placePins();
   if (el) import.meta.hot?.send("spark:select", snapshot(el));
 }
 
@@ -1036,10 +1056,13 @@ function follow() {
     place(selectBox, selected);
     placeHandles();
     label(hovered ?? selected);
-    if (selected && !selected.isConnected) select(null);
   }
+  keepSelection(performance.now());
   placeAsk();
-  if (++frame % 30 === 0) renderOverrides();
+  if (++frame % 30 === 0) {
+    renderOverrides();
+    refreshPins();
+  } else placePins();
   requestAnimationFrame(follow);
 }
 
@@ -1385,7 +1408,172 @@ let askOn: { key: string; label: string } | null = null;
  * conversation stays with one element across reloads, and each list item has its own. */
 function chatKey(el: Element, path: PathEntry[]): string {
   const at = path.map((p) => `${p.name}@${p.call ?? "root"}${p.key !== null ? `#${p.key}` : ""}`).join(">");
-  return `${el.getAttribute("data-spark-src") ?? el.tagName.toLowerCase()}|${at}`;
+  return `${el.tagName.toLowerCase()}@${el.getAttribute("data-spark-src") ?? ""}|${at}`;
+}
+
+// ---------------------------------------------------------------------------
+// Finding an element again
+//
+// A key (chatKey) names an element by where it's written and which instance it
+// is. When Claude edits a file, the lines in it shift and React may replace the
+// element, so the selection and chats find it again by what doesn't change: the
+// file and the components above it (with list keys), taking the candidate whose
+// lines moved least.
+
+function keyParts(key: string) {
+  const bar = key.indexOf("|");
+  const head = bar < 0 ? key : key.slice(0, bar);
+  const at = bar < 0 ? "" : key.slice(bar + 1);
+  // "h2@src/ui/Card.tsx:6:7" (keys from before the tag was in them have no "h2@").
+  const tagged = head.match(/^([a-z][\w-]*)@(.*)$/i);
+  const src = tagged ? tagged[2] : head;
+  const m = src.match(/^(.*):(\d+):(\d+)$/);
+  const entries = at ? at.split(">") : [];
+  return {
+    tag: tagged ? tagged[1].toLowerCase() : null,
+    file: m ? m[1] : src,
+    names: entries.map((e) => e.replace(/@[^#]*/, "")).join(">"),
+    lines: [m ? Number(m[2]) : 0, ...entries.map((e) => Number(e.match(/:(\d+):\d+(?:#|$)/)?.[1] ?? 0))],
+  };
+}
+
+/** How far an element's lines may have moved and still be the same one. */
+const MAX_SHIFT = 60;
+
+/** The element on the page that `key` names: that exact one, else the closest match. */
+function findByKey(key: string): Element | null {
+  const want = keyParts(key);
+  let best: Element | null = null;
+  let bestD = Infinity;
+  for (const el of Array.from(document.querySelectorAll(`[data-spark-src^="${CSS.escape(want.file)}:"]`))) {
+    const k = chatKey(el, instancePath(el));
+    if (k === key) return el;
+    const got = keyParts(k);
+    if (got.file !== want.file || got.names !== want.names || got.lines.length !== want.lines.length) continue;
+    if (want.tag && got.tag !== want.tag) continue;
+    const d = got.lines.reduce((sum, l, i) => sum + Math.abs(l - want.lines[i]), 0);
+    if (d <= MAX_SHIFT && d < bestD) {
+      bestD = d;
+      best = el;
+    }
+  }
+  return best;
+}
+
+/** A chat saved under this element's old key (its lines moved): file it under the new one. */
+function adoptChat(el: Element, key: string) {
+  if (chats[key]) return;
+  for (const k of Object.keys(chats)) {
+    if (k === key || keyParts(k).file !== keyParts(key).file || findByKey(k) !== el) continue;
+    chats[key] = chats[k];
+    delete chats[k];
+    import.meta.hot?.send("spark:chat-move", { from: k, to: key });
+    return;
+  }
+}
+
+/** The pins: one per chat whose element is on this page. Rebuilt now and then (follow). */
+let pins: { key: string; el: Element; node: HTMLElement }[] = [];
+function refreshPins() {
+  const show = open && picking;
+  const next: typeof pins = [];
+  if (show) {
+    for (const key of Object.keys(chats)) {
+      if (!chats[key].messages.length) continue;
+      const el = findByKey(key);
+      if (!el) continue;
+      const k = chatKey(el, instancePath(el));
+      if (k !== key) adoptChat(el, k);
+      const old = pins.find((p) => p.key === k);
+      const node =
+        old?.node ??
+        h("button", {
+          class: "pin",
+          type: "button",
+          click: (e: Event) => {
+            e.stopPropagation();
+            const at = pins.find((p) => p.node === node)?.el;
+            if (!at?.isConnected) return;
+            select(at);
+            askInput.focus();
+          },
+        }, lucide("message-circle", 12));
+      const chat = chats[k];
+      const lastClaude = [...chat.messages].reverse().find((m) => m.role === "claude");
+      node.title = `Chat with Claude about ${chat.label || "this element"}${lastClaude ? `\n${lastClaude.text.split("\n")[0].slice(0, 120)}` : ""}`;
+      next.push({ key: k, el, node });
+    }
+  }
+  pins = next;
+  pinLayer.replaceChildren(...pins.map((p) => p.node));
+  placePins();
+}
+function placePins() {
+  for (const p of pins) {
+    const visible = p.el.isConnected && p.el !== selected;
+    p.node.style.display = visible ? "inline-flex" : "none";
+    p.node.classList.toggle("busy", isRunning() && runChat === p.key);
+    if (!visible) continue;
+    const r = p.el.getBoundingClientRect();
+    // The pin's bottom-left corner sits on the element's top-right one.
+    p.node.style.left = `${r.right}px`;
+    p.node.style.top = `${r.top - 22}px`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The selection survives Claude's edits and reloads
+
+/** This frame's own place to remember its selection (frames on the board share an origin). */
+const SEL_STORE = `spark:selection:${(shell && window.frameElement?.getAttribute("data-spark-frame")) || ""}${location.pathname}${location.search}`;
+/** The selected element's key, to find it again when React replaces it. */
+let selKey: string | null = null;
+/** When the selected element went missing, to give up on it after a moment. */
+let lostSince = 0;
+/** A selection from before this page reloaded, to bring back once the app is up. */
+let restoreKey: string | null = (() => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SEL_STORE) ?? "null") as { key: string; at: number } | null;
+    return saved && Date.now() - saved.at < 10 * 60_000 ? saved.key : null;
+  } catch {
+    return null;
+  }
+})();
+const restoreUntil = performance.now() + 8000;
+
+function rememberSelection(el: Element | null) {
+  selKey = el ? chatKey(el, instancePath(el)) : null;
+  lostSince = 0;
+  try {
+    if (selKey) sessionStorage.setItem(SEL_STORE, JSON.stringify({ key: selKey, at: Date.now() }));
+    else sessionStorage.removeItem(SEL_STORE);
+  } catch {
+    // Storage off: a reload drops the selection.
+  }
+}
+
+/** Every frame: find a selection React replaced, or one from before a reload. */
+function keepSelection(now: number) {
+  if (selected && !selected.isConnected) {
+    const again = selKey ? findByKey(selKey) : null;
+    if (again) {
+      // The same element, re-rendered: keep where edits go, the view and the chat.
+      selected = again;
+      rememberSelection(again);
+      place(selectBox, again);
+      placeHandles();
+      render();
+    } else if (!lostSince) lostSince = now;
+    else if (now - lostSince > 1500) select(null);
+    return;
+  }
+  if (restoreKey && !selected && open && picking) {
+    const el = findByKey(restoreKey);
+    if (el) {
+      restoreKey = null;
+      select(el);
+    } else if (now > restoreUntil) restoreKey = null;
+  }
 }
 
 /** Fill the popup for the selection: its name, then its conversation. */
@@ -1397,6 +1585,7 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
   const key = chatKey(el, path);
   const label = n.owner ? `${n.name} in ${n.owner}` : n.name;
+  adoptChat(el, key);
   if (askOn?.key !== key) {
     askOn = { key, label };
     renderChat();
@@ -1429,7 +1618,10 @@ function renderChat() {
   askTitle.replaceChildren("Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : []));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
   newChatBtn.toggleAttribute("disabled", answering);
-  const nodes: HTMLElement[] = msgs.map((m) => h("div", { class: `msg ${m.role}${m.ok === false ? " bad" : ""}` }, m.text));
+  // Claude writes Markdown; the person's own words stay as typed.
+  const nodes: HTMLElement[] = msgs.map((m) =>
+    m.role === "claude" ? h("div", { class: `msg claude md${m.ok === false ? " bad" : ""}` }, markdown(m.text)) : h("div", { class: "msg user" }, m.text),
+  );
   if (answering) {
     nodes.push(
       h(
@@ -1538,7 +1730,7 @@ function renderRun() {
   if (run.error) parts.push(h("div", { class: "run-err" }, run.error));
   if (run.done) {
     const d = run.done;
-    if (d.summary) parts.push(h("div", { class: d.ok ? "run-sum" : "run-err" }, d.summary));
+    if (d.summary) parts.push(d.ok ? h("div", { class: "run-sum md" }, markdown(d.summary)) : h("div", { class: "run-err" }, d.summary));
     if (d.applied.length || d.skipped.length || d.cost !== undefined) {
       const bits = [];
       if (d.applied.length || d.skipped.length) bits.push(`${d.applied.length} applied · ${d.skipped.length} skipped`);
@@ -1567,10 +1759,12 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
   renderChat();
 });
 // An element's conversation changed (a prompt, Claude's reply, New chat).
-import.meta.hot?.on("spark:chat", (d: { key: string; chat: Chat | null }) => {
+import.meta.hot?.on("spark:chat", (d: { key: string; chat: Chat | null; movedTo?: string }) => {
   if (d.chat) chats[d.key] = d.chat;
   else delete chats[d.key];
+  if (d.movedTo && runChat === d.key) runChat = d.movedTo;
   renderChat();
+  refreshPins();
 });
 // Claude marked changes applied: their previews give way to the real code.
 import.meta.hot?.on("spark:log", (log: ChangeLog) => {
