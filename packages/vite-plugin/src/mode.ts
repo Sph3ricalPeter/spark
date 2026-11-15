@@ -148,15 +148,69 @@ if (mode === "frame") {
 /** The shell, when the app runs in its iframe. */
 export const shell: ShellApi | null = mode === "frame" ? window.parent.__sparkShell! : null;
 
+type TauriInternals = {
+  invoke(cmd: string, args?: unknown, options?: unknown): Promise<unknown>;
+  transformCallback(cb?: (response: unknown) => void, once?: boolean): number;
+  unregisterCallback?(id: number): void;
+};
+
+/** Fakes for the app's own Tauri commands, by name (spark.setup's `tauri`, see gallery.ts). */
+export type TauriFakes = Record<string, (args: unknown) => unknown>;
+
+declare global {
+  interface Window {
+    __sparkTauriFakes?: TauriFakes;
+  }
+}
+
 /**
- * A Tauri app's IPC is injected into the top window only. Lend it to the
- * iframe so the app's own `invoke`, events and window controls still work.
+ * Tauri injects its IPC into the top window only: Spark's project window,
+ * which runs the shell. Lend it to the frame, so the app's Tauri calls work
+ * there, the system Open and Save dialogs above all.
+ *
+ * - `isTauri` and `__TAURI_INTERNALS__` are non-enumerable on the parent,
+ *   so they're named here, not found by walking its keys.
+ * - Plugin commands (`plugin:dialog|open`, events, window getters) go to
+ *   Spark's window, which allows what `src-tauri/capabilities/project.json`
+ *   lists: dialogs and read-only calls, never closing or moving Spark.
+ * - The app's own commands (`invoke("open_file")`) belong to its Rust side,
+ *   which doesn't run inside Spark. spark.setup's fakes answer them when
+ *   there are some; otherwise they fail and say why. They're never sent to
+ *   Spark, whose own commands can share their names (`app_info`).
  */
 export function borrowTauri() {
   if (mode !== "frame") return;
   const parent = window.parent as unknown as Record<string, unknown>;
+  const host = parent.__TAURI_INTERNALS__ as TauriInternals | undefined;
+  if (!host || "__TAURI_INTERNALS__" in window) return;
+  // Callbacks this page registers live in the parent; drop them with the page.
+  const callbacks = new Set<number>();
+  const internals = Object.create(host as object, {
+    invoke: {
+      value: (cmd: string, args?: unknown, options?: unknown) => {
+        const fake = window.__sparkTauriFakes?.[cmd];
+        if (fake) return Promise.resolve().then(() => fake(args));
+        if (cmd.startsWith("plugin:")) return host.invoke(cmd, args, options);
+        return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, isn't available here.`));
+      },
+    },
+    transformCallback: {
+      value: (cb?: (response: unknown) => void, once?: boolean) => {
+        const id = host.transformCallback(cb, once);
+        callbacks.add(id);
+        return id;
+      },
+    },
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { value: internals, configurable: true });
+  Object.defineProperty(window, "isTauri", { value: true, configurable: true });
+  // Plugins' own globals (`__TAURI_EVENT_PLUGIN_INTERNALS__` and the like).
   const self = window as unknown as Record<string, unknown>;
-  for (const key of Object.keys(parent)) {
+  for (const key of Object.getOwnPropertyNames(parent)) {
     if (key.startsWith("__TAURI") && !(key in self)) self[key] = parent[key];
   }
+  window.addEventListener("pagehide", () => {
+    for (const id of callbacks) host.unregisterCallback?.(id);
+    callbacks.clear();
+  });
 }
