@@ -11,10 +11,12 @@
 //   panel-open client.ts: the inspector is docked open
 //   sections   client.ts: which inspector sections are unfolded
 //   sidebar    sidebar.ts: the left sidebar is open, and on which tab
+//   panel-widths grip.ts: the widths the sidebar and the inspector were
+//              dragged to, `{ sidebar?: px, panel?: px }`
 // A new key is added to this list and to LEGACY if it had a localStorage one.
 // Values are JSON; the file is read by people too, so shapes only grow.
 
-export type StateKey = "board" | "panel-open" | "sections" | "sidebar";
+export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "panel-widths";
 
 const ENDPOINT = "/@spark/state";
 

@@ -372,13 +372,13 @@ const sizing = (on: boolean) => {
 };
 const sideEdge = edgeGrip(
   host,
-  { key: "spark:sidebar-w", prop: "--sp-side-w", def: SIDEBAR_W, min: 200, max: 560, dir: 1 },
+  { name: "sidebar", prop: "--sp-side-w", def: SIDEBAR_W, min: 200, max: 560, dir: 1 },
   () => window.innerWidth - (docked ? panelEdge.width() : 0) - MIN_CANVAS,
   sizing,
 );
 const panelEdge = edgeGrip(
   host,
-  { key: "spark:panel-w", prop: "--sp-panel-w", def: PANEL_W, min: 280, max: 640, dir: -1 },
+  { name: "panel", prop: "--sp-panel-w", def: PANEL_W, min: 280, max: 640, dir: -1 },
   () => window.innerWidth - (side.isOpen() ? sideEdge.width() : 0) - MIN_CANVAS,
   sizing,
 );

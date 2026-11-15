@@ -4,13 +4,17 @@
 // A width is a CSS variable on the shell's host (`--sp-side-w`,
 // `--sp-panel-w`). Custom properties cross shadow roots, so the client's
 // panel (mounted in the shell, mode.ts) reads it too. Each width stays
-// between its min and max and leaves the canvas some room, is remembered in
-// localStorage, and goes back to its default on a double-click of the edge.
+// between its min and max and leaves the canvas some room, is remembered per
+// project (state.ts, "panel-widths"), and goes back to its default on a
+// double-click of the edge.
 import { h } from "./fields.ts";
+import { getState, setState } from "./state.ts";
+
+type Widths = Partial<Record<"sidebar" | "panel", number>>;
 
 export type Edge = {
-  /** localStorage key. */
-  key: string;
+  /** Its name in the saved "panel-widths". */
+  name: keyof Widths;
   /** The CSS variable it sets. */
   prop: string;
   def: number;
@@ -46,12 +50,8 @@ export const GRIP_STYLE = `
  */
 export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dragging: (on: boolean) => void) {
   let saved = edge.def;
-  try {
-    const v = Number(localStorage.getItem(edge.key));
-    if (Number.isFinite(v) && v > 0) saved = v;
-  } catch {
-    // Storage may be off: the default width.
-  }
+  const v = getState<Widths>("panel-widths")?.[edge.name];
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) saved = v;
   let width = edge.def;
   const clamp = (w: number) => Math.round(Math.max(edge.min, Math.min(edge.max, room(), w)));
   const grip = h("div", { class: "grip", title: "Drag to resize, double-click for the default width" });
@@ -62,11 +62,7 @@ export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dr
     target.style.setProperty(edge.prop, `${width}px`);
   }
   function store() {
-    try {
-      localStorage.setItem(edge.key, String(saved));
-    } catch {
-      // Not remembered.
-    }
+    setState("panel-widths", { ...getState<Widths>("panel-widths"), [edge.name]: saved });
   }
 
   grip.addEventListener("pointerdown", (e) => {
