@@ -32,6 +32,8 @@ Zustand). Release and deploy are ported from dawg and described in
   app usable; edit mode (Tab or Alt+E; the View/Edit island in the canvas bar shows which) picks elements, Esc steps back out to view.
   Spark's own buttons and dropdowns never keep focus: Tab and Esc are
   always Spark's shortcuts except while typing in a text field.
+  Shift+click adds to the selection (the first pick leads: inspector,
+  handles and the Ask popup stay on it; Ask Claude sends them all).
   Edit mode has selection handles to resize,
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);
