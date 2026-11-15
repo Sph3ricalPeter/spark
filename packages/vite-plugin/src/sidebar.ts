@@ -3,7 +3,8 @@
 // with Claude about an element (chats.ts), newest first, with its element,
 // state and model; clicking one opens it on its element. "Resolve" archives a
 // chat into the Resolved view at the bottom of the list, where it can be read
-// and reopened (chats are never deleted). Changes: the
+// and reopened (chats are never deleted); a right-click on a chat offers the
+// same (open, resolve or reopen) and copying it. Changes: the
 // pending edits and Implement changes (the active frame's client renders it).
 //
 // Add a tab with `addTab(name, element, icon, title, onShow?)`: it gets a
@@ -13,6 +14,7 @@ import { h } from "./fields.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
 import { getState, setState } from "./state.ts";
+import { nativeMenuHelps, openMenu } from "./menu.ts";
 
 /** The default width; dragging its right edge changes it (grip.ts). */
 export const SIDEBAR_W = 280;
@@ -234,8 +236,7 @@ export function chatsTab(deps: ChatsDeps) {
         : c.resolved
           ? h("button", { class: "act", title: "Reopen this chat: back in the Chats list, and open on its element" }, icon("rotate-ccw", 11), h("span", {}, "Reopen"))
           : h("button", { class: "act", title: "Resolve this chat: it moves to Resolved, where you can still read and reopen it" }, icon("check", 11), h("span", {}, "Resolve"));
-      act?.addEventListener("click", (e) => {
-        e.stopPropagation();
+      const resolveOrReopen = () => {
         if (!c.resolved) {
           expanded.delete(c.id);
           deps.send("spark:chat-resolve", { id: c.id });
@@ -246,6 +247,10 @@ export function chatsTab(deps: ChatsDeps) {
         if (run || !deps.open(c)) expanded.add(c.id);
         else expanded.delete(c.id);
         render();
+      };
+      act?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        resolveOrReopen();
       });
       const row = h(
         "div",
@@ -272,8 +277,7 @@ export function chatsTab(deps: ChatsDeps) {
           ),
         );
       }
-      row.addEventListener("click", (e) => {
-        if ((e.target as HTMLElement).closest(".chat-log")) return;
+      const openRow = () => {
         // Runs and resolved chats are read here, in the list.
         if (run || c.resolved) {
           if (expanded.has(c.id)) expanded.delete(c.id);
@@ -286,6 +290,22 @@ export function chatsTab(deps: ChatsDeps) {
         else if (expanded.has(c.id)) expanded.delete(c.id);
         else expanded.add(c.id);
         render();
+      };
+      row.addEventListener("click", (e) => {
+        if ((e.target as HTMLElement).closest(".chat-log")) return;
+        openRow();
+      });
+      // Right-click: the row's commands. Selected text in a transcript keeps the browser's Copy.
+      row.addEventListener("contextmenu", (e) => {
+        if ((e.target as HTMLElement).closest(".chat-log") && nativeMenuHelps(e)) return;
+        e.preventDefault();
+        const transcript = c.messages.map((m) => `${m.role === "user" ? "You" : "Claude"}: ${m.text}`).join("\n\n");
+        openMenu(e.clientX, e.clientY, [
+          { label: run || c.resolved ? (expanded.has(c.id) ? "Hide conversation" : "Show conversation") : "Open on its element", run: openRow },
+          !busy && { label: c.resolved ? "Reopen" : "Resolve", run: resolveOrReopen },
+          "-",
+          { label: "Copy conversation", disabled: !c.messages.length, run: () => void navigator.clipboard?.writeText(transcript).catch(() => {}) },
+        ]);
       });
       return row;
     });

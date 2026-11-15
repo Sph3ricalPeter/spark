@@ -83,6 +83,12 @@ Zustand). Release and deploy are ported from dawg and described in
   deleted: "Resolve" archives one into the Chats tab's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
+  `menu.ts` is the right-click menus (Figma style, drawn by the board so
+  they're never clipped by a zoomed frame) and blocks the browser's own
+  context menu everywhere except text fields and selected text: the
+  client's menu on elements, variant boxes and frames (Ask Claude, select
+  parent, copy/paste style, reset edits, go to main component, delete), the
+  board's on the canvas and frame titles, Layers rows and Chats rows;
   `claude.ts` is the one way Spark runs Claude: every run (Implement
   changes, Ask Claude on the selection, the Components view's "Write them
   with Claude", anything new) goes through its `ask` and is a chat in the

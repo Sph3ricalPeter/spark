@@ -11,6 +11,8 @@
 // - "page": the app embedded somewhere else (another iframe): the old
 //   behavior, client docked straight into the page.
 
+import type { MenuEntry } from "./menu.ts";
+
 export type Mode = "shell" | "frame" | "page";
 
 /**
@@ -64,6 +66,12 @@ export type ClientHooks = {
   selectLayer?(el: Element): { x: number; y: number; w: number; h: number } | null;
   /** The pointer is over a layer's row (null: it left). */
   hoverLayer?(el: Element | null): void;
+  /** Right-click on a layer's row or the frame's title: select `el` (null: the frame itself) and open its menu at (x, y) on the board. */
+  contextMenu?(el: Element | null, x: number, y: number): void;
+  /** Is the element written at `src` ("src/ui/Button.tsx:12:5") on this frame (a component frame: its main component)? */
+  hasSource?(src: string): boolean;
+  /** Select that element; its box in the frame, or null when it's not here. */
+  selectSource?(src: string): { x: number; y: number; w: number; h: number } | null;
 };
 
 /**
@@ -112,6 +120,12 @@ export type ShellApi = {
   step(dir: -1 | 1, from: Window): unknown[] | null;
   /** The list was loaded or Claude applied changes: the history starts over from it. */
   resetHistory(changes: unknown[]): void;
+  /** The frame's own items for its right-click menu (zoom to it, add or remove it, its cases' layout). */
+  frameMenu?(win: Window): MenuEntry[];
+  /** Does a component frame (other than `from`'s) show the element written at `src`: the main component of an instance? */
+  hasSource?(src: string, from: Window): boolean;
+  /** Go there: select that frame and the element, in view. */
+  goToSource?(src: string, from: Window): void;
   /** A component frame's content size, so the frame hugs it; `stacked`: its cases are in a column. */
   contentSize(win: Window, w: number, h: number, stacked?: boolean): void;
 };

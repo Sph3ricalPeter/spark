@@ -25,6 +25,7 @@ import { h } from "./fields.ts";
 import { drag } from "./drag.ts";
 import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
+import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
@@ -1088,6 +1089,22 @@ const api: ShellApi = {
     history = [json];
     step = 0;
   },
+  frameMenu(win) {
+    const f = frameOf(win);
+    return f ? frameMenuOf(f) : [];
+  },
+  hasSource(src, from) {
+    return !!sourceFrame(src, from);
+  },
+  goToSource(src, from) {
+    const f = sourceFrame(src, from);
+    const hooks = f && clients.get(f.iframe.contentWindow!);
+    if (!f || !hooks?.selectSource) return;
+    selectFrame(f);
+    if (!edit) switchMode(true);
+    const box = hooks.selectSource(src);
+    if (box) bringIntoView(f, box);
+  },
   contentSize(win, w, hh, stacked) {
     const f = frameOf(win);
     if (!f || f.kind !== "component") return;
@@ -1138,6 +1155,8 @@ function guardFrames() {
     try {
       const w = f.iframe.contentWindow as (Window & { [GUARD]?: boolean }) | null;
       if (!w || w[GUARD]) continue;
+      // No browser menu in a frame either, from its first moment (menu.ts).
+      blockNativeMenu(w);
       w[GUARD] = true;
       w.addEventListener(
         "wheel",
@@ -1175,6 +1194,75 @@ function guardFrames() {
   }
   requestAnimationFrame(guardFrames);
 }
+
+// ---------------------------------------------------------------------------
+// Right-click menus (menu.ts). The browser's own menu never shows on the board.
+
+blockNativeMenu(window);
+
+/** What a frame's menu offers besides its client's (Ask Claude): the board's own commands for it. */
+function frameMenuOf(f: Frame): MenuEntry[] {
+  const apps = frames.filter((x) => x.kind === "app").length;
+  return [
+    {
+      label: "Zoom to frame",
+      run: () => {
+        selectFrame(f);
+        focusFrame(f);
+        apply();
+      },
+    },
+    f.kind === "component" && { label: f.stacked ? "Cases in a row" : "Stack cases", run: () => setLayout(f, f.stacked ? "row" : "column") },
+    "-",
+    f.kind === "app" && { label: "Add frame", run: addApp },
+    f.kind === "app" && f.id !== "app-1" && apps > 1 && { label: "Remove frame", danger: true, run: () => removeFrame(f) },
+  ];
+}
+
+/** A frame's title (or its row in Layers): select it as a whole, in Edit mode, and show its menu. */
+function frameContext(f: Frame, x: number, y: number) {
+  selectFrame(f);
+  const win = f.iframe.contentWindow;
+  const hooks = win ? clients.get(win) : undefined;
+  if (!hooks?.contextMenu) {
+    openMenu(x, y, frameMenuOf(f));
+    return;
+  }
+  if (!edit) switchMode(true);
+  hooks.contextMenu(null, x, y);
+}
+
+/** The component frame (not `from`'s) that shows the element written at `src`. */
+function sourceFrame(src: string, from: Window): Frame | null {
+  for (const f of frames) {
+    const win = f.iframe.contentWindow;
+    if (f.kind !== "component" || !win || win === from) continue;
+    try {
+      if (clients.get(win)?.hasSource?.(src)) return f;
+    } catch {
+      // Reloading.
+    }
+  }
+  return null;
+}
+
+canvas.addEventListener("contextmenu", (e) => {
+  const me = e as MouseEvent;
+  me.preventDefault();
+  const f = frames.find((x) => x.el.contains(me.target as Node));
+  if (f) {
+    frameContext(f, me.clientX, me.clientY);
+    return;
+  }
+  openMenu(me.clientX, me.clientY, [
+    { label: "Add frame", run: addApp },
+    "-",
+    { label: "Zoom to fit", run: fitAll },
+    { label: "Zoom to 100%", hint: "Ctrl 0", run: () => zoomKey("reset") },
+    "-",
+    edit ? { label: "View mode", hint: "Tab", run: () => switchMode(false) } : { label: "Edit mode", hint: "Tab", run: () => switchMode(true) },
+  ]);
+});
 
 // ---------------------------------------------------------------------------
 // Chats: every chat with Claude about an element, from the dev server (chats.ts)
@@ -1253,6 +1341,21 @@ const layers = layersTab({
     if (!edit) switchMode(true);
     const box = hooks.selectLayer(el);
     if (box) bringIntoView(f, box);
+  },
+  menuFrame: (id, x, y) => {
+    const f = frames.find((v) => v.id === id);
+    if (f) frameContext(f, x, y);
+  },
+  menuLayer: (id, el, x, y) => {
+    const f = frames.find((v) => v.id === id);
+    const win = f?.iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    if (!f || !hooks?.contextMenu) return;
+    selectFrame(f);
+    if (!edit) switchMode(true);
+    const box = hooks.selectLayer?.(el);
+    if (box) bringIntoView(f, box);
+    hooks.contextMenu(el, x, y);
   },
   shown: () => side.shows("Layers"),
 });

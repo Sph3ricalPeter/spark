@@ -7,7 +7,8 @@
 // - clicking a layer selects its element on the canvas (in Edit mode), and
 //   selecting one on the canvas opens the tree down to it and marks its row;
 // - hovering a row outlines its element, and hovering an element marks its row;
-// - clicking a frame's row selects the frame, double-clicking zooms to it.
+// - clicking a frame's row selects the frame, double-clicking zooms to it;
+// - right-clicking a row selects it and opens its menu (menu.ts), as on the canvas.
 //
 // Which rows are open is remembered with the project (state.ts, "layers"): by
 // frame, and by where each element is written plus which of its siblings it
@@ -37,6 +38,10 @@ export type LayersDeps = {
   focusFrame(id: string): void;
   /** A layer was clicked: select its element in that frame. */
   pickLayer(id: string, el: Element): void;
+  /** Right-click on a frame's row: its menu at (x, y). */
+  menuFrame?(id: string, x: number, y: number): void;
+  /** Right-click on a layer's row: select its element and show its menu at (x, y). */
+  menuLayer?(id: string, el: Element, x: number, y: number): void;
   /** Is the tab showing (only then is it drawn). */
   shown(): boolean;
 };
@@ -144,6 +149,10 @@ export function layersTab(deps: LayersDeps) {
     );
     row.addEventListener("click", () => deps.pickFrame(f.id));
     row.addEventListener("dblclick", () => deps.focusFrame(f.id));
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      deps.menuFrame?.(f.id, e.clientX, e.clientY);
+    });
     return row;
   }
 
@@ -175,6 +184,10 @@ export function layersTab(deps: LayersDeps) {
     if (l.el === sel) row.style.setProperty("--sel", roleVar(l));
     row.addEventListener("click", () => {
       deps.pickLayer(f.id, l.el);
+    });
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      deps.menuLayer?.(f.id, l.el, e.clientX, e.clientY);
     });
     row.addEventListener("pointerenter", () => f.hooks?.hoverLayer?.(l.el));
     row.addEventListener("pointerleave", () => f.hooks?.hoverLayer?.(null));

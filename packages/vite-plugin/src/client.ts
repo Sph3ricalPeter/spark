@@ -47,6 +47,7 @@ import { frameGlue } from "./frame.ts";
 import { words as caseTitle } from "./gallery.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { shell, type Layer } from "./mode.ts";
+import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { installReorder } from "./reorder.ts";
 import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
@@ -1600,7 +1601,8 @@ for (const handle of handles) {
   handle.addEventListener("pointerdown", (e) => {
     const p = e as PointerEvent;
     const el = selected;
-    if (!el) return;
+    // Only the main button resizes (a right-click on a handle opens the menu).
+    if (!el || p.button !== 0) return;
     p.preventDefault();
     p.stopPropagation();
     handle.setPointerCapture(p.pointerId);
@@ -2891,6 +2893,8 @@ document.addEventListener(
         e.preventDefault();
         e.stopPropagation();
       }
+    } else if (!textEntry(e) && styleShortcut(e)) {
+      // Copied or pasted style.
     } else if (undoKey(e) && picking && !textEntry(e)) {
       // In a field, Ctrl+Z undoes its own typing.
       e.preventDefault();
@@ -2920,6 +2924,8 @@ const panelKeys = (e: Event) => {
   if ((k.altKey && k.code === "KeyE") || (plainTab(k) && !textEntry(k))) {
     k.preventDefault();
     setPicking(!picking);
+  } else if (!textEntry(k) && styleShortcut(k)) {
+    // Copied or pasted style.
   } else if (undoKey(k) && !textEntry(k)) {
     // Outside the app (panel, bar) undo is always Spark's.
     k.preventDefault();
@@ -2952,10 +2958,185 @@ const keyTarget: EventTarget = shell ? window.parent.document : panelRoot;
 keyTarget.addEventListener("keydown", panelKeys, true);
 
 // ---------------------------------------------------------------------------
+// Right-click menus (menu.ts), in edit mode: on an element, a variant box or
+// the frame itself. A right-click selects what's under it first (unless it's
+// already in the selection, so the menu acts on all of it), like Figma. In
+// view mode the app keeps its own right-clicks; the browser's menu never shows.
+
+/** On the board the menu is drawn by the board, over the canvas, at screen size. */
+const menuDoc = shell ? window.parent.document : document;
+
+/** A point in this frame, in the menu's document (the frame may be zoomed on the board). */
+function toMenuPoint(x: number, y: number) {
+  const fe = shell ? (window.frameElement as HTMLElement | null) : null;
+  if (!fe) return { x, y };
+  const f = fe.getBoundingClientRect();
+  const z = fe.offsetWidth ? f.width / fe.offsetWidth : 1;
+  return { x: f.left + x * z, y: f.top + y * z };
+}
+
+// Copy and paste style: the Text and Fill and border properties, like
+// Figma's copy and paste properties. The copy lives on the board, so it
+// pastes into another frame too.
+type StyleCopy = { props: { prop: string; value: string; computed: string }[] };
+const CLIP = "__sparkStyleCopy";
+const clipWin = (shell ? window.parent : window) as Window & { [CLIP]?: StyleCopy };
+const STYLE_PROPS = FIELDS.filter((g) => g.group === "Text" || g.group === "Fill and border").flatMap((g) => g.fields.map((f) => f.prop));
+
+function copyStyle(el: Element) {
+  const rules = matchedRules(el, skip);
+  const cs = getComputedStyle(el);
+  const own = overridesOn(el);
+  clipWin[CLIP] = {
+    props: STYLE_PROPS.map((prop) => ({
+      prop,
+      value: own.filter((c) => c.property === prop).at(-1)?.to ?? authored(el, rules, prop) ?? cs.getPropertyValue(prop),
+      computed: cs.getPropertyValue(prop),
+    })),
+  };
+}
+
+/** Paste the copied style onto `els`: an edit for each property that looks different there. */
+function pasteStyle(els: Element[]) {
+  const copy = clipWin[CLIP];
+  if (!copy) return;
+  let n = 0;
+  for (const el of els) {
+    if (targetOf(el)) continue;
+    const cs = getComputedStyle(el);
+    for (const p of copy.props) {
+      if (cs.getPropertyValue(p.prop) === p.computed) continue;
+      if (edit(el, p.prop, p.value, false)) n++;
+    }
+  }
+  if (n) changed();
+}
+
+/** Revert every edit on `els` (what the inspector lists under "Edits on this …"). */
+function resetEdits(els: Element[]) {
+  let n = 0;
+  for (const el of els) {
+    for (const c of overridesOn(el)) {
+      revert(c.id);
+      n++;
+    }
+  }
+  if (n) changed();
+}
+
+/** Open the Ask popup on the selection, with the cursor in it. */
+function askAbout() {
+  if (!picking) setPicking(true);
+  if (!open) setOpen(true);
+  requestAnimationFrame(() => {
+    placeAsk();
+    askInput.focus();
+  });
+}
+
+const styleKey = (e: KeyboardEvent): "copy" | "paste" | null =>
+  (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey ? (e.code === "KeyC" ? "copy" : e.code === "KeyV" ? "paste" : null) : null;
+/** Ctrl+Alt+C / Ctrl+Alt+V on the selection; true when it was one. */
+function styleShortcut(e: KeyboardEvent): boolean {
+  const k = styleKey(e);
+  if (!k || !picking || !selected || targetOf(selected)) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  if (k === "copy") copyStyle(selected);
+  else pasteStyle(selection());
+  return true;
+}
+
+/** The menu for `el` (selected first), at a point in the menu's document. */
+function showMenuFor(el: Element, at: { x: number; y: number }) {
+  if (editing) stopTextEdit(true);
+  if (!selection().includes(el)) select(el);
+  const sel = selection();
+  const t = targetOf(el);
+  const many = sel.length > 1;
+  const ask: MenuEntry = { label: many ? `Ask Claude about these ${sel.length}…` : "Ask Claude…", run: askAbout };
+  const parent = parentOf(el);
+  const up: MenuEntry = { label: parent === document.documentElement ? "Select frame" : "Select parent", hint: "↑", disabled: !parent, run: () => parent && select(parent) };
+  if (t?.kind === "frame") {
+    openMenu(at.x, at.y, [ask, "-", ...(shell?.frameMenu?.(window) ?? [])], menuDoc);
+    return;
+  }
+  if (t?.kind === "case") {
+    const name = el.querySelector(".spark-gallery-name");
+    openMenu(
+      at.x,
+      at.y,
+      [
+        ask,
+        "-",
+        up,
+        name && {
+          label: "Rename variant",
+          hint: "Double-click",
+          run: () => name.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window })),
+        },
+        !!t.file && { label: "Open in code editor", run: () => openInEditor(t.file.replace(/^\//, "")) },
+      ],
+      menuDoc,
+    );
+    return;
+  }
+  const src = el.getAttribute("data-spark-src");
+  const textual = el instanceof HTMLElement && !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && hasOwnText(el);
+  const edits = sel.reduce((n, x) => n + overridesOn(x).length, 0);
+  const copied = !!clipWin[CLIP];
+  // An instance (or something inside one) has a main component: where it's written, in its component frame.
+  const main = !many && roleOf(el) === "instance" && !!src && !!shell?.hasSource?.(src, window);
+  openMenu(
+    at.x,
+    at.y,
+    [
+      ask,
+      !many && textual && { label: "Edit text", hint: "Double-click", run: () => startTextEdit(el as HTMLElement) },
+      "-",
+      !many && up,
+      "-",
+      !many && { label: "Copy style", hint: "Ctrl+Alt+C", run: () => copyStyle(el) },
+      { label: many ? `Paste style to ${sel.length}` : "Paste style", hint: "Ctrl+Alt+V", disabled: !copied, run: () => pasteStyle(sel) },
+      { label: edits ? `Reset edits (${edits})` : "Reset edits", disabled: !edits, run: () => resetEdits(sel) },
+      "-",
+      main && { label: "Go to main component", run: () => shell?.goToSource?.(src!, window) },
+      !many && !!src && { label: "Open in code editor", run: () => openInEditor(src!) },
+      "-",
+      { label: many ? `Delete ${sel.length}` : "Delete", hint: "Del", danger: true, run: removeSelected },
+    ],
+    menuDoc,
+  );
+}
+
+document.addEventListener(
+  "contextmenu",
+  (e) => {
+    // Editing text in place: the browser's menu (copy, paste, spelling) is the useful one.
+    if (editing && e.target instanceof Node && editing.contains(e.target)) return;
+    if (!picking) return;
+    // Spark's own overlay (a handle, a pin) stands for the selection.
+    const el = e.target === host ? selected : pickable(e.target);
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showMenuFor(el, toMenuPoint(e.clientX, e.clientY));
+  },
+  true,
+);
+
+/** Is `src` written here (a component frame shows its main component)? */
+function findSource(src: string): Element | null {
+  return document.querySelector(`[data-spark-src="${CSS.escape(src)}"]`);
+}
+
+// ---------------------------------------------------------------------------
 // Start
 
 document.head.append(dockStyle);
 installFont();
+// The browser's own menu never shows (the board guards its frames too; this covers an app outside it).
+blockNativeMenu(window);
 document.documentElement.append(host);
 if (shell) {
   // Space-drag pans only in edit mode: in view mode Space belongs to the app.
@@ -3156,6 +3337,17 @@ if (shell) {
     layerChain,
     selectLayer,
     hoverLayer: (el) => hover(el && el.isConnected ? el : null),
+    // A right-click on its Layers row or the frame's title: select it and show its menu there.
+    contextMenu: (el, x, y) => {
+      const t = el && el.isConnected ? el : document.documentElement;
+      if (t !== document.documentElement && t !== selected) scrollTo(t);
+      showMenuFor(t, { x, y });
+    },
+    hasSource: (src) => !!findSource(src),
+    selectSource: (src) => {
+      const el = findSource(src);
+      return el ? selectLayer(el) : null;
+    },
   });
 } else if (reopen) setOpen(true);
 requestAnimationFrame(follow);
