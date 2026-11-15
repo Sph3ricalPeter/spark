@@ -43,6 +43,7 @@ import caseFiles from "/@spark/cases";
 import { name as projectName } from "/@spark/project";
 import { inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
 import { getState, setState } from "./state.ts";
+import { SAMPLE_PARAM } from "./sample.ts";
 
 const BAR_H = 36;
 /** The inspector's and the chat's default widths; dragging their left edges changes them (grip.ts). */
@@ -116,9 +117,18 @@ type Frame = {
   name: HTMLElement;
   meta: HTMLElement;
   iframe: HTMLIFrameElement;
+  /** App frames: the sample data picked for it (sample.ts); unset: the first. */
+  sample?: string;
+  /** App frames: the samples spark.setup has, as the frame last reported them (undefined: not loaded yet). */
+  samples?: string[];
+  /** App frames: the sample it runs on (null: none). */
+  sampleOn?: string | null;
+  /** App frames: the app's own commands it called that no sample answers. */
+  missing?: string[];
 };
 
-type SavedApp = { id: string; x: number; y: number; w: number; h: number; preset: string };
+/** `sample`: the frame's sample data, when one was picked. */
+type SavedApp = { id: string; x: number; y: number; w: number; h: number; preset: string; sample?: string };
 type Layout = "auto" | "row" | "column";
 type Camera = { z: number; x: number; y: number };
 /** The board in the project's state.json (state.ts, key "board"); fields are only ever added. */
@@ -160,7 +170,7 @@ function save(delay = 0) {
   const camera: Camera = { z, x: Math.round(px), y: Math.round(py) };
   savedCamera = JSON.stringify(camera);
   const s: Saved = {
-    apps: frames.filter((f) => f.kind === "app").map(({ id, x, y, w, h, preset }) => ({ id, x, y, w, h, preset })),
+    apps: frames.filter((f) => f.kind === "app").map(({ id, x, y, w, h, preset, sample }) => ({ id, x, y, w, h, preset, ...(sample ? { sample } : {}) })),
     placed: Object.fromEntries(frames.filter((f) => f.kind === "component" && f.placed).map((f) => [f.file, { x: f.x, y: f.y }])),
     selected: selectedId,
     layouts: Object.fromEntries(frames.filter((f) => f.layout !== "auto").map((f) => [f.file, f.layout])),
@@ -441,12 +451,25 @@ root.append(shellEl, panelEdge.grip, chatEdge.grip, sideEdge.grip);
 // ---------------------------------------------------------------------------
 // Frames
 
-/** The page's address without Spark's own parameters: what app frames load. */
-function appUrl() {
+/** The page's address without Spark's own parameters: what app frames load, on their sample data if one was picked. */
+function appUrl(sample?: string) {
   const url = new URL(location.href);
   url.searchParams.delete("spark");
   url.searchParams.delete("file");
+  url.searchParams.delete(SAMPLE_PARAM);
+  if (sample) url.searchParams.set(SAMPLE_PARAM, sample);
   return url.href;
+}
+
+/** Run an app frame on another sample: the app starts over on it. */
+function setSample(f: Frame, sample: string) {
+  if (f.kind !== "app" || sample === f.sampleOn) return;
+  f.sample = sample;
+  f.samples = undefined;
+  f.missing = [];
+  f.iframe.src = appUrl(sample);
+  save();
+  apply();
 }
 
 function componentUrl(file: string, layout: Layout = "auto") {
@@ -491,7 +514,7 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
   }
   title.addEventListener("pointerdown", (e) => moveFrame(f, e as PointerEvent));
   stage.append(el);
-  iframe.src = kind === "app" ? appUrl() : componentUrl(file, f.layout);
+  iframe.src = kind === "app" ? appUrl(f.sample) : componentUrl(file, f.layout);
   return f;
 }
 
@@ -556,7 +579,7 @@ function addApp() {
   while (frames.some((f) => f.id === `app-${n}`)) n++;
   const right = Math.max(...apps.map((f) => f.x + f.w));
   // A Fill frame copies the window's size as a fixed one.
-  const f = makeFrame("app", `app-${n}`, "", { x: right + GAP, y: apps[0].y, w: from.w, h: from.h, preset: from.preset === "fill" ? "custom" : from.preset });
+  const f = makeFrame("app", `app-${n}`, "", { x: right + GAP, y: apps[0].y, w: from.w, h: from.h, preset: from.preset === "fill" ? "custom" : from.preset, sample: from.sample });
   frames.splice(apps.length, 0, f);
   if (activeWin) clients.get(activeWin)?.deselect();
   activeWin = null;
@@ -718,7 +741,7 @@ function apply() {
     if (f.kind === "app") {
       const apps = frames.filter((x) => x.kind === "app");
       f.name.textContent = apps.length > 1 ? `App ${apps.indexOf(f) + 1}` : "App";
-      f.meta.textContent = f.preset === "fill" ? `Fill · ${f.w} × ${f.h}` : `${f.w} × ${f.h}`;
+      f.meta.textContent = `${f.preset === "fill" ? `Fill · ${f.w} × ${f.h}` : `${f.w} × ${f.h}`}${f.sampleOn ? ` · ${f.sampleOn}` : ""}`;
     } else f.name.textContent = fileTitle(f.file);
   }
   // The Layers tab names the frames and their sizes: redraw it when they change.
@@ -837,6 +860,8 @@ zoomLabel.addEventListener("click", () => zoomKey("reset"));
 // frame's device, size and ratio; a component frame's file and layout.
 // Their own element and shadow root, so the client can mount it as is.
 
+/** Claude is writing sample data (the Data row's button): pressed once until the run ends. */
+let samplesWriting = false;
 const props = frameProperties();
 
 function frameProperties() {
@@ -855,6 +880,11 @@ function frameProperties() {
   ratio.append(h("option", { value: "" }, "Free"));
   for (const [i, [n]] of RATIOS.entries()) ratio.append(h("option", { value: String(i) }, n));
   const remove = h("button", { class: "danger", title: "Remove this app frame from the board" }, "Remove frame");
+  // Sample data (sample.ts): the mock backend this frame's app runs on.
+  const sampleSel = h("select", { title: "The sample data this frame's app runs on (spark.setup.tsx samples). Picking one starts the app over on it." }) as HTMLSelectElement;
+  const sampleNone = h("span", { class: "hint" });
+  const missingEl = h("div", { class: "missing" });
+  const writeSamples = h("button", { class: "write", title: "Claude writes a mock backend for the app in spark.setup.tsx (a chat in Chats)" });
   const file = h("span", { class: "file" });
   const layoutSel = h("select", { title: "Cases in a row or stacked in a column" }) as HTMLSelectElement;
   for (const [v, n] of [["auto", "Auto"], ["row", "Row"], ["column", "Stacked"]]) layoutSel.append(h("option", { value: v }, n));
@@ -864,6 +894,9 @@ function frameProperties() {
     row("Device", device),
     row("Size", h("label", { class: "dim" }, h("i", {}, "W"), wIn), h("label", { class: "dim" }, h("i", {}, "H"), hIn), rotate),
     row("Ratio", ratio),
+    row("Data", sampleSel, sampleNone),
+    missingEl,
+    h("div", { class: "actions" }, writeSamples),
     h("div", { class: "actions" }, remove),
   );
   const comp = h("div", {}, row("File", file), row("Cases", layoutSel), row("Size", meta.cloneNode() as HTMLElement));
@@ -903,6 +936,12 @@ function frameProperties() {
       .actions:empty { display: none; }
       button.danger { background: transparent; border-color: transparent; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
       button.danger:hover { color: var(--sp-danger); border-color: var(--sp-line-strong); }
+      .hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+      .missing { padding: 2px 0 2px 72px; color: var(--sp-warn); font-size: var(--sp-fs-sm); overflow-wrap: anywhere; }
+      .missing:empty { display: none; }
+      .missing code { font: var(--sp-fs-xs) var(--sp-mono); }
+      button.write { height: auto; min-height: 24px; padding: 3px 8px; font-size: var(--sp-fs-sm); color: var(--sp-text-strong); }
+      button.write:disabled { cursor: default; color: var(--sp-text-dim); }
       `,
     ),
     h("div", { class: "fp" }, h("div", { class: "head" }, kindIcon, name, meta), app, comp),
@@ -938,11 +977,21 @@ function frameProperties() {
     ratio.blur();
   });
   remove.addEventListener("click", () => shown && removeFrame(shown));
+  sampleSel.addEventListener("change", () => {
+    if (shown?.kind === "app" && sampleSel.value) setSample(shown, sampleSel.value);
+    sampleSel.blur();
+  });
+  writeSamples.addEventListener("click", () => {
+    if (samplesWriting) return;
+    samplesWriting = true;
+    import.meta.hot?.send("spark:samples-generate", { missing: shown?.missing ?? [] });
+    if (shown) this_.update(shown);
+  });
   layoutSel.addEventListener("change", () => {
     if (shown?.kind === "component") setLayout(shown, layoutSel.value as Layout);
     layoutSel.blur();
   });
-  return {
+  const this_ = {
     el,
     /** Show the selected frame's values (every apply: cheap, it only sets what changed). */
     update(f: Frame) {
@@ -967,6 +1016,22 @@ function frameProperties() {
         ratio.value = ri < 0 ? "" : String(ri);
         ratio.disabled = rotate.toggleAttribute("disabled", f.preset === "fill");
         remove.style.display = f.id === "app-1" ? "none" : "";
+        const names = f.samples ?? [];
+        const key = names.join("\n");
+        if (sampleSel.dataset.names !== key) {
+          sampleSel.dataset.names = key;
+          sampleSel.replaceChildren(...names.map((n) => h("option", { value: n }, n)));
+        }
+        sampleSel.style.display = names.length ? "" : "none";
+        if (r.activeElement !== sampleSel) sampleSel.value = f.sampleOn ?? "";
+        sampleNone.style.display = names.length ? "none" : "";
+        sampleNone.textContent = f.samples ? "None: the app's own backend calls get no answer" : "Loading…";
+        const missing = f.missing ?? [];
+        missingEl.replaceChildren(...(missing.length ? ["No answer for ", ...missing.flatMap((m, i) => [...(i ? [", "] : []), h("code", {}, m)])] : []));
+        const wanted = !!f.samples && (!names.length || missing.length > 0);
+        writeSamples.parentElement!.style.display = wanted || samplesWriting ? "" : "none";
+        writeSamples.toggleAttribute("disabled", samplesWriting);
+        writeSamples.textContent = samplesWriting ? "Claude is writing sample data…" : names.length ? "Answer them with Claude" : "Write sample data with Claude";
       } else {
         file.textContent = f.file.replace(/^\//, "") || "No case files yet";
         file.title = file.textContent;
@@ -975,6 +1040,7 @@ function frameProperties() {
       }
     },
   };
+  return this_;
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,6 +1240,20 @@ const api: ShellApi = {
   },
   // The panels are always open on the board.
   setDocked() {},
+  samples(win, names, current) {
+    const f = frameOf(win);
+    if (f?.kind !== "app") return;
+    f.samples = names;
+    f.sampleOn = current;
+    f.missing = [];
+    apply();
+  },
+  missing(win, commands) {
+    const f = frameOf(win);
+    if (f?.kind !== "app") return;
+    f.missing = commands;
+    apply();
+  },
   frameProps(win) {
     const f = frameOf(win);
     if (!f || f !== selected()) return null;
@@ -1593,7 +1673,13 @@ import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | nu
 });
 import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   if (e.type === "start") runningChat = e.chat ?? null;
-  else if (e.type === "done" || e.type === "error") runningChat = null;
+  else if (e.type === "done" || e.type === "error") {
+    runningChat = null;
+    if (samplesWriting) {
+      samplesWriting = false;
+      apply();
+    }
+  }
   else return;
   showChats();
   // A task (the Components view's "Write them with Claude", an Ask with nothing selected) has no element
@@ -1601,6 +1687,12 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   if (e.type === "start" && e.chat && chatData.find((c) => c.id === e.chat)?.kind === "task" && chatList.reveal(e.chat)) side.showTab("Chats");
 });
 import.meta.hot?.send("spark:chats-get", {});
+// Claude was busy with another chat: "Write sample data" can be pressed again.
+import.meta.hot?.on("spark:busy", () => {
+  if (!samplesWriting) return;
+  samplesWriting = false;
+  apply();
+});
 
 // ---------------------------------------------------------------------------
 // Start
@@ -1608,7 +1700,7 @@ import.meta.hot?.send("spark:chats-get", {});
 // An old bookmark of the Components view opens the board.
 if (new URL(location.href).searchParams.has("spark")) history_.replaceState(history_.state, "", appUrl());
 const loaded = loadSaved();
-frames = loaded.apps.map((a) => makeFrame("app", a.id, "", { x: a.x, y: a.y, w: a.w, h: a.h, preset: a.preset }));
+frames = loaded.apps.map((a) => makeFrame("app", a.id, "", { x: a.x, y: a.y, w: a.w, h: a.h, preset: a.preset, sample: typeof a.sample === "string" ? a.sample : undefined }));
 selectedId = loaded.selected;
 document.documentElement.append(host);
 syncComponents(caseFiles);

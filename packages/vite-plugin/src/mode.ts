@@ -141,6 +141,10 @@ export type ShellApi = {
   breakdown?(target: unknown): void;
   /** A component frame's content size, so the frame hugs it; `stacked`: its cases are in a column. */
   contentSize(win: Window, w: number, h: number, stacked?: boolean): void;
+  /** An app frame loaded: spark.setup's sample data (sample.ts) and the one it runs on (null: none). */
+  samples?(win: Window, names: string[], current: string | null): void;
+  /** The app's own commands this frame called that no fake answered, so far (sample.ts noAnswer). */
+  missing?(win: Window, commands: string[]): void;
 };
 
 declare global {
@@ -190,6 +194,15 @@ declare global {
   }
 }
 
+/** The app's own commands this page called that nothing answered: the board lists them (ShellApi.missing). */
+const unanswered = new Set<string>();
+/** A call to the app's own backend got no answer: tell the board, once per command. */
+export function noAnswer(cmd: string) {
+  if (unanswered.has(cmd)) return;
+  unanswered.add(cmd);
+  if (mode === "frame") shell?.missing?.(window, [...unanswered]);
+}
+
 /**
  * What the board's title bar does to Spark's window (titlebar.ts), which the
  * app in a frame may not: an app with a title bar of its own (dawg's) would
@@ -224,8 +237,8 @@ export function boardOnly(cmd: string, args: unknown): boolean {
  *   list too, for the board; the app is refused them (`boardOnly`), so it
  *   never closes, moves or resizes Spark.
  * - The app's own commands (`invoke("open_file")`) belong to its Rust side,
- *   which doesn't run inside Spark. spark.setup's fakes answer them when
- *   there are some; otherwise they fail and say why. They're never sent to
+ *   which doesn't run inside Spark. spark.setup's fakes and the frame's
+ *   sample data answer them (sample.ts); otherwise they fail and say why. They're never sent to
  *   Spark, whose own commands can share their names (`app_info`).
  */
 export function borrowTauri() {
@@ -242,7 +255,8 @@ export function borrowTauri() {
         if (fake) return Promise.resolve().then(() => fake(args));
         if (boardOnly(cmd, args)) return Promise.reject(new Error(`Spark's window belongs to Spark: "${cmd}" isn't available to the app inside it.`));
         if (cmd.startsWith("plugin:")) return host.invoke(cmd, args, options);
-        return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, isn't available here.`));
+        noAnswer(cmd);
+        return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, has no answer here. Give the frame sample data (its inspector, or spark.setup.tsx's samples).`));
       },
     },
     transformCallback: {

@@ -31,7 +31,8 @@ Zustand). Release and deploy are ported from dawg and described in
   use the system dialogs, read-only window/event/path calls and the title
   bar's window calls; `mode.ts` `borrowTauri` lends Tauri to the board's
   frames, sending plugin commands to Spark (never the title bar's,
-  `boardOnly`) and the app's own commands to spark.setup fakes or an error.
+  `boardOnly`) and the app's own commands to spark.setup fakes and the
+  frame's sample data (`sample.ts`) or an error.
 - `src`: the UI. Design tokens in `src/tokens.css`, never literals in
   `src/styles.css` or components. `stores/updater-store.ts` checks, downloads
   and installs updates; `components/UpdateIndicator.tsx` is the title-bar
@@ -113,6 +114,13 @@ Zustand). Release and deploy are ported from dawg and described in
   (each case's box contains its absolute/fixed parts and grows to hold them);
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;
+  `sample.ts` is sample data, the app frames' mock backend: spark.setup's
+  `samples` export names states (command → fake, or a function returning
+  them so they keep state), installed by `/@spark/samples` before the app
+  runs; each app frame picks one in its inspector's Data row (reloads it with
+  `?spark-sample=`, saved in the board state), and calls nothing answers are
+  listed there (`noAnswer`, `ShellApi.missing`) with "Write sample data /
+  Answer them with Claude" (`samplesPrompt`);
   Break down into components (a frame's, variant's or element's menu, or the
   Ask box's component button) opens the board's Components tab
   (`components-tab.ts`): pick a depth (regions, + parts, + primitives), Plan

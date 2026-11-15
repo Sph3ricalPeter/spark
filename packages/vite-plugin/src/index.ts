@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { ICON_LIBRARY, tagJsx } from "./tag.ts";
 import type { Change, ChangeLog } from "./changes.ts";
-import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
+import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, samplesPrompt, type AskSelection } from "./prompt.ts";
 import { claude } from "./claude.ts";
 import { chatStore } from "./chats.ts";
 import { stateStore } from "./state-file.ts";
@@ -29,6 +29,7 @@ const MODULES: Record<string, string> = {
   "/@spark/shell": path.join(here, "shell.ts"),
   "/@spark/mode": path.join(here, "mode.ts"),
   "/@spark/gallery": path.join(here, "gallery.ts"),
+  "/@spark/sample": path.join(here, "sample.ts"),
 };
 const ENTRY = "/@spark/entry";
 const ENTRY_ID = "\0spark-entry:";
@@ -45,6 +46,15 @@ const CASES_MODULE = [
 /** One icon library's icons for the icon picker (`?lib=lucide-react`). */
 const ICONS = "/@spark/icons";
 const ICONS_ID = "\0spark-icons:";
+/** An app frame's sample data (sample.ts): spark.setup's fakes, installed before the app runs. */
+const SAMPLES = "/@spark/samples";
+const SAMPLES_ID = "\0spark-samples";
+const SETUP_GLOB = `import.meta.glob(["/spark.setup.{tsx,jsx,ts,js}"], { eager: true })`;
+const SAMPLES_MODULE = [
+  `import { startAppSample } from "/@spark/sample";`,
+  `startAppSample(Object.values(${SETUP_GLOB})[0]);`,
+].join("\n");
+
 /** The icon libraries the project depends on. */
 const ICON_LIBS = "/@spark/icon-libs";
 const ICON_LIBS_ID = "\0spark-icon-libs";
@@ -124,7 +134,10 @@ function entryModule(src: string) {
     `  borrowTauri();`,
     // The Components view (gallery.ts) runs in the frame instead of the app.
     `  const view = mode === "frame" && new URLSearchParams(location.search).get("spark") === "components";`,
-    `  const app = view ? import(${JSON.stringify(`${COMPONENTS}?entry=${encodeURIComponent(src)}`)}) : import(${JSON.stringify(src)});`,
+    // An app frame gets its sample data first (sample.ts); a broken spark.setup never keeps the app from starting.
+    `  const app = view`,
+    `    ? import(${JSON.stringify(`${COMPONENTS}?entry=${encodeURIComponent(src)}`)})`,
+    `    : import(${JSON.stringify(SAMPLES)}).catch((e) => console.error("[spark] spark.setup failed to load:", e)).then(() => import(${JSON.stringify(src)}));`,
     `  app.finally(() => import("/@spark/client"));`,
     `}`,
   ].join("\n");
@@ -148,7 +161,7 @@ async function componentsModule(root: string, entry: string) {
     ...css.map((c) => `import ${JSON.stringify(c)};`),
     `import { mountGallery } from "/@spark/gallery";`,
     `const files = import.meta.glob(["/**/*.spark.{tsx,jsx}", "!**/node_modules/**"], { eager: true });`,
-    `const setup = Object.values(import.meta.glob(["/spark.setup.{tsx,jsx,ts,js}"], { eager: true }))[0];`,
+    `const setup = Object.values(${SETUP_GLOB})[0];`,
     `mountGallery({ React, createRoot, files, setup });`,
     // A new or changed case file re-renders the gallery in place.
     `if (import.meta.hot) import.meta.hot.accept();`,
@@ -182,6 +195,7 @@ export default function spark(): Plugin {
     resolveId(id) {
       if (id in MODULES) return MODULES[id];
       if (id === CASES) return CASES_ID;
+      if (id === SAMPLES) return SAMPLES_ID;
       if (id === ICON_LIBS) return ICON_LIBS_ID;
       if (id === PROJECT) return PROJECT_ID;
       if (id.startsWith(`${ICONS}?lib=`)) {
@@ -195,6 +209,7 @@ export default function spark(): Plugin {
 
     load(id) {
       if (id === CASES_ID) return CASES_MODULE;
+      if (id === SAMPLES_ID) return SAMPLES_MODULE;
       if (id === ICON_LIBS_ID) return `export default ${JSON.stringify(projectIconLibraries(root))};`;
       if (id === PROJECT_ID) return `export const name = ${JSON.stringify(path.basename(root))};`;
       if (id.startsWith(ICONS_ID)) return iconsModule(id.slice(ICONS_ID.length));
@@ -406,6 +421,18 @@ export default function spark(): Plugin {
             topic: { kind: "task", label: "Components" },
             request: "Write the Components view's case files (*.spark.tsx) for this project's components.",
             prompt: () => galleryPrompt(),
+            kind: "ask",
+            ids: [],
+          })
+          .then(busy(client)),
+      );
+      // An app frame's "Write sample data with Claude": spark.setup.tsx's samples (sample.ts), in a chat of its own.
+      server.ws.on("spark:samples-generate", (d: { missing?: unknown }, client) =>
+        ai
+          .ask({
+            topic: { kind: "task", label: "Sample data" },
+            request: "Write sample data for the app's backend calls, so the board's frames can show its screens.",
+            prompt: () => samplesPrompt(Array.isArray(d?.missing) ? d.missing.filter((m): m is string => typeof m === "string").slice(0, 50) : []),
             kind: "ask",
             ids: [],
           })

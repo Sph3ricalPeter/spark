@@ -11,7 +11,8 @@
 // An optional `spark.setup.tsx` in the project root can export a default
 // `Wrapper` component (providers, a theme) that wraps every case, and
 // `tauri`: an object of command name → (args) => result, which fakes the
-// app's own Tauri commands (its Rust side doesn't run inside Spark).
+// app's own Tauri commands (its Rust side doesn't run inside Spark), and
+// `samples`, named sets of such fakes (sample.ts); cases get the first.
 //
 // On the board (shell.ts) each file gets a frame of its own
 // (`?spark=components&file=/src/ui/Meter.spark.tsx`): its cases in a row, no
@@ -24,9 +25,10 @@
 import type * as ReactNS from "react";
 import type { createRoot as CreateRoot } from "react-dom/client";
 import { UI_FONT, installFont } from "./fonts.ts";
+import { installSample, type Setup as SampleSetup } from "./sample.ts";
 
 type Module = Record<string, unknown>;
-type Setup = { default?: ReactNS.ComponentType<{ children: ReactNS.ReactNode }>; tauri?: Record<string, (args: unknown) => unknown> };
+type Setup = SampleSetup & { default?: ReactNS.ComponentType<{ children: ReactNS.ReactNode }> };
 
 export type GalleryInput = {
   React: typeof ReactNS;
@@ -123,33 +125,10 @@ function fileTitle(path: string) {
   return path.split("/").pop()!.replace(/\.spark\.[jt]sx?$/, "");
 }
 
-/**
- * Answer the app's own `invoke` calls from the setup's fakes. Inside Spark's
- * window the frame already has Tauri (mode.ts, borrowTauri), which asks the
- * fakes first; in a plain browser there's none, so fake the rest too.
- */
-function fakeTauri(fakes: Setup["tauri"]) {
-  if (!fakes) return;
-  window.__sparkTauriFakes = fakes;
-  const w = window as unknown as { __TAURI_INTERNALS__?: unknown };
-  if (w.__TAURI_INTERNALS__) return;
-  let next = 1;
-  w.__TAURI_INTERNALS__ = {
-    metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
-    transformCallback: () => next++,
-    invoke: async (cmd: string, args: unknown) => {
-      if (cmd in fakes) return fakes[cmd](args);
-      // Events: listening succeeds and nothing ever arrives.
-      if (cmd.startsWith("plugin:event|")) return next++;
-      throw new Error(`spark.setup: no fake for Tauri command "${cmd}"`);
-    },
-  };
-}
-
 export function mountGallery({ React, createRoot, files, setup }: GalleryInput) {
   const h = React.createElement;
   installFont();
-  fakeTauri(setup?.tauri);
+  installSample(setup, null);
 
   if (!document.querySelector("style[data-spark='gallery']")) {
     const style = document.createElement("style");

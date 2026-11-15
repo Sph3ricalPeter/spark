@@ -194,10 +194,48 @@ every component on its own, with mock data, from \`*.spark.tsx\` files. Write th
 - If a component needs a provider, a router or app-wide CSS that the app's entry (e.g. \`src/main.tsx\`) doesn't import, put it in a
   \`spark.setup.tsx\` at the project root: its default export is a wrapper component \`({ children })\`. If
   components call Tauri's \`invoke\`, export \`tauri\` from it too: an object of command name to a function
-  \`(args) => mockResult\`.
+  \`(args) => mockResult\` (if it already exports \`samples\`, the cases get the first one's fakes as well).
 - Don't change the components themselves.
 
 ${RULES.replace("- Change only what the changes ask for.", "- Only add these files.")}
 
 End with a one-sentence summary of what you wrote.`;
+}
+
+/**
+ * Write the board's sample data (sample.ts): spark.setup.tsx's `samples`, a
+ * mock backend for the app's frontend. `missing`: calls a frame made that no
+ * sample answered.
+ */
+export function samplesPrompt(missing: string[] = []): string {
+  const gap = missing.length
+    ? `\n\nThe board's frames just made these calls that no sample answers: ${missing.map((m) => `\`${m}\``).join(", ")}. Cover them first
+(in every sample where the app can reach them), then fix anything else that's missing.`
+    : "";
+  return `You are working on this app from Spark, a visual editor that runs the app's frontend in frames on a board. Spark
+runs the frontend only: the app's own backend (its Tauri commands, called with \`invoke\`) doesn't run there, so
+screens that wait for data from it stay empty. Give the board a mock backend instead: sample data.${gap}
+
+- Find every backend call the frontend makes: Tauri \`invoke("command", args)\`, usually wrapped in one api module,
+  and what the frontend expects back (its TypeScript types; the Rust commands too if they're in the repo).
+- In \`spark.setup.tsx\` at the project root (create it, or add to it and keep what's there), export \`samples\`: an
+  object of sample name to that state's fakes, command name to \`(args) => result\`. A result can be a value or a
+  promise; a command that fails in that state throws what the real one rejects with. Fakes every sample shares go
+  in the \`tauri\` export.
+- 3 to 5 samples: the states someone designing the app needs to see. The empty start, the usual working state with
+  realistic data, and the cases that change the layout (long names, lots of content, an error, unsaved changes).
+  Short names that say the state ("Empty", "File loaded", "Unsaved edits"). The first is the default.
+- The UI must be usable on them, as far as its screens go: a sample is a function returning its fakes, so they can
+  keep state. Opening something returns it loaded, an edit changes what later calls return, undo steps back, saving
+  clears the unsaved flag. Plain TypeScript in the setup file; mock only what the screens show, not the real
+  backend's work (no audio, no real files: build binary results such as an ArrayBuffer waveform in code).
+- If the app asks for something at startup (a file it was opened with, the last session), the loaded samples answer
+  that, so the frame opens straight into their state.
+- Don't fake \`plugin:\` commands (dialogs, windows): Spark provides the real ones. Any path a dialog returns is fine
+  for the fakes to "open".
+- Don't change the app's own code.
+
+${RULES.replace("- Change only what the changes ask for.", "- Only add to spark.setup.tsx.")}
+
+End with a one-sentence summary: the samples and what works on them.`;
 }

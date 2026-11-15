@@ -6,7 +6,7 @@
 // Remembered UI belongs here, not in localStorage: Spark opens each project
 // on a new port, and localStorage is per origin, so it started empty every
 // time. Keys, and what they hold:
-//   board      shell.ts: app frames (id, x, y, w, h, preset), moved component
+//   board      shell.ts: app frames (id, x, y, w, h, preset, sample), moved component
 //              frames, row/stacked layouts, the selected frame, the camera
 //   panel-open client.ts: the inspector is docked open
 //   sections   client.ts: which inspector sections are unfolded

@@ -51,6 +51,14 @@ body {
   gap: var(--gap-1);
   padding: var(--gap-3);
 }
+.tracks .empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-2);
+  color: var(--text-dim);
+}
 .track {
   display: flex;
   align-items: center;
