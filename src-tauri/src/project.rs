@@ -70,7 +70,7 @@ struct Running {
 pub struct Projects {
     /// The running dev server(s), by project folder (one at a time, see `start_project`).
     running: Mutex<HashMap<PathBuf, Running>>,
-    /// The launcher's URL, as the window first loaded it.
+    /// The launcher's URL, as the window had it before showing a project.
     home: Mutex<Option<Url>>,
     /// The window's title on the launcher ("spark" or "spark dev").
     title: Mutex<String>,
@@ -422,6 +422,10 @@ pub async fn show_project(app: AppHandle, folder: String) -> Result<(), String> 
     let window = app
         .get_webview_window(MAIN)
         .ok_or("Spark's window is gone.")?;
+    // Where home is, read off the launcher while it's showing.
+    if let Some(here) = window.url().ok().filter(is_launcher) {
+        *projects.home.lock().unwrap() = Some(here);
+    }
     let base = projects.title.lock().unwrap().clone();
     let _ = window.set_title(&project_title(&name_of(&path), &base));
     window
@@ -435,19 +439,50 @@ pub fn go_home(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN) else {
         return;
     };
-    let Some(home) = projects.home.lock().unwrap().clone() else {
-        return;
-    };
+    let home = projects.home.lock().unwrap().clone().unwrap_or_else(|| {
+        let https = app
+            .config()
+            .app
+            .windows
+            .first()
+            .is_some_and(|w| w.use_https_scheme);
+        app_url(app.config().build.dev_url.as_ref(), tauri::is_dev(), https)
+    });
     let _ = window.set_title(&projects.title.lock().unwrap());
     let _ = window.navigate(home);
 }
 
-/// At startup: where home is, the launcher's title, the folder Spark was
-/// launched with, and the board's home button.
+/// Is this the launcher's page? Not a project's dev server (127.0.0.1), and
+/// not the blank page a webview has before it loads anything.
+fn is_launcher(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "tauri") && url.host_str() != Some("127.0.0.1")
+}
+
+/// Spark's own page, as Tauri serves it: the dev server under `tauri dev`,
+/// otherwise its custom protocol (`http://tauri.localhost/` on Windows).
+fn app_url(dev_url: Option<&Url>, dev: bool, https: bool) -> Url {
+    if let Some(url) = dev_url.filter(|_| dev) {
+        return url.clone();
+    }
+    let url = if cfg!(windows) {
+        if https {
+            "https://tauri.localhost/"
+        } else {
+            "http://tauri.localhost/"
+        }
+    } else {
+        "tauri://localhost/"
+    };
+    Url::parse(url).unwrap()
+}
+
+/// At startup: the launcher's title, the folder Spark was launched with, and
+/// the board's home button. Not where home is: the window may not have
+/// loaded the launcher yet (its URL is still `about:blank`), and going "home"
+/// there left a blank window. `show_project` reads it off the launcher.
 pub fn init(app: &AppHandle) {
     let projects = app.state::<Projects>();
     if let Some(window) = app.get_webview_window(MAIN) {
-        *projects.home.lock().unwrap() = window.url().ok();
         *projects.title.lock().unwrap() = window.title().unwrap_or_else(|_| "spark".into());
     }
     *projects.pending.lock().unwrap() = folder_arg(&std::env::args().collect::<Vec<_>>());
@@ -491,6 +526,21 @@ mod tests {
         let c = wrapper_config(Path::new(r"C:\Users\me\dawg"));
         assert!(c.contains(r#"const ROOT = "C:/Users/me/dawg";"#));
         assert!(c.contains(r#"import spark from "./plugin/src/index.ts";"#));
+    }
+
+    #[test]
+    fn home_is_the_launcher_never_a_blank_page() {
+        let url = |u: &str| Url::parse(u).unwrap();
+        assert!(is_launcher(&url("http://tauri.localhost/")));
+        assert!(is_launcher(&url("tauri://localhost/")));
+        assert!(is_launcher(&url("http://localhost:5178/")));
+        assert!(!is_launcher(&url("about:blank")));
+        assert!(!is_launcher(&url("http://127.0.0.1:54321/")));
+        let dev = url("http://localhost:5178/");
+        assert_eq!(app_url(Some(&dev), true, false), dev);
+        let built = app_url(Some(&dev), false, false);
+        assert!(is_launcher(&built) && built != dev);
+        assert!(is_launcher(&app_url(None, true, false)));
     }
 
     #[test]
