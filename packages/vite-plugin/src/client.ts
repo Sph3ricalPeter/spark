@@ -466,7 +466,7 @@ const STYLE = `${THEME}
       background: var(--tag, var(--sp-accent)); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
     }
     .panel {
-      position: fixed; top: 0; right: 0; bottom: 0; width: ${PANEL_W}px;
+      position: fixed; top: 0; right: 0; bottom: 0; width: var(--sp-panel-w, ${PANEL_W}px);
       display: none; flex-direction: column; pointer-events: auto;
       background: var(--sp-bg); color: var(--sp-text); border-left: 1px solid var(--sp-line);
       font: var(--sp-fs-md)/1.45 var(--sp-font);

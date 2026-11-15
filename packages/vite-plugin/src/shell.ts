@@ -23,11 +23,13 @@ import { installFont } from "./fonts.ts";
 import { THEME, icon } from "./theme.ts";
 import { h } from "./fields.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
-import { chatsTab, sidebar, SIDEBAR_STYLE } from "./sidebar.ts";
+import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
+import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
 import { getState, setState } from "./state.ts";
 
 const BAR_H = 40;
+/** The inspector's default width; dragging its left edge changes it (grip.ts). */
 const PANEL_W = 340;
 const PAD = 48;
 const GAP = 80;
@@ -164,9 +166,15 @@ root.append(
       font: var(--sp-fs-md)/1 var(--sp-font); user-select: none;
       overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
     }
-    .docked .bar, .docked .canvas { right: ${PANEL_W}px; }
+    .docked .bar, .docked .canvas { right: var(--sp-panel-w, ${PANEL_W}px); }
     .sidebar { top: ${BAR_H}px; }
     ${SIDEBAR_STYLE}
+    ${GRIP_STYLE}
+    .side-grip { top: ${BAR_H}px; left: var(--sp-side-w, ${SIDEBAR_W}px); z-index: 2; }
+    .side-open .side-grip { display: block; }
+    /* Over the panels (mounted after it would cover it: register inserts them before it). */
+    .panel-grip { position: fixed; left: calc(100% - var(--sp-panel-w, ${PANEL_W}px)); z-index: 2147483647; }
+    .panel-grip.on { display: block; }
     button, select, input {
       font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
       border-radius: var(--sp-r-sm); height: 26px; padding: 0 8px; flex: none;
@@ -303,6 +311,7 @@ const sizeControls = [presetSel, prevBtn, nextBtn, wIn, hIn, rotateBtn, ratioSel
 // The left sidebar: Chats (sidebar.ts). Opening it gives the canvas less room.
 const side = sidebar((open) => {
   shellEl.classList.toggle("side-open", open);
+  fitPanels();
   apply();
 });
 const bar = h(
@@ -354,7 +363,35 @@ const stage = h("div", { class: "stage" });
 const shield = h("div", { class: "shield" });
 const canvas = h("div", { class: "canvas" }, stage, shield);
 const shellEl = h("div", { class: "shell" }, bar, side.el, canvas);
-root.append(shellEl);
+
+// Both side panels resize from their inner edge (grip.ts); the canvas keeps
+// at least MIN_CANVAS, and its ResizeObserver re-lays out the frames.
+const sizing = (on: boolean) => {
+  shellEl.classList.toggle("moving", on);
+  shellEl.classList.toggle("sizing", on);
+};
+const sideEdge = edgeGrip(
+  host,
+  { key: "spark:sidebar-w", prop: "--sp-side-w", def: SIDEBAR_W, min: 200, max: 560, dir: 1 },
+  () => window.innerWidth - (docked ? panelEdge.width() : 0) - MIN_CANVAS,
+  sizing,
+);
+const panelEdge = edgeGrip(
+  host,
+  { key: "spark:panel-w", prop: "--sp-panel-w", def: PANEL_W, min: 280, max: 640, dir: -1 },
+  () => window.innerWidth - (side.isOpen() ? sideEdge.width() : 0) - MIN_CANVAS,
+  sizing,
+);
+sideEdge.grip.classList.add("side-grip");
+panelEdge.grip.classList.add("panel-grip");
+shellEl.append(sideEdge.grip);
+/** Fit both widths to the window and to each other (a panel opened or closed, the window resized). */
+function fitPanels() {
+  sideEdge.show();
+  panelEdge.show();
+}
+window.addEventListener("resize", fitPanels);
+root.append(shellEl, panelEdge.grip);
 
 // ---------------------------------------------------------------------------
 // Frames
@@ -637,6 +674,7 @@ function apply() {
     } else f.name.textContent = fileTitle(f.file);
   }
   shellEl.classList.toggle("docked", docked);
+  panelEdge.grip.classList.toggle("on", docked);
   showPanels();
   zoomLabel.textContent = `${Math.round(z * 100)}%`;
   if (started && JSON.stringify({ z, x: Math.round(px), y: Math.round(py) }) !== savedCamera) save(CAMERA_SAVE_DELAY);
@@ -948,7 +986,7 @@ const api: ShellApi = {
       }
     }
     clients.set(hooks.win, hooks);
-    root.append(hooks.panel);
+    root.insertBefore(hooks.panel, panelEdge.grip);
     if (hooks.changes) changesTab.append(hooks.changes);
     if (frameOf(hooks.win) === selected()) activate(hooks.win);
     else showPanels();
@@ -971,6 +1009,7 @@ const api: ShellApi = {
   setDocked(v) {
     if (v === docked) return;
     docked = v;
+    fitPanels();
     for (const hooks of clients.values()) hooks.setOpen(v);
     apply();
   },
