@@ -13,16 +13,17 @@ import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
 import { getState, setState } from "./state.ts";
 
+/** The default width; dragging its right edge changes it (grip.ts). */
 export const SIDEBAR_W = 280;
 
 export const SIDEBAR_STYLE = `
   .sidebar {
-    position: absolute; left: 0; bottom: 0; width: ${SIDEBAR_W}px; display: none; flex-direction: column;
+    position: absolute; left: 0; bottom: 0; width: var(--sp-side-w, ${SIDEBAR_W}px); display: none; flex-direction: column;
     background: var(--sp-bg); color: var(--sp-text); border-right: 1px solid var(--sp-line);
     font: var(--sp-fs-md)/1.45 var(--sp-font);
   }
   .side-open .sidebar { display: flex; }
-  .side-open .canvas { left: ${SIDEBAR_W}px; }
+  .side-open .canvas { left: var(--sp-side-w, ${SIDEBAR_W}px); }
   .side-head { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--sp-line); flex: none; }
   .side-head .title { padding: 0 6px; color: var(--sp-text-strong); font-weight: 600; }
   .side-head .grow { flex: 1; }

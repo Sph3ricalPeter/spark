@@ -486,7 +486,7 @@ const STYLE = `${THEME}
     .dims span + span { padding-left: 6px; border-left: 1px solid color-mix(in srgb, var(--sp-text-strong) 35%, transparent); }
     .dims .icon { opacity: .8; }
     .panel {
-      position: fixed; top: 0; right: 0; bottom: 0; width: ${PANEL_W}px;
+      position: fixed; top: 0; right: 0; bottom: 0; width: var(--sp-panel-w, ${PANEL_W}px);
       display: none; flex-direction: column; pointer-events: auto;
       background: var(--sp-bg); color: var(--sp-text); border-left: 1px solid var(--sp-line);
       font: var(--sp-fs-md)/1.45 var(--sp-font);
