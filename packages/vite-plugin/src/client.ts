@@ -857,8 +857,13 @@ const makeBtn = h(
   "button",
   {
     class: "ib",
-    title: "Make component: have Claude extract this into its own component",
+    title: shell?.breakdown ? "Break down into components: plan them with Claude, then build" : "Make component: have Claude extract this into its own component",
     click: () => {
+      const el = askElement();
+      if (el && shell?.breakdown) {
+        breakdown(el);
+        return;
+      }
       askInput.value = "Extract this into its own component called ";
       sendBtn.classList.add("ready");
       askInput.focus();
@@ -2064,8 +2069,9 @@ function syncAsk() {
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   const t = targetOf(el);
   const n = t ? { ...targetName(t), comp: true } : askName(el, path);
-  // Already a component (its instance's root element), or a frame or variant: there's nothing to extract.
-  makeBtn.style.display = n.comp ? "none" : "";
+  // Already a component (its instance's root element), or a frame or variant: there's nothing to extract,
+  // but on the board they can still be broken down further.
+  makeBtn.style.display = n.comp && !shell?.breakdown ? "none" : "";
   const r = rectOf(el);
   askTag.style.setProperty("--role", ROLE_COLOR[roleOf(el)]);
   askTag.title = t
@@ -3125,6 +3131,64 @@ function styleShortcut(e: KeyboardEvent): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Break down into components (the board's Components tab, components-tab.ts)
+
+/** The tagged elements under `scope` as an indented outline: tag and class, where it's written, which component writes it. */
+function outlineOf(scope: Element): string {
+  const lines: string[] = [];
+  const walk = (node: Element, depth: number) => {
+    for (const child of Array.from(node.children)) {
+      if (lines.length >= 1500) return;
+      const src = child.getAttribute("data-spark-src");
+      if (!src) {
+        walk(child, depth);
+        continue;
+      }
+      const cls = Array.from(child.classList).slice(0, 3).map((c) => `.${c}`).join("");
+      const comp = child.getAttribute("data-spark-comp");
+      const own = Array.from(child.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim());
+      const text = own ? ` "${(child.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40)}"` : "";
+      lines.push(`${"  ".repeat(depth)}<${child.tagName.toLowerCase()}${cls}> ${src}${comp ? ` (${comp})` : ""}${text}`);
+      if (depth < 40) walk(child, depth + 1);
+    }
+  };
+  const top = scope.getAttribute("data-spark-src");
+  if (top) {
+    lines.push(`<${scope.tagName.toLowerCase()}> ${top}${scope.getAttribute("data-spark-comp") ? ` (${scope.getAttribute("data-spark-comp")})` : ""}`);
+    walk(scope, 1);
+  } else walk(scope, 0);
+  return lines.join("\n");
+}
+
+/** What Break down works on for `el`: a frame (the whole app, or a component frame), a variant box, or an element. */
+function breakdownTarget(el: Element) {
+  const t = targetOf(el);
+  const caseFile = inComponentFrame ? (new URLSearchParams(location.search).get("file") ?? "").replace(/^\//, "") || null : null;
+  if (t?.kind === "frame") {
+    return inComponentFrame
+      ? { label: frameTitle(), kind: "case" as const, file: caseFile, comp: frameComponent, outline: outlineOf(document.body) }
+      : { label: `${frameTitle()} frame`, kind: "frame" as const, outline: outlineOf(document.body) };
+  }
+  if (t?.kind === "case") {
+    const n = targetName(t);
+    return { label: `${n.name} in ${n.owner}`, kind: "case" as const, file: t.file.replace(/^\//, ""), comp: n.owner, outline: outlineOf(el) };
+  }
+  return {
+    label: askLabel(el, instancePath(el)),
+    kind: "element" as const,
+    src: el.getAttribute("data-spark-src"),
+    comp: el.getAttribute("data-spark-comp"),
+    file: caseFile,
+    outline: outlineOf(el),
+  };
+}
+
+/** Open the board's Components tab on `el`. */
+function breakdown(el: Element) {
+  shell?.breakdown?.(breakdownTarget(el));
+}
+
 /** The menu for `el` (selected first), at a point in the menu's document. */
 function showMenuFor(el: Element, at: { x: number; y: number }) {
   if (editing) stopTextEdit(true);
@@ -3133,10 +3197,11 @@ function showMenuFor(el: Element, at: { x: number; y: number }) {
   const t = targetOf(el);
   const many = sel.length > 1;
   const ask: MenuEntry = { label: many ? `Ask Claude about these ${sel.length}…` : "Ask Claude…", run: askAbout };
+  const breakDown: MenuEntry = !many && !!shell?.breakdown && { label: "Break down into components…", run: () => breakdown(el) };
   const parent = parentOf(el);
   const up: MenuEntry = { label: parent === document.documentElement ? "Select frame" : "Select parent", hint: "↑", disabled: !parent, run: () => parent && select(parent) };
   if (t?.kind === "frame") {
-    openMenu(at.x, at.y, [ask, "-", ...(shell?.frameMenu?.(window) ?? [])], menuDoc);
+    openMenu(at.x, at.y, [ask, breakDown, "-", ...(shell?.frameMenu?.(window) ?? [])], menuDoc);
     return;
   }
   if (t?.kind === "case") {
@@ -3146,6 +3211,7 @@ function showMenuFor(el: Element, at: { x: number; y: number }) {
       at.y,
       [
         ask,
+        breakDown,
         "-",
         up,
         name && {
@@ -3170,6 +3236,7 @@ function showMenuFor(el: Element, at: { x: number; y: number }) {
     at.y,
     [
       ask,
+      breakDown,
       !many && textual && { label: "Edit text", hint: "Double-click", run: () => startTextEdit(el as HTMLElement) },
       "-",
       !many && up,
@@ -3423,6 +3490,7 @@ if (shell) {
       showMenuFor(t, { x, y });
     },
     hasSource: (src) => !!findSource(src),
+    breakdownTarget: () => breakdownTarget(document.documentElement),
     selectSource: (src) => {
       const el = findSource(src);
       return el ? selectLayer(el) : null;

@@ -38,7 +38,9 @@ export type Job = {
   /** The pending changes Claude may mark applied (APPLIED <id>). */
   ids: string[];
   /** Claude's reply as the chat shows it; by default its summary. */
-  reply?: (done: Done) => string;
+  reply?: (done: Done) => string | Promise<string>;
+  /** Claude's reply is in the chat: what comes next (another run may start from here). */
+  then?: (done: Done) => void;
 };
 
 export function claude(opts: {
@@ -78,14 +80,17 @@ export function claude(opts: {
             if (e.model) c.model = e.model;
           });
         } else if (e.type === "done") {
-          const text = job.reply?.(e) ?? (e.summary || (e.ok ? "Done." : "Claude stopped."));
-          void chats.update(id, (c) => {
-            if (e.sessionId) c.sessionId = e.sessionId;
-            if (e.model) c.model = e.model;
-            c.messages.push({ role: "claude", text, ok: e.ok, at: Date.now() });
-          });
           const done = e.applied.filter((x) => job.ids.includes(x));
           if (done.length) opts.applied(done);
+          void (async () => {
+            const text = (await job.reply?.(e)) ?? (e.summary || (e.ok ? "Done." : "Claude stopped."));
+            await chats.update(id, (c) => {
+              if (e.sessionId) c.sessionId = e.sessionId;
+              if (e.model) c.model = e.model;
+              c.messages.push({ role: "claude", text, ok: e.ok, at: Date.now() });
+            });
+            job.then?.(e);
+          })();
         }
       },
     });

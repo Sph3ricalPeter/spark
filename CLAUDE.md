@@ -86,7 +86,7 @@ Zustand). Release and deploy are ported from dawg and described in
   the frame or nothing is selected. Its left sidebar (`sidebar.ts`) has the
   Layers (`layers.ts`: every frame and its element tree, Figma style, in
   step with the canvas selection both ways; the client names the tree
-  through `ClientHooks.layers`), Chats and Changes tabs (a tab strip at its top); chats are never
+  through `ClientHooks.layers`), Components (Break down, below), Chats and Changes tabs (a tab strip at its top); chats are never
   deleted: "Resolve" archives one into the Chats tab's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
@@ -109,6 +109,16 @@ Zustand). Release and deploy are ported from dawg and described in
   (each case's box contains its absolute/fixed parts and grows to hold them);
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;
+  Break down into components (a frame's, variant's or element's menu, or the
+  Ask box's component button) opens the board's Components tab
+  (`components-tab.ts`): pick a depth (regions, + parts, + primitives), Plan
+  (Claude writes `.spark/components.plan.json`, merged into the versioned
+  `.spark/components.json`, the project's record of its components:
+  exists / planned / built / skipped), untick or rename, hover a row to outline
+  its elements, then Build: the ticked ones, one chat per area, Primitives first,
+  marked built from `APPLIED <id>` lines. `breakdown.ts` has the rulebook
+  (`RULES`; a project adds its own in `spark.rules.md`, which wins), the
+  prompts and the record; re-running continues from what's recorded;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
   shadow root's :host: Inter via `fonts.ts`, served from `assets/fonts`,
   a 4-step font scale, 3 radii, a spacing scale, colors) plus inlined Lucide

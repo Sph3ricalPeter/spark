@@ -187,6 +187,10 @@ every component on its own, with mock data, from \`*.spark.tsx\` files. Write th
   renders it alone with realistic props, for example
   \`export const Primary = () => <Button variant="primary">Export</Button>;\`
   Cover its meaningful variants and states in 2 to 5 cases. Export nothing else from the file.
+  A case earns its place only when something you'd design differs (color, size, layout, which elements show).
+  Cases that only differ in a text or number the component displays (0.0 dB, +6.0 dB, -12.5 dB) are ONE case with
+  realistic sample data, not several. Render the real component, never a copy of its markup; a wrapper is only for
+  the context it sits in, named \`In<Parent>\`.
 - If a component needs a provider, a router or app-wide CSS that the app's entry (e.g. \`src/main.tsx\`) doesn't import, put it in a
   \`spark.setup.tsx\` at the project root: its default export is a wrapper component \`({ children })\`. If
   components call Tauri's \`invoke\`, export \`tauri\` from it too: an object of command name to a function

@@ -74,6 +74,8 @@ export type ClientHooks = {
   hasSource?(src: string): boolean;
   /** Select that element; its box in the frame, or null when it's not here. */
   selectSource?(src: string): { x: number; y: number; w: number; h: number } | null;
+  /** The whole frame as a Break down target (components-tab.ts BreakdownTarget). */
+  breakdownTarget?(): unknown;
 };
 
 /**
@@ -135,6 +137,8 @@ export type ShellApi = {
   hasSource?(src: string, from: Window): boolean;
   /** Go there: select that frame and the element, in view. */
   goToSource?(src: string, from: Window): void;
+  /** Break down into components: the board's Components tab, on this target (components-tab.ts BreakdownTarget). */
+  breakdown?(target: unknown): void;
   /** A component frame's content size, so the frame hugs it; `stacked`: its cases are in a column. */
   contentSize(win: Window, w: number, h: number, stacked?: boolean): void;
 };

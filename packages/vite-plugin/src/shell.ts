@@ -37,6 +37,7 @@ import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
+import { componentsTab, COMPONENTS_STYLE, type BreakdownTarget, type PlanComponent } from "./components-tab.ts";
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
 import { name as projectName } from "/@spark/project";
@@ -194,6 +195,10 @@ root.append(
     .sidebar { top: ${BAR_H}px; }
     ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
+    ${COMPONENTS_STYLE}
+    /* Break down: the elements a Components row stands for, outlined on the board. */
+    .bd-hl { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 50; }
+    .bd-hl > div { position: absolute; box-sizing: border-box; border: calc(2px / var(--z, 1)) solid var(--sp-component); background: color-mix(in srgb, var(--sp-component) 14%, transparent); border-radius: 2px; }
     ${GRIP_STYLE}
     ${TITLE_BAR_STYLE}
     /* The right columns' backgrounds, under the selected frame's inspector and chat (they mount over them, mode.ts). */
@@ -384,6 +389,9 @@ function blurChrome() {
 }
 
 const stage = h("div", { class: "stage" });
+/** Break down: outlines of the elements a Components row stands for (highlightCovers). */
+const coverLayer = h("div", { class: "bd-hl" });
+stage.append(coverLayer);
 const shield = h("div", { class: "shield" });
 const canvas = h("div", { class: "canvas" }, stage, shield);
 const shellEl = h(
@@ -1218,6 +1226,10 @@ const api: ShellApi = {
     const f = frameOf(win);
     return f ? frameMenuOf(f) : [];
   },
+  breakdown(target) {
+    parts.setTarget(target as BreakdownTarget);
+    side.showTab("Components");
+  },
   hasSource(src, from) {
     return !!sourceFrame(src, from);
   },
@@ -1485,6 +1497,83 @@ const layers = layersTab({
   shown: () => side.shows("Layers"),
 });
 side.addTab("Layers", layers.el, "layers", "Every frame and the elements in it", () => layers.draw());
+// Components: Break down into components (components-tab.ts, breakdown.ts).
+/** The elements written at these places ("src/App.tsx:30" or with a column), in one frame. */
+function coveredIn(win: Window, covers: string[]): Element[] {
+  const out: Element[] = [];
+  for (const raw of covers) {
+    const m = raw.replace(/^\/+/, "").match(/^(.+?):(\d+)(?::(\d+))?$/);
+    if (!m) continue;
+    const sel = m[3] ? `[data-spark-src="${CSS.escape(`${m[1]}:${m[2]}:${m[3]}`)}"]` : `[data-spark-src^="${CSS.escape(`${m[1]}:${m[2]}:`)}"]`;
+    try {
+      out.push(...Array.from(win.document.querySelectorAll(sel)));
+    } catch {
+      // Reloading.
+    }
+  }
+  return out;
+}
+function highlightCovers(covers: string[]) {
+  const boxes: HTMLElement[] = [];
+  for (const f of covers.length ? frames : []) {
+    const win = f.iframe.contentWindow;
+    if (!win) continue;
+    for (const el of coveredIn(win, covers).slice(0, 60)) {
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      // Clipped to the frame: what scrolled out of it isn't drawn outside it.
+      const x0 = Math.max(0, r.left), y0 = Math.max(0, r.top);
+      const x1 = Math.min(f.iframe.clientWidth, r.right), y1 = Math.min(f.iframe.clientHeight, r.bottom);
+      if (x1 <= x0 || y1 <= y0) continue;
+      const b = h("div");
+      b.style.cssText = `left: ${f.x + f.iframe.offsetLeft + x0}px; top: ${f.y + f.iframe.offsetTop + y0}px; width: ${x1 - x0}px; height: ${y1 - y0}px;`;
+      boxes.push(b);
+    }
+  }
+  coverLayer.replaceChildren(...boxes);
+}
+/** Select the first element a row stands for, app frames first, in view. */
+function revealCovers(covers: string[]) {
+  const order = [...frames.filter((f) => f.kind === "app"), ...frames.filter((f) => f.kind !== "app")];
+  for (const f of order) {
+    const win = f.iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    const el = win && hooks?.selectLayer ? coveredIn(win, covers)[0] : undefined;
+    if (!el || !hooks?.selectLayer) continue;
+    selectFrame(f);
+    if (!edit) switchMode(true);
+    const box = hooks.selectLayer(el);
+    if (box) bringIntoView(f, box);
+    return;
+  }
+}
+const parts = componentsTab({
+  send: (event, data) => import.meta.hot?.send(event, data),
+  highlight: highlightCovers,
+  reveal: revealCovers,
+  wholeApp: () => {
+    for (const f of frames) {
+      const win = f.iframe.contentWindow;
+      const t = f.kind === "app" && win ? clients.get(win)?.breakdownTarget?.() : null;
+      if (t) return t as BreakdownTarget;
+    }
+    return null;
+  },
+});
+side.addTab("Components", parts.el, "component", "Break down into components: plan them with Claude, then build");
+let buildingArea: string | null = null;
+const showBusy = () => parts.setBusy(runningChat !== null || buildingArea !== null, buildingArea);
+import.meta.hot?.on("spark:components", (d: { manifest?: { components?: PlanComponent[] }; why?: string }) => {
+  parts.update(d.manifest?.components ?? []);
+  side.setCount("Components", parts.todo());
+  // A plan just came in (its chat had the tab while Claude worked): the plan is what to look at now.
+  if (d.why === "plan") side.showTab("Components");
+});
+import.meta.hot?.on("spark:components-building", (d: { area?: string | null }) => {
+  buildingArea = d.area ?? null;
+  showBusy();
+});
+import.meta.hot?.send("spark:components-get", {});
 const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
 side.addTab("Chats", chatList.el, "message-circle", "Chats with Claude, on every element");
 // Changes: the active frame's change list and Implement changes (each client mounts its own; showPanels picks).
@@ -1495,6 +1584,7 @@ let runningChat: string | null = null;
 const showChats = () => {
   chatList.update(chatData as Parameters<typeof chatList.update>[0], runningChat);
   side.setCount("Chats", chatList.openCount());
+  showBusy();
 };
 import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | null }) => {
   chatData = d.chats;
