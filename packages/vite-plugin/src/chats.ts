@@ -5,6 +5,8 @@
 // one element (its key, see client.ts chatKey). An element can have many
 // chats over time; the open one is the one the popup shows, and "New chat"
 // closes it (it stays in the Chats list, and can be opened again).
+// "Resolve" archives a chat: it leaves the Chats list for the Resolved view,
+// where it can be read and reopened. Chats are never deleted.
 //
 // chats.json is read by people and tools, so fields are only ever added.
 // Version 1 (a map of element key to one chat) is read and upgraded.
@@ -29,6 +31,8 @@ export type Chat = {
   updated: number;
   /** "New chat" closed it: it no longer shows in the element's popup. */
   closed?: boolean;
+  /** "Resolve" archived it: it's only in the Chats tab's Resolved view (and closed) until it's reopened. */
+  resolved?: boolean;
   /** A chat with no element (key `<kind>:<id>`): "implement" is an Implement changes run, "task" any other run
    * (the Components view's "Write them with Claude", an Ask with nothing selected). Absent: an element's chat. */
   kind?: ChatKind;
@@ -124,19 +128,24 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
       change((f) => {
         for (const c of f.chats) if (c.key === resolve(key)) c.closed = true;
       }),
-    /** Open a chat from the list again: it becomes its element's open chat. */
+    /** Open a chat from the list again (or a resolved one, back into the list): it becomes its element's open chat. */
     reopen: (id: string) =>
       change((f) => {
         const c = f.chats.find((x) => x.id === id);
         if (!c) return;
         for (const x of f.chats) if (x.key === c.key && x !== c) x.closed = true;
         c.closed = false;
+        delete c.resolved;
         // Last among its element's chats, so it's the open one.
         f.chats = [...f.chats.filter((x) => x !== c), c];
       }),
-    remove: (id: string) =>
+    /** "Resolve": archive a chat. It closes, leaves the Chats list for the Resolved view, and keeps everything. */
+    resolve: (id: string) =>
       change((f) => {
-        f.chats = f.chats.filter((c) => c.id !== id);
+        const c = f.chats.find((x) => x.id === id);
+        if (!c) return;
+        c.closed = true;
+        c.resolved = true;
       }),
     /** An element's key changed (Claude's edit moved its lines): its chats follow. */
     move: (from: string, to: string) =>

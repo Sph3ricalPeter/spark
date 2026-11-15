@@ -53,7 +53,8 @@ Zustand). Release and deploy are ported from dawg and described in
   draggable by its title; the board keeps the clients in step (one mode,
   the selected frame's panel, one change list and undo history), and view
   mode focuses the selected frame. Its left sidebar (`sidebar.ts`) has the
-  Chats and Changes tabs (opened from their bar buttons; the head only names the tab); the change list and
+  Chats and Changes tabs (opened from their bar buttons; the head only names the tab); chats are never
+  deleted: "Resolve" archives one into the Chats tab's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
   `claude.ts` is the one way Spark runs Claude: every run (Implement
