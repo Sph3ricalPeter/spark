@@ -6,7 +6,8 @@
 // Alt+S opens or closes the panel. View mode (the default) leaves the app
 // alone. Edit mode (the Edit toggle, Tab, or Alt+E):
 // - hover highlights, click selects (the app doesn't see the click),
-//   Arrow Up selects the parent; Esc steps out one level at a time
+//   Arrow Up selects the parent (up to the variant box and the frame itself);
+//   Esc steps out one level at a time
 //   (popover, text edit, selection), and from nothing selected back to view;
 // - the selection has handles: drag them to resize (Shift keeps the ratio
 //   on a corner, Alt drags slower; sizes stay whole pixels);
@@ -42,6 +43,7 @@ import {
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { closePopover, colorField, colorTokens, displayColor, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
+import { words as caseTitle } from "./gallery.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { shell } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
@@ -465,6 +467,9 @@ const STYLE = `${THEME}
     .bm.padding { border-color: var(--sp-padding); }
     .hover { outline: 1px dashed var(--hov, var(--sp-accent)); background: color-mix(in srgb, var(--hov, var(--sp-accent)) 8%, transparent); }
     .selected { outline: 2px solid var(--sel, var(--sp-accent)); }
+    /* The frame itself: drawn inside its edges, and hovering it doesn't tint the whole page. */
+    .box.inset.hover { outline-offset: -1px; background: none; }
+    .box.inset.selected { outline-offset: -2px; }
     .tag {
       position: fixed; display: none; pointer-events: none;
       font: 600 var(--sp-fs-sm)/1 var(--sp-font);
@@ -950,10 +955,90 @@ function escapeStep(): boolean {
   return false;
 }
 
-/** The nearest element we know the source of. */
+/** The nearest element we know the source of; else the variant box it's in, else (on the page's own backdrop) the frame. */
 function pickable(node: EventTarget | null): Element | null {
   if (!(node instanceof Element) || host.contains(node)) return null;
-  return node.closest("[data-spark-src]");
+  return node.closest("[data-spark-src]") ?? node.closest("[data-spark-case]") ?? (isBackdrop(node) ? document.documentElement : null);
+}
+
+// ---------------------------------------------------------------------------
+// Board targets: the frame itself, and a component frame's variant boxes
+//
+// Besides the app's elements, the selection can be the whole frame (its page,
+// document.documentElement) or, in a component frame, one variant box (a
+// case, gallery.ts). They aren't written in the app's source, so they have no
+// style fields, handles, drag or delete: they're there to Ask Claude about,
+// like any element, with chats of their own.
+
+type Target = { kind: "frame" } | { kind: "case"; name: string; file: string };
+
+/** This frame on the board ("app-1", "c:/src/ui/Meter.spark.tsx"), or "page" outside the board. */
+const frameId = (shell && window.frameElement?.getAttribute("data-spark-frame")) || "page";
+
+/** The frame or variant box `el` is, or null for an element of the app. */
+function targetOf(el: Element | null): Target | null {
+  if (!el) return null;
+  if (el === document.documentElement) return { kind: "frame" };
+  const name = el.getAttribute("data-spark-case");
+  return name === null ? null : { kind: "case", name, file: el.getAttribute("data-spark-case-file") ?? "" };
+}
+
+/** The page around the app (html, body, a mount point like #root): what an empty spot of the frame is. */
+function isBackdrop(node: Element) {
+  return node === document.documentElement || node === document.body || !!node.querySelector("[data-spark-src], [data-spark-case]");
+}
+
+/** The frame as the board names it ("App", "App 2", "Meter"). */
+function frameTitle(): string {
+  return shell?.frameTitle?.(window) || frameComponent || "App";
+}
+
+/** What the popup and the chat call a target: "App frame", "Primary in Meter". */
+function targetName(t: Target): { name: string; owner: string | null } {
+  if (t.kind === "frame") return { name: `${frameTitle()} frame`, owner: null };
+  return { name: caseTitle(t.name), owner: t.file.split("/").pop()!.replace(/\.spark\.[jt]sx?$/, "") };
+}
+
+/** One step out from `el`: its tagged parent, else its variant box, else the frame (null from the frame). */
+function parentOf(el: Element): Element | null {
+  if (el === document.documentElement) return null;
+  const up = el.parentElement;
+  return up?.closest("[data-spark-src]") ?? up?.closest("[data-spark-case]") ?? document.documentElement;
+}
+
+/** The outermost elements of the app's source inside `within` (where Claude finds what a target shows). */
+function roots(within: Element): { src: string | null; comp: string | null }[] {
+  const out: { src: string | null; comp: string | null }[] = [];
+  for (const el of Array.from(within.querySelectorAll("[data-spark-src]"))) {
+    const up = el.parentElement?.closest("[data-spark-src]");
+    if (up && within.contains(up)) continue;
+    out.push({ src: el.getAttribute("data-spark-src"), comp: el.getAttribute("data-spark-comp") });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+/** What Claude is told a target is (prompt.ts AskSelection.target). */
+function targetInfo(t: Target, el: Element) {
+  if (t.kind === "case") {
+    return { kind: "case" as const, name: t.name, file: t.file.replace(/^\//, ""), component: targetName(t).owner, roots: roots(el) };
+  }
+  const file = new URLSearchParams(location.search).get("file");
+  const cases = Array.from(document.querySelectorAll("[data-spark-case]"), (c) => c.getAttribute("data-spark-case")!);
+  return {
+    kind: "frame" as const,
+    name: frameTitle(),
+    frame: inComponentFrame ? ("component" as const) : ("app" as const),
+    size: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+    ...(inComponentFrame ? { file: file?.replace(/^\//, "") ?? null, component: frameComponent, cases } : { url: location.pathname + location.search }),
+    roots: roots(document.body),
+  };
+}
+
+/** Where `el` is on screen; the frame is its viewport (the page may scroll under it). */
+function rectOf(el: Element): DOMRect {
+  if (el !== document.documentElement) return el.getBoundingClientRect();
+  return new DOMRect(0, 0, el.clientWidth, el.clientHeight);
 }
 
 function place(box: HTMLElement, el: Element | null) {
@@ -961,7 +1046,9 @@ function place(box: HTMLElement, el: Element | null) {
     box.style.display = "none";
     return;
   }
-  const r = el.getBoundingClientRect();
+  // The frame's outline goes inside its edges, where the frame doesn't clip it.
+  box.classList.toggle("inset", el === document.documentElement);
+  const r = rectOf(el);
   Object.assign(box.style, {
     display: "block",
     left: `${r.left}px`,
@@ -1000,7 +1087,7 @@ let altHeld = false;
 
 /** Tint the selection's margin (outside) and padding (inside) while Alt is held. */
 function placeBoxModel() {
-  const show = altHeld && !!selected && selected.isConnected && picking && !editing;
+  const show = altHeld && !!selected && selected.isConnected && picking && !editing && !targetOf(selected);
   if (!show) {
     marginBox.style.display = paddingBox.style.display = "none";
     return;
@@ -1031,7 +1118,7 @@ function placeBoxModel() {
 
 function placeHandles() {
   placeBoxModel();
-  const show = !!selected && selected.isConnected && picking && !editing;
+  const show = !!selected && selected.isConnected && picking && !editing && !targetOf(selected);
   const r = show ? selected!.getBoundingClientRect() : null;
   for (const el of handles) {
     if (!r) {
@@ -1123,6 +1210,9 @@ const frameComponent = (() => {
 })();
 
 function roleOf(el: Element): Role {
+  // A variant box, and a component frame as a whole, are the component itself.
+  const t = targetOf(el);
+  if (t) return t.kind === "case" || inComponentFrame ? "definition" : "plain";
   const comp = el.getAttribute("data-spark-comp");
   if (comp && comp === frameComponent) return "definition";
   // The outermost tagged element is the page's own markup (App, or a case).
@@ -1143,9 +1233,16 @@ function label(el: Element | null) {
     tagLabel.style.display = "none";
     return;
   }
-  const r = el.getBoundingClientRect();
+  const t = targetOf(el);
+  // The frame's title on the board already names it.
+  if (t?.kind === "frame") {
+    tagLabel.style.display = "none";
+    return;
+  }
+  const r = rectOf(el);
   const comp = el.getAttribute("data-spark-comp");
-  tagLabel.textContent = `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}  ${Math.round(r.width)}×${Math.round(r.height)}`;
+  const what = t ? `Variant · ${caseTitle(t.name)}` : `${comp ? comp + " · " : ""}${el.tagName.toLowerCase()}`;
+  tagLabel.textContent = `${what}  ${Math.round(r.width)}×${Math.round(r.height)}`;
   tagLabel.style.display = "block";
   // Keep it on screen and out from under the panel.
   const maxLeft = window.innerWidth - (open && !shell ? PANEL_W : 0) - tagLabel.offsetWidth - 4;
@@ -1203,7 +1300,8 @@ function select(el: Element | null) {
  * first pick hands the lead (inspector, handles, Ask popup) to the next one. */
 function toggleSelect(el: Element | null) {
   if (!el) return;
-  if (!selected) return select(el);
+  // A frame or variant box is picked on its own: Shift+click with one on either side starts over.
+  if (!selected || targetOf(el) || targetOf(selected)) return select(el);
   if (el === selected) {
     const rest = also;
     also = [];
@@ -1254,7 +1352,20 @@ function placeAlso(now: number) {
 
 /** The selection as the MCP server will see it. */
 function snapshot(el: Element) {
-  const r = el.getBoundingClientRect();
+  const r = rectOf(el);
+  const t = targetOf(el);
+  if (t) {
+    return {
+      tag: el.tagName.toLowerCase(),
+      classes: [] as string[],
+      src: null,
+      comp: null,
+      owners: [] as PathEntry[],
+      rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+      rules: [] as { selector: string; file: string | null; css: string }[],
+      target: targetInfo(t, el),
+    };
+  }
   return {
     tag: el.tagName.toLowerCase(),
     classes: Array.from(el.classList),
@@ -1563,9 +1674,11 @@ function stopTextEdit(keep: boolean) {
  */
 function removeSelected() {
   const el = selected;
-  if (!el) return;
+  // A frame or variant box isn't in the app's source: nothing to remove.
+  if (!el || targetOf(el)) return;
   // Shift+click picks go too.
   for (const x of selection()) {
+    if (targetOf(x)) continue;
     const path = instancePath(x);
     record({
       level: "instance",
@@ -1607,7 +1720,11 @@ function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
   const el = selected;
-  const about = (x: Element, label?: string) => ({ ...snapshot(x), owners: instancePath(x), text: (x.textContent ?? "").trim().slice(0, 200), label: label ?? askLabel(x, instancePath(x)) });
+  // A frame or variant box isn't one element: no owners or text, just its target.
+  const about = (x: Element, label?: string) => {
+    const own = targetOf(x) ? {} : { owners: instancePath(x), text: (x.textContent ?? "").trim().slice(0, 200) };
+    return { ...snapshot(x), ...own, label: label ?? askLabel(x, instancePath(x)) };
+  };
   // The chat stays with the first pick; the others go along as context.
   const others = also.filter((a) => a.el.isConnected).map((a) => about(a.el));
   import.meta.hot?.send("spark:ask", {
@@ -1644,6 +1761,9 @@ let askOn: { key: string; label: string } | null = null;
 /** An element's chat: where it's written plus the instance it is (owners, list keys), so a
  * conversation stays with one element across reloads, and each list item has its own. */
 function chatKey(el: Element, path: PathEntry[]): string {
+  // A frame by its place on the board; a variant box by its case: "@frame:app-1", "@case:/src/ui/Meter.spark.tsx#Loud".
+  const t = targetOf(el);
+  if (t) return t.kind === "frame" ? `@frame:${frameId}` : `@case:${t.file}#${t.name}`;
   const at = path.map((p) => `${p.name}@${p.call ?? "root"}${p.key !== null ? `#${p.key}` : ""}`).join(">");
   return `${el.tagName.toLowerCase()}@${el.getAttribute("data-spark-src") ?? ""}|${at}`;
 }
@@ -1679,6 +1799,12 @@ const MAX_SHIFT = 60;
 
 /** The element on the page that `key` names: that exact one, else the closest match. */
 function findByKey(key: string): Element | null {
+  if (key.startsWith("@frame:")) return key === `@frame:${frameId}` ? document.documentElement : null;
+  if (key.startsWith("@case:")) {
+    const i = key.lastIndexOf("#");
+    const sel = `[data-spark-case="${CSS.escape(key.slice(i + 1))}"][data-spark-case-file="${CSS.escape(key.slice(6, i))}"]`;
+    return i < 0 ? null : document.querySelector(sel);
+  }
   const want = keyParts(key);
   let best: Element | null = null;
   let bestD = Infinity;
@@ -1760,7 +1886,14 @@ function placePins() {
     p.node.style.display = visible ? "inline-flex" : "none";
     p.node.classList.toggle("busy", isRunning() && !!runChat && chats.find((c) => c.id === runChat)?.key === p.key);
     if (!visible) continue;
-    const r = p.el.getBoundingClientRect();
+    const r = rectOf(p.el);
+    if (p.el === document.documentElement) {
+      // The frame's pin goes inside its top-right corner (it's scaled by 1/zoom about its bottom-left, frame.ts).
+      const s = 1 / (shell?.zoom ?? 1);
+      p.node.style.left = `${r.right - 28 * s}px`;
+      p.node.style.top = `${r.top + 28 * s - 22}px`;
+      continue;
+    }
     // The pin's bottom-left corner sits on the element's top-right one.
     p.node.style.left = `${r.right}px`;
     p.node.style.top = `${r.top - 22}px`;
@@ -1834,13 +1967,17 @@ function keepSelection(now: number) {
 
 /** Fill the popup for the selection: its name, then its conversation. */
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
-  const n = askName(el, path);
-  // Already a component (its instance's root element): there's nothing to extract.
+  const t = targetOf(el);
+  const n = t ? { ...targetName(t), comp: true } : askName(el, path);
+  // Already a component (its instance's root element), or a frame or variant: there's nothing to extract.
   makeBtn.style.display = n.comp ? "none" : "";
-  const r = el.getBoundingClientRect();
+  const r = rectOf(el);
   askTag.style.setProperty("--role", ROLE_COLOR[roleOf(el)]);
-  askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
-  askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
+  askTag.title = t
+    ? `${t.kind === "frame" ? "The whole frame" : "This variant of the component"} · ${Math.round(r.width)}×${Math.round(r.height)}`
+    : `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
+  const ic: IconName = t?.kind === "frame" && !inComponentFrame ? "app-window" : n.comp ? "component" : KIND_ICON[kind];
+  askTag.replaceChildren(lucide(ic, 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
   // Shift+click picks ride along: the chat is this element's, Claude sees them all.
   askMore.textContent = also.length ? `+${also.length}` : "";
   askMore.style.display = also.length ? "" : "none";
@@ -1949,7 +2086,7 @@ function placeAsk() {
   };
   if (!show) return hide();
   const el = selected!;
-  const r = el.getBoundingClientRect();
+  const r = rectOf(el);
   let e: Box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
   let room: Box;
   const fe = shell ? (window.frameElement as HTMLElement | null) : null;
@@ -2154,6 +2291,30 @@ function editLine(c: Change, chain: Step[], path: PathEntry[], step: Step): HTML
   );
 }
 
+/** The inspector on a frame or a variant box: what it is, and that the popup asks Claude about all of it. */
+function renderTarget(el: Element, t: Target) {
+  const r = rectOf(el);
+  const n = targetName(t);
+  const file = t.kind === "case" ? t.file : new URLSearchParams(location.search).get("file");
+  body.append(
+    h(
+      "div",
+      { class: "el-head" },
+      h("div", { class: "title" }, t.kind === "frame" ? n.name : `${n.name} · ${n.owner} variant`),
+      h("span", { class: "size", title: "Size on screen" }, `${Math.round(r.width)} × ${Math.round(r.height)}`),
+    ),
+    ...(file ? [h("div", { class: "el-src", title: "Its cases are written in" }, locLink(file.replace(/^\//, "")))] : []),
+    h(
+      "p",
+      { class: "empty" },
+      t.kind === "frame"
+        ? "The whole frame. Ask Claude about all of it in the popup next to it; click an element inside to edit that one."
+        : "This variant (case) of the component. Ask Claude about it in the popup next to it; click an element inside to edit that one, Arrow Up for the frame.",
+    ),
+  );
+  renderAsk(el, [], "box");
+}
+
 function locLink(loc: string | null) {
   if (!loc) return h("span", { class: "empty" }, "unknown");
   return h("span", { class: "link", title: "Open in editor", click: () => openInEditor(loc) }, loc);
@@ -2253,6 +2414,11 @@ function render() {
           : "View mode: use the app as normal. Switch to Edit (Tab) to select and change elements.",
       ),
     );
+    return;
+  }
+  const t = targetOf(selected);
+  if (t) {
+    renderTarget(selected, t);
     return;
   }
   const el = selected;
@@ -2584,6 +2750,8 @@ document.addEventListener(
   "dblclick",
   (e) => {
     if (editing && e.target instanceof Node && editing.contains(e.target)) return;
+    // A variant's name renames its case (gallery.ts), in edit mode too.
+    if (e.target instanceof Element && e.target.closest(".spark-gallery-name")) return;
     if (!swallow(e)) return;
     const me = e as MouseEvent;
     const el = textElementAt(me.clientX, me.clientY, pickable(e.target));
@@ -2615,6 +2783,8 @@ function textEntry(e: Event): boolean {
 document.addEventListener(
   "keydown",
   (e) => {
+    // Renaming a variant (gallery.ts): Enter and Esc are its own.
+    if (e.target instanceof HTMLElement && e.target.isContentEditable && e.target.closest(".spark-gallery-name")) return;
     if (editing) {
       e.stopPropagation();
       if (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey)) {
@@ -2658,7 +2828,7 @@ document.addEventListener(
       e.stopPropagation();
       removeSelected();
     } else if (e.key === "ArrowUp" && picking && selected) {
-      const parent = selected.parentElement?.closest("[data-spark-src]");
+      const parent = parentOf(selected);
       if (parent) {
         e.preventDefault();
         select(parent);
@@ -2686,6 +2856,13 @@ const panelKeys = (e: Event) => {
     k.preventDefault();
     k.stopPropagation();
     removeSelected();
+  } else if (k.key === "ArrowUp" && picking && selected && !textEntry(k) && !k.composedPath().includes(panelHost)) {
+    // Focus on the board, not in the frame: Arrow Up still steps out (element, variant, frame).
+    const parent = parentOf(selected);
+    if (parent) {
+      k.preventDefault();
+      select(parent);
+    }
   } else if (k.key === "Escape") {
     const t = k.composedPath()[0] as HTMLElement | undefined;
     // Esc while typing leaves the field; otherwise it steps out like in the app.
@@ -2719,8 +2896,12 @@ initChanges(skip, instancePath);
 installReorder({
   overlay: shadow,
   active: () => picking && !editing && !resizing,
-  selected: () => selected,
-  pickable,
+  // A frame or variant box isn't the app's to reorder.
+  selected: () => (targetOf(selected) ? null : selected),
+  pickable: (t) => {
+    const el = pickable(t);
+    return targetOf(el) ? null : el;
+  },
   select,
   instancePath,
   elementInfo,
@@ -2739,6 +2920,8 @@ if (shell) {
     setPicking,
     deselect: () => select(null),
     unhover: () => hovered && hover(null),
+    // The frame's title on the board was clicked in edit mode: the frame itself is the selection.
+    selectFrame: () => select(document.documentElement),
     restore: (list) => {
       if (editing) stopTextEdit(true);
       restore(list as Change[]);

@@ -26,6 +26,8 @@ export type ClientHooks = {
   deselect(): void;
   /** Another frame took the hover: drop the hover box here. */
   unhover?(): void;
+  /** The frame's title was clicked in edit mode: select the frame itself (to Ask Claude about all of it). */
+  selectFrame?(): void;
   /** Another frame changed the change list (an edit, undo, redo): show this one. */
   restore(changes: unknown[]): void;
   /** The Chats list: is the element this chat key names in this frame? */
@@ -51,6 +53,8 @@ export type ShellApi = {
   setSelected?(win: Window, has: boolean): void;
   /** This frame hovers an element: the shell drops the hover in every other frame (one hover on the board). */
   setHovered?(win: Window): void;
+  /** The frame's name on the board ("App 2", "Meter"), for what the popup and its chat call it. */
+  frameTitle?(win: Window): string;
   /** How many changes are pending (the bar's Changes button shows it). */
   setChangeCount?(n: number): void;
   /** Is an element selected in a frame other than this one? */
