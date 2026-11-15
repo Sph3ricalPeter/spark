@@ -30,6 +30,8 @@ export type Job = {
   topic: Topic;
   /** What the person asked, as the chat shows it. */
   request: string;
+  /** Other elements the request is about besides the chat's own (Shift+click), as the chat shows them. */
+  also?: string[];
   /** What Claude is told; `resumed` when it carries on the chat's earlier session. */
   prompt: (resumed: boolean) => string;
   kind: "implement" | "ask";
@@ -97,7 +99,7 @@ export function claude(opts: {
       current = "";
       try {
         const t = job.topic;
-        const { id, sessionId } = "element" in t ? await chats.ask(t.element, t.label, job.request) : { id: await chats.begin(t.kind, t.label, job.request), sessionId: null };
+        const { id, sessionId } = "element" in t ? await chats.ask(t.element, t.label, job.request, job.also) : { id: await chats.begin(t.kind, t.label, job.request), sessionId: null };
         go(id, job, sessionId ?? undefined);
         return id;
       } catch (err) {

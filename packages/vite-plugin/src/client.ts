@@ -435,6 +435,11 @@ const ASK_STYLE = `
     }
     .ask-tag .nm { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
     .ask-tag .in { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--sp-text-dim); font-weight: 500; }
+    .ask-more {
+      flex: none; display: inline-flex; align-items: center; height: 22px; padding: 0 6px; border-radius: var(--sp-r-sm); cursor: default;
+      background: var(--sp-field); color: var(--sp-text); font: 600 var(--sp-fs-sm)/1 var(--sp-font);
+    }
+    .msg.user .with { margin-top: 2px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
     .ask-main input {
       flex: 1; min-width: 0; height: 100%; padding: 0 4px; border: none; background: none; outline: none;
       color: var(--sp-text-strong); font: var(--sp-fs-md) var(--sp-font);
@@ -791,12 +796,14 @@ const makeBtn = h(
 const sendBtn = h("button", { class: "ib send", title: "Ask Claude (Enter)", click: () => sendAsk() }, lucide("arrow-up"));
 /** What's selected, as the start of the prompt (it replaces the floating tag label). */
 const askTag = h("span", { class: "ask-tag" });
+/** How many more elements are picked (Shift+click); they go to Claude with the request. */
+const askMore = h("span", { class: "ask-more" });
 /** The conversation with Claude about the selected element (renderChat fills it). */
 const askThread = h("div", { class: "ask-thread" });
 const askTitle = h("span", { class: "grow" }, "Claude");
 const newChatBtn = h("button", { type: "button", title: "Start over with a new Claude session; this chat stays in Chats", click: () => resetChat() }, "New chat");
 const askTop = h("div", { class: "ask-top" }, askTitle, newChatBtn);
-const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askInput, makeBtn, sendBtn));
+const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askMore, askInput, makeBtn, sendBtn));
 askBox.addEventListener("click", () => closePopover());
 /** Pins on the elements that have a chat with Claude (refreshPins/placePins). */
 const pinLayer = h("div", { class: "pins" });
@@ -856,6 +863,13 @@ let open = false;
 let picking = false;
 let hovered: Element | null = null;
 let selected: Element | null = null;
+/**
+ * More elements picked with Shift+click, after `selected` (the first pick).
+ * The first one leads: the inspector, the handles and the Ask popup are on it;
+ * Ask Claude sends all of them. Each keeps its key (chatKey) to be found again
+ * when React replaces it. Any plain selection drops them.
+ */
+let also: { el: Element; key: string; box: HTMLElement; lostSince: number }[] = [];
 /**
  * Where the next edit to the selection goes: a `Step` key on its chain
  * ("base", "v1"…, "one"), or null for its own level (see `targetStep`).
@@ -1089,6 +1103,7 @@ function jumpToVariable(name: string) {
 
 function select(el: Element | null) {
   blurApp();
+  clearAlso();
   if (el !== selected) editTarget = null;
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
@@ -1104,6 +1119,59 @@ function select(el: Element | null) {
   shell?.setSelected?.(window, !!el);
   placePins();
   if (el) import.meta.hot?.send("spark:select", snapshot(el));
+}
+
+/** Shift+click: add an element to the selection, or take it out again. Taking out the
+ * first pick hands the lead (inspector, handles, Ask popup) to the next one. */
+function toggleSelect(el: Element | null) {
+  if (!el) return;
+  if (!selected) return select(el);
+  if (el === selected) {
+    const rest = also;
+    also = [];
+    const next = rest.shift();
+    next?.box.remove();
+    select(next?.el ?? null);
+    also = rest;
+  } else {
+    const i = also.findIndex((a) => a.el === el);
+    if (i >= 0) also.splice(i, 1)[0].box.remove();
+    else {
+      const box = h("div", { class: "box selected also" });
+      selectBox.before(box);
+      also.push({ el, key: chatKey(el, instancePath(el)), box, lostSince: 0 });
+    }
+  }
+  placeAlso(performance.now());
+  render();
+}
+
+function clearAlso() {
+  for (const a of also) a.box.remove();
+  also = [];
+}
+
+/** Every element selected, the first pick first. */
+const selection = (): Element[] => (selected ? [selected, ...also.map((a) => a.el)] : []);
+
+/** Keep the extra picks' boxes on them, and find ones React replaced (or let them go). */
+function placeAlso(now: number) {
+  also = also.filter((a) => {
+    if (!a.el.isConnected) {
+      const again = findByKey(a.key);
+      if (again && again !== selected && !also.some((b) => b.el === again)) {
+        a.el = again;
+        a.lostSince = 0;
+      } else if (!a.lostSince) a.lostSince = now;
+      else if (now - a.lostSince > 1500) {
+        a.box.remove();
+        return false;
+      }
+    }
+    a.box.style.setProperty("--sel", ROLE_COLOR[roleOf(a.el)]);
+    place(a.box, open && !editing ? a.el : null);
+    return true;
+  });
 }
 
 /** The selection as the MCP server will see it. */
@@ -1131,6 +1199,7 @@ function follow() {
     label(hovered ?? selected);
   }
   keepSelection(performance.now());
+  placeAlso(performance.now());
   placeAsk();
   if (++frame % 30 === 0) {
     renderOverrides();
@@ -1409,7 +1478,7 @@ function stopTextEdit(keep: boolean) {
 }
 
 /**
- * Delete (or Backspace) in edit mode: remove the selection from the design.
+ * Delete (or Backspace) in edit mode: remove the selection (every element picked) from the design.
  * Like any override it starts on this instance only; the Changes list can
  * apply it upstream (every instance) or revert it. The selection moves to
  * the parent.
@@ -1417,17 +1486,20 @@ function stopTextEdit(keep: boolean) {
 function removeSelected() {
   const el = selected;
   if (!el) return;
-  const path = instancePath(el);
-  record({
-    level: "instance",
-    property: "removed",
-    from: "",
-    to: "removed",
-    file: null,
-    selector: null,
-    element: elementInfo(el),
-    instance: { component: path[0]?.name ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
-  });
+  // Shift+click picks go too.
+  for (const x of selection()) {
+    const path = instancePath(x);
+    record({
+      level: "instance",
+      property: "removed",
+      from: "",
+      to: "removed",
+      file: null,
+      selector: null,
+      element: elementInfo(x),
+      instance: { component: path[0]?.name ?? "?", call: path[0]?.call ?? null, path, scope: null, appliesTo: scopeWords(path, null) },
+    });
+  }
   select(el.parentElement?.closest("[data-spark-src]") ?? null);
   changed();
 }
@@ -1457,8 +1529,15 @@ function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
   const el = selected;
-  const selection = el ? { ...snapshot(el), owners: instancePath(el), text: (el.textContent ?? "").trim().slice(0, 200), label: askOn?.label } : null;
-  import.meta.hot?.send("spark:ask", { request, selection, chat: el ? askOn?.key : undefined });
+  const about = (x: Element, label?: string) => ({ ...snapshot(x), owners: instancePath(x), text: (x.textContent ?? "").trim().slice(0, 200), label: label ?? askLabel(x, instancePath(x)) });
+  // The chat stays with the first pick; the others go along as context.
+  const others = also.filter((a) => a.el.isConnected).map((a) => about(a.el));
+  import.meta.hot?.send("spark:ask", {
+    request,
+    selection: el ? about(el, askOn?.label) : null,
+    chat: el ? askOn?.key : undefined,
+    ...(el && others.length ? { others } : {}),
+  });
   askInput.value = "";
   sendBtn.classList.remove("ready");
   askInput.blur();
@@ -1473,6 +1552,12 @@ function askName(el: Element, path: PathEntry[]): { name: string; owner: string 
   if (isRoot) return { name: path[0].name, owner: path[1]?.name ?? null, comp: true };
   const cls = el.classList[0];
   return { name: el.tagName.toLowerCase() + (cls ? `.${cls}` : ""), owner: path[0]?.name ?? null, comp: false };
+}
+
+/** What a chat calls an element: "Button in Primary", "h2 in Card". */
+function askLabel(el: Element, path: PathEntry[]): string {
+  const n = askName(el, path);
+  return n.owner ? `${n.name} in ${n.owner}` : n.name;
 }
 
 /** The element the popup is on: its chat key and what it's called. */
@@ -1678,8 +1763,13 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   askTag.style.setProperty("--role", ROLE_COLOR[roleOf(el)]);
   askTag.title = `<${el.tagName.toLowerCase()}> ${Math.round(r.width)}×${Math.round(r.height)} · ${path.map((o) => o.name).join(" › ") || "no component"}`;
   askTag.replaceChildren(lucide(n.comp ? "component" : KIND_ICON[kind], 12), h("span", { class: "nm" }, n.name), ...(n.owner ? [h("span", { class: "in" }, `in ${n.owner}`)] : []));
+  // Shift+click picks ride along: the chat is this element's, Claude sees them all.
+  askMore.textContent = also.length ? `+${also.length}` : "";
+  askMore.style.display = also.length ? "" : "none";
+  if (!isRunning() && !askBox.classList.contains("has-chat")) askHint(false, false);
+  askMore.title = also.length ? `Also sent to Claude:\n${also.map((a) => askLabel(a.el, instancePath(a.el))).join("\n")}` : "";
   const key = chatKey(el, path);
-  const label = n.owner ? `${n.name} in ${n.owner}` : n.name;
+  const label = askLabel(el, path);
   adoptChat(el, key);
   if (askOn?.key !== key) {
     askOn = { key, label };
@@ -1687,7 +1777,7 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   }
 }
 
-type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
 /** One chat with Claude about an element (chats.ts on the dev server). */
 type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
 
@@ -1716,7 +1806,9 @@ function renderChat() {
   newChatBtn.toggleAttribute("disabled", answering);
   // Claude writes Markdown; the person's own words stay as typed.
   const nodes: HTMLElement[] = msgs.map((m) =>
-    m.role === "claude" ? h("div", { class: `msg claude md${m.ok === false ? " bad" : ""}` }, markdown(m.text)) : h("div", { class: "msg user" }, m.text),
+    m.role === "claude"
+      ? h("div", { class: `msg claude md${m.ok === false ? " bad" : ""}` }, markdown(m.text))
+      : h("div", { class: "msg user" }, m.text, ...(m.with?.length ? [h("div", { class: "with" }, `with ${m.with.join(", ")}`)] : [])),
   );
   if (answering) {
     nodes.push(
@@ -1732,9 +1824,13 @@ function renderChat() {
   const stick = askThread.scrollHeight - askThread.scrollTop - askThread.clientHeight < 24;
   askThread.replaceChildren(...nodes);
   if (stick || answering) askThread.scrollTop = askThread.scrollHeight;
-  const busy = isRunning();
-  askInput.placeholder = busy ? (answering ? "Claude is answering…" : "Claude is busy…") : msgs.length ? "Reply…" : "Ask Claude to change this…";
-  sendBtn.toggleAttribute("disabled", busy);
+  askHint(answering, msgs.length > 0);
+  sendBtn.toggleAttribute("disabled", isRunning());
+}
+
+/** The prompt's placeholder: what Claude is doing, or what you'd ask about (this or, with Shift+click picks, these). */
+function askHint(answering: boolean, replying: boolean) {
+  askInput.placeholder = isRunning() ? (answering ? "Claude is answering…" : "Claude is busy…") : replying ? "Reply…" : also.length ? "Ask Claude to change these…" : "Ask Claude to change this…";
 }
 
 function resetChat() {
@@ -2073,7 +2169,7 @@ function render() {
         "div",
         { class: "empty" },
         picking
-          ? "Click an element to select it. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc steps out: selection, then back to View."
+          ? "Click an element to select it, Shift+click to add more for Claude. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc steps out: selection, then back to View."
           : "View mode: use the app as normal. Switch to Edit (Tab) to select and change elements.",
       ),
     );
@@ -2394,7 +2490,10 @@ document.addEventListener(
   "click",
   (e) => {
     if (editing && e.target instanceof Node && editing.contains(e.target)) return;
-    if (swallow(e)) select(pickable(e.target));
+    if (!swallow(e)) return;
+    // Shift+click adds to the selection (or takes out); a plain click starts over.
+    if ((e as MouseEvent).shiftKey) toggleSelect(pickable(e.target));
+    else select(pickable(e.target));
   },
   true,
 );

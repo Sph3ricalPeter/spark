@@ -74,6 +74,7 @@ export const SIDEBAR_STYLE = `
   .chats-switch .n { margin-left: auto; font: var(--sp-fs-xs) var(--sp-mono); }
   .chat-row .missing { margin-top: 6px; color: var(--sp-warn); font-size: var(--sp-fs-sm); }
   .chat-log { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; cursor: text; user-select: text; }
+  .chat-log .u .with { margin-top: 2px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
   .chat-log .u { align-self: flex-end; max-width: 92%; padding: 4px 8px; border-radius: 8px 8px 2px 8px; background: color-mix(in srgb, var(--sp-accent) 22%, var(--sp-field)); color: var(--sp-text-strong); white-space: pre-wrap; }
   .chat-log .c { max-width: 100%; }
   ${MARKDOWN_STYLE}
@@ -156,7 +157,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
 // ---------------------------------------------------------------------------
 // The Chats tab
 
-type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
 type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; resolved?: boolean; kind?: "implement" | "task" };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
@@ -261,7 +262,7 @@ export function chatsTab(deps: ChatsDeps) {
           h(
             "div",
             { class: "chat-log" },
-            ...c.messages.map((m) => (m.role === "user" ? h("div", { class: "u" }, m.text) : h("div", { class: "c md" }, markdown(m.text)))),
+            ...c.messages.map((m) => (m.role === "user" ? h("div", { class: "u" }, m.text, ...(m.with?.length ? [h("div", { class: "with" }, `with ${m.with.join(", ")}`)] : [])) : h("div", { class: "c md" }, markdown(m.text)))),
           ),
         );
       }

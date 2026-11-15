@@ -13,7 +13,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
+export type ChatMessage = {
+  role: "user" | "claude";
+  text: string;
+  ok?: boolean;
+  at: number;
+  /** The other elements picked with the chat's own (Shift+click) when this was asked, by label ("h2 in Card"). */
+  with?: string[];
+};
 
 export type Chat = {
   /** Spark's own id for the chat. */
@@ -93,8 +100,8 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
 
   return {
     load,
-    /** The element's open chat, made if there's none, with the person's message added. */
-    ask: (key: string, label: string | undefined, text: string) =>
+    /** The element's open chat, made if there's none, with the person's message added (and the other elements it's about). */
+    ask: (key: string, label: string | undefined, text: string, also?: string[]) =>
       change((f) => {
         key = resolve(key);
         let c = openOn(f, key);
@@ -103,7 +110,7 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
           f.chats.push(c);
         }
         if (label) c.label = label;
-        c.messages.push({ role: "user", text, at: Date.now() });
+        c.messages.push({ role: "user", text, at: Date.now(), ...(also?.length ? { with: also } : {}) });
         c.updated = Date.now();
         return { id: c.id, sessionId: c.sessionId };
       }),

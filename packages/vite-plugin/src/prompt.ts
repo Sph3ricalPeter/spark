@@ -65,13 +65,18 @@ export type AskSelection = {
   label?: string;
 };
 
-export function askPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
-  const sel = selection
-    ? `The person has this element selected in the running app:
+export function askPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = []): string {
+  const fields = `\`src\` is the file:line:col of its JSX, \`comp\` the component it's written in, \`owners\` the components above it
+(innermost first) with the line that renders each.`;
+  const sel = !selection
+    ? "Nothing is selected."
+    : others.length
+      ? `The person has ${others.length + 1} elements selected in the running app, and the request is about all of them:
+${JSON.stringify([selection, ...others], null, 2)}
+For each, ${fields}`
+      : `The person has this element selected in the running app:
 ${JSON.stringify(selection, null, 2)}
-\`src\` is the file:line:col of its JSX, \`comp\` the component it's written in, \`owners\` the components above it
-(innermost first) with the line that renders each.`
-    : "Nothing is selected.";
+${fields}`;
   const first = pending.length
     ? `First, apply these pending visual edits from Spark (they're previewed in the app but not in the code yet), so
 the code matches what the person sees before you change anything else:
@@ -99,8 +104,12 @@ End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdic
 }
 
 /** A follow-up in an Ask chat: the session already has the rules and the earlier turns. */
-export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
-  const sel = selection ? `\n\nThe selected element now (it may have moved since your last turn):\n${JSON.stringify(selection, null, 2)}` : "";
+export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = []): string {
+  const sel = !selection
+    ? ""
+    : others.length
+      ? `\n\nThe person now has ${others.length + 1} elements selected, and this is about all of them (they may have moved since your last turn):\n${JSON.stringify([selection, ...others], null, 2)}`
+      : `\n\nThe selected element now (it may have moved since your last turn):\n${JSON.stringify(selection, null, 2)}`;
   const first = pending.length
     ? `\n\nFirst apply these pending visual edits from Spark, as before:\n${JSON.stringify(pending, null, 2)}`
     : "";
