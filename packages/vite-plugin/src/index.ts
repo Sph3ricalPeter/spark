@@ -8,7 +8,8 @@
 // - Talks to the client over Vite's own HMR socket, so it works wherever hot
 //   reload works, including a Tauri window, and writes what the client sends
 //   into `.spark/` in the project root: selection.json and changes.json, and
-//   chats.json: the Ask chats, each one Claude session about one element (chats.ts).
+//   chats.json: the Ask chats, each one Claude session about one element (chats.ts),
+//   and state.json: how the board and panels were left (state-file.ts, state.ts).
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ import type { Change, ChangeLog } from "./changes.ts";
 import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
 import { run, running, stop, type RunEvent } from "./runner.ts";
 import { chatStore } from "./chats.ts";
+import { stateStore } from "./state-file.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODULES: Record<string, string> = {
@@ -174,6 +176,26 @@ export default function spark(): Plugin {
         await mkdir(dir, { recursive: true });
         await writeFile(path.join(dir, name), JSON.stringify(data, null, 2) + "\n");
       };
+      // The project's UI state (state.ts): every page reads it before it starts.
+      const state = stateStore(dir);
+      server.middlewares.use("/@spark/state", (req, res, next) => {
+        if (req.method !== "GET") return next();
+        state.values().then(
+          (values) => {
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify(values));
+          },
+          () => next(),
+        );
+      });
+      server.ws.on("spark:state", async (data: { key?: unknown; value?: unknown }, from) => {
+        if (typeof data?.key !== "string") return;
+        await state.set(data.key, data.value);
+        // The other frames keep their copies in step; the sender has it already.
+        for (const c of server.ws.clients) if (c !== from) c.send("spark:state", { key: data.key, value: data.value ?? null });
+      });
+      server.httpServer?.once("close", () => void state.close());
       server.ws.on("spark:hello", async (_data, client) => {
         let changes = null;
         try {

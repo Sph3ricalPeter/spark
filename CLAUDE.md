@@ -70,7 +70,12 @@ Zustand). Release and deploy are ported from dawg and described in
   icons; style Spark's UI with those, not literals;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
-  fields are only ever added). Plan: the "Spark:
+  fields are only ever added). Remembered UI (the board's frames, sizes,
+  positions and camera, the panel, sidebar and inspector sections) lives in
+  the project's `.spark/state.json`: `state.ts` reads it before a page starts
+  (`getState`/`setState`, one key per feature, listed at its top) and
+  `state-file.ts` writes it. Never localStorage: each open is a new dev
+  server port, so a new, empty origin. Plan: the "Spark:
   plan" Claude Doc.
 - `examples/fixture`: a small dawg-like app to develop Spark against
   (`npm run fixture`, port 5179).

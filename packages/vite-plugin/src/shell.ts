@@ -25,6 +25,7 @@ import { h } from "./fields.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE } from "./sidebar.ts";
 import caseFiles from "/@spark/cases";
+import { getState, setState } from "./state.ts";
 
 const BAR_H = 40;
 const PANEL_W = 340;
@@ -33,8 +34,8 @@ const GAP = 80;
 const MIN_Z = 0.05;
 const MAX_Z = 8;
 const STEPS = [0.05, 0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3, 4, 6, 8];
-const STORE = "spark:board";
-const OLD_STORE = "spark:viewport";
+/** Camera moves (wheel zoom, panning) are saved once they settle. */
+const CAMERA_SAVE_DELAY = 400;
 const MAX_STEPS = 200;
 
 type Preset = { id: string; name: string; group: string; w: number; h: number };
@@ -94,7 +95,16 @@ type Frame = {
 
 type SavedApp = { id: string; x: number; y: number; w: number; h: number; preset: string };
 type Layout = "auto" | "row" | "column";
-type Saved = { apps: SavedApp[]; placed: Record<string, { x: number; y: number }>; selected: string; layouts?: Record<string, Layout> };
+type Camera = { z: number; x: number; y: number };
+/** The board in the project's state.json (state.ts, key "board"); fields are only ever added. */
+type Saved = {
+  apps: SavedApp[];
+  placed: Record<string, { x: number; y: number }>;
+  selected: string;
+  layouts?: Record<string, Layout>;
+  /** Zoom and pan: the board opens where it was left. */
+  camera?: Camera;
+};
 
 let frames: Frame[] = [];
 let selectedId = "app-1";
@@ -106,31 +116,30 @@ let edit = false;
 
 function loadSaved(): Saved {
   const fresh: Saved = { apps: [{ id: "app-1", x: 0, y: 0, w: 1280, h: 720, preset: "fill" }], placed: {}, selected: "app-1" };
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORE) ?? "null") as Saved | null;
-    if (saved && Array.isArray(saved.apps) && saved.apps.length) return { ...fresh, ...saved };
-    // The single viewport this board replaces.
-    const old = JSON.parse(localStorage.getItem(OLD_STORE) ?? "null") as { preset: string; w: number; h: number } | null;
-    if (old && typeof old.w === "number") fresh.apps[0] = { ...fresh.apps[0], preset: old.preset, w: old.w, h: old.h };
-    docked = localStorage.getItem("spark:open") === "1";
-  } catch {
-    // Storage may be off: one app frame filling the window.
-  }
+  docked = getState<boolean>("panel-open") === true;
+  const saved = getState<Saved>("board");
+  if (saved && Array.isArray(saved.apps) && saved.apps.length) return { ...fresh, ...saved, placed: saved.placed ?? {} };
+  // Nothing saved yet: one app frame filling the window.
   return fresh;
 }
 
-function save() {
+/** The camera as last saved, so apply() knows when it moved. */
+let savedCamera = "";
+/** Saves wait for the board to be built from the saved one, so a half-built board never overwrites it. */
+let started = false;
+
+function save(delay = 0) {
+  if (!started) return;
+  const camera: Camera = { z, x: Math.round(px), y: Math.round(py) };
+  savedCamera = JSON.stringify(camera);
   const s: Saved = {
     apps: frames.filter((f) => f.kind === "app").map(({ id, x, y, w, h, preset }) => ({ id, x, y, w, h, preset })),
     placed: Object.fromEntries(frames.filter((f) => f.kind === "component" && f.placed).map((f) => [f.file, { x: f.x, y: f.y }])),
     selected: selectedId,
     layouts: Object.fromEntries(frames.filter((f) => f.layout !== "auto").map((f) => [f.file, f.layout])),
+    camera,
   };
-  try {
-    localStorage.setItem(STORE, JSON.stringify(s));
-  } catch {
-    // Storage may be off.
-  }
+  setState("board", s, delay);
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +639,7 @@ function apply() {
   shellEl.classList.toggle("docked", docked);
   showPanels();
   zoomLabel.textContent = `${Math.round(z * 100)}%`;
+  if (started && JSON.stringify({ z, x: Math.round(px), y: Math.round(py) }) !== savedCamera) save(CAMERA_SAVE_DELAY);
   const app = selectedApp();
   for (const c of sizeControls) (c as HTMLInputElement).disabled = !app;
   presetSel.value = app?.preset ?? "custom";
@@ -1156,6 +1166,14 @@ syncComponents(caseFiles);
 window.addEventListener("spark:cases", (e) => syncComponents((e as CustomEvent<string[]>).detail));
 shellEl.classList.toggle("docked", docked);
 side.init();
-focusFrame(selected());
+// The camera where it was left; the first time, the selected frame in view.
+const cam = loaded.camera;
+if (cam && [cam.z, cam.x, cam.y].every(Number.isFinite)) {
+  z = clampZ(cam.z);
+  px = cam.x;
+  py = cam.y;
+  savedCamera = JSON.stringify({ z, x: px, y: py });
+} else focusFrame(selected());
+started = true;
 apply();
 requestAnimationFrame(guardFrames);

@@ -17,6 +17,7 @@
 // Edits are previewed live and recorded as changes (see changes.ts), which
 // the dev server saves to .spark/changes.json.
 import { installFont } from "./fonts.ts";
+import { getState, setState } from "./state.ts";
 import { icon as lucide, THEME, type IconName } from "./theme.ts";
 import {
   allChanges,
@@ -179,17 +180,9 @@ function fieldFor(prop: string): Field | undefined {
   return undefined;
 }
 
-/** Which of the inspector's folding sections are open, remembered across sessions. */
-const SECTIONS_STORE = "spark:sections";
+/** Which of the inspector's folding sections are open, remembered with the project (state.ts). */
 const sectionsOpen: Record<string, boolean> = { all: false, vars: false, owners: false, rules: false };
-try {
-  Object.assign(sectionsOpen, JSON.parse(localStorage.getItem(SECTIONS_STORE) ?? "{}"));
-  // "All properties" was remembered on its own before.
-  const old = localStorage.getItem("spark:all-props");
-  if (old !== null && localStorage.getItem(SECTIONS_STORE) === null) sectionsOpen.all = old === "1";
-} catch {
-  // Storage off: sections start folded.
-}
+Object.assign(sectionsOpen, getState<Record<string, boolean>>("sections"));
 
 function fiberOf(el: Element): Fiber | null {
   const key = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
@@ -885,11 +878,7 @@ function setOpen(v: boolean) {
     select(null);
     setPicking(false);
   }
-  try {
-    localStorage.setItem("spark:open", v ? "1" : "0");
-  } catch {
-    // Storage may be off; the panel just starts closed next time.
-  }
+  setState("panel-open", v);
 }
 
 /** Edit mode (true) or view mode (false). Entering edit mode opens the panel; view mode drops the selection. */
@@ -2281,11 +2270,7 @@ function section(key: string, title: string, count: string, build: () => HTMLEle
   const head = h("button", { class: `sec-head${open ? " open" : ""}`, type: "button", "aria-expanded": open ? "true" : "false" }, lucide("chevron-down", 12), h("span", { class: "sec-title" }, title), count ? h("span", { class: "sec-count" }, count) : null);
   head.addEventListener("click", () => {
     sectionsOpen[key] = !open;
-    try {
-      localStorage.setItem(SECTIONS_STORE, JSON.stringify(sectionsOpen));
-    } catch {
-      // Not remembered.
-    }
+    setState("sections", { ...sectionsOpen });
     render();
   });
   const box = h("div", { class: `sec${open ? " open" : ""}` }, head);
@@ -2561,12 +2546,7 @@ installReorder({
   changed,
 });
 render();
-let reopen = false;
-try {
-  reopen = localStorage.getItem("spark:open") === "1";
-} catch {
-  // Storage may be off.
-}
+const reopen = getState<boolean>("panel-open") === true;
 if (shell) {
   // On the board the shell sends the panel state and the mode.
   shell.register({

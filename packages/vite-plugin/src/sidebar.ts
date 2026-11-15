@@ -9,6 +9,7 @@
 import { h } from "./fields.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
+import { getState, setState } from "./state.ts";
 
 export const SIDEBAR_W = 280;
 
@@ -69,15 +70,11 @@ export const SIDEBAR_STYLE = `
 
 /** The sidebar: a toggle for the bar, the panel, and a way to add tabs. */
 export function sidebar(onToggle: (open: boolean) => void) {
-  const STORE = "spark:sidebar";
-  let open = false;
-  let current = "";
-  try {
-    open = localStorage.getItem(STORE) === "1";
-    current = localStorage.getItem(`${STORE}-tab`) ?? "";
-  } catch {
-    // Starts closed.
-  }
+  // Open or closed, and on which tab, remembered with the project (state.ts).
+  const saved = getState<{ open?: boolean; tab?: string }>("sidebar");
+  let open = saved?.open === true;
+  let current = saved?.tab ?? "";
+  const remember = () => setState("sidebar", { open, tab: current });
   const tabs = new Map<string, { bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement }>();
   const tabRow = h("div", { class: "side-head" });
   const grow = h("span", { class: "grow" });
@@ -97,21 +94,13 @@ export function sidebar(onToggle: (open: boolean) => void) {
   }
   function show(name: string) {
     current = name;
-    try {
-      localStorage.setItem(`${STORE}-tab`, name);
-    } catch {
-      // Not remembered.
-    }
+    remember();
     body.replaceChildren(tabs.get(name)?.el ?? "");
     mark();
   }
   function setOpen(v: boolean) {
     open = v;
-    try {
-      localStorage.setItem(STORE, v ? "1" : "0");
-    } catch {
-      // Not remembered.
-    }
+    remember();
     mark();
     onToggle(v);
   }
@@ -142,7 +131,8 @@ export function sidebar(onToggle: (open: boolean) => void) {
       });
       buttons.append(bar);
       tabs.set(name, { bar, counts, el: content });
-      if (!current || !tabs.has(current) || current === name) show(current && tabs.has(current) ? current : name);
+      // The tab it was left on, once it's added; init() falls back to the first.
+      if (current === name) show(name);
     },
     /** Start in the state it was left in. */
     init: () => {
