@@ -3031,8 +3031,8 @@ function scrollTo(el: Element) {
 
 function selectLayer(el: Element) {
   if (!el.isConnected) return null;
-  const isCase = el.matches(CASE);
-  select(isCase ? null : el);
+  // A case is a target of its own (data-spark-case), like an element.
+  select(el);
   scrollTo(el);
   const r = el.getBoundingClientRect();
   return { x: r.left, y: r.top, w: r.width, h: r.height };

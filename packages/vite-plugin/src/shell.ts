@@ -1222,7 +1222,10 @@ const layers = layersTab({
     if (!f) return;
     selectFrame(f);
     const win = f.iframe.contentWindow;
-    if (win) clients.get(win)?.deselect();
+    const hooks = win ? clients.get(win) : undefined;
+    // In Edit mode the frame itself is selected (its title does the same); in View mode no element is.
+    if (edit && hooks?.selectFrame) hooks.selectFrame();
+    else hooks?.deselect();
     // Off screen: bring the frame's corner into view.
     const { cw, ch } = canvasSize();
     const x = px + f.x * z;

@@ -126,7 +126,7 @@ export function layersTab(deps: LayersDeps) {
     const row = h(
       "div",
       {
-        class: `layer board k-${f.kind}${f.selected ? " on" : ""}${f.selected && !sel ? " sel" : ""}`,
+        class: `layer board k-${f.kind}${f.selected ? " on" : ""}${f.selected && (!sel || isFrame(f, sel)) ? " sel" : ""}`,
         role: "treeitem",
         "aria-expanded": String(isOpen),
         title: `${f.name}: click to select, double-click to zoom to it`,
@@ -175,10 +175,6 @@ export function layersTab(deps: LayersDeps) {
     if (l.el === sel) row.style.setProperty("--sel", roleVar(l));
     row.addEventListener("click", () => {
       deps.pickLayer(f.id, l.el);
-      if (l.role === "case") {
-        sel = l.el;
-        draw();
-      }
     });
     row.addEventListener("pointerenter", () => f.hooks?.hoverLayer?.(l.el));
     row.addEventListener("pointerleave", () => f.hooks?.hoverLayer?.(null));
@@ -294,6 +290,15 @@ export function layersTab(deps: LayersDeps) {
       if (hov) rows.get(hov)?.classList.add("hov");
     },
   };
+}
+
+/** Is `el` that frame itself (its page's root element: the frame selected as a whole)? */
+function isFrame(f: LayerFrame, el: Element) {
+  try {
+    return el === f.hooks?.win.document.documentElement;
+  } catch {
+    return false;
+  }
 }
 
 function roleVar(l: Layer) {
