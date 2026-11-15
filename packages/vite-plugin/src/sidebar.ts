@@ -7,9 +7,10 @@
 // same (open, resolve or reopen) and copying it. Changes: the
 // pending edits and Implement changes (the active frame's client renders it).
 //
+// The sidebar is always shown, its tabs in a strip at its top (Figma style).
 // Add a tab with `addTab(name, element, icon, title, onShow?)`: it gets a
-// button on the bar that opens the sidebar on it (`buttons` lists them,
-// `setCount` shows a count on one); `onShow` runs each time it comes into view.
+// button in the strip (`setCount` shows a count on one); `onShow` runs each
+// time it comes into view.
 import { h } from "./fields.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
@@ -21,22 +22,22 @@ export const SIDEBAR_W = 280;
 
 export const SIDEBAR_STYLE = `
   .sidebar {
-    position: absolute; left: 0; bottom: 0; width: var(--sp-side-w, ${SIDEBAR_W}px); display: none; flex-direction: column;
+    position: absolute; left: 0; bottom: 0; width: var(--sp-side-w, ${SIDEBAR_W}px); display: flex; flex-direction: column;
     background: var(--sp-bg); color: var(--sp-text); border-right: 1px solid var(--sp-line);
-    font: var(--sp-fs-md)/1.45 var(--sp-font);
+    font: var(--sp-fs-md)/1.45 var(--sp-font); z-index: 1;
   }
-  .side-open .sidebar { display: flex; }
-  .side-open .canvas { left: var(--sp-side-w, ${SIDEBAR_W}px); }
-  .side-head { display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px; border-bottom: 1px solid var(--sp-line); flex: none; }
-  .side-head .title { padding: 0 6px; color: var(--sp-text-strong); font-weight: 600; }
-  .side-head .grow { flex: 1; }
-  .side-head .close { border: none; background: none; color: var(--sp-text-dim); min-width: 24px; height: 24px; padding: 0; }
-  .side-head .close:hover { color: var(--sp-text-strong); background: var(--sp-field); }
+  /* The tabs, Figma style: a strip of quiet buttons at the panel's top. */
+  .side-tabs { display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 8px; border-bottom: 1px solid var(--sp-line); flex: none; overflow: hidden; }
+  .side-tab {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; min-width: 0; padding: 0 8px; border: none; border-radius: var(--sp-r-sm);
+    background: transparent; color: var(--sp-text-dim); font: 500 var(--sp-fs-md)/1 var(--sp-font); cursor: pointer;
+  }
+  .side-tab:hover { color: var(--sp-text-strong); background: var(--sp-field); }
+  .side-tab.on { color: var(--sp-text-strong); background: var(--sp-line-strong); }
+  .side-tab .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-tab .count { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
+  .side-tab .count:empty { display: none; }
   .side-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent; }
-  .bar .side-buttons { display: contents; }
-  .bar .side-toggle { display: inline-flex; align-items: center; gap: 6px; }
-  .bar .side-toggle.on { background: var(--sp-line-strong); color: var(--sp-text-strong); }
-  .bar .side-toggle .count { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
 
   .chats-empty { padding: 16px 14px; color: var(--sp-text-dim); }
   .chat-row {
@@ -84,80 +85,52 @@ export const SIDEBAR_STYLE = `
   ${MARKDOWN_STYLE}
 `;
 
-/** The sidebar: a toggle for the bar, the panel, and a way to add tabs. */
-export function sidebar(onToggle: (open: boolean) => void) {
-  // Open or closed, and on which tab, remembered with the project (state.ts).
+/** The sidebar: always shown, its tabs in a strip at its top, and a way to add tabs. */
+export function sidebar() {
+  // The tab it was left on, remembered with the project (state.ts); `open` is from when it could be hidden.
   const saved = getState<{ open?: boolean; tab?: string }>("sidebar");
-  let open = saved?.open === true;
   let current = saved?.tab ?? "";
-  const remember = () => setState("sidebar", { open, tab: current });
-  const tabs = new Map<string, { bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement; onShow?: () => void }>();
-  const tabRow = h("div", { class: "side-head" });
-  const grow = h("span", { class: "grow" });
-  const close = h("button", { class: "close", title: "Close the sidebar", click: () => setOpen(false) }, icon("x"));
-  // The bar's buttons pick the tab; the head just names it.
-  const title = h("span", { class: "title" });
-  tabRow.append(title, grow, close);
+  const remember = () => setState("sidebar", { open: true, tab: current });
+  const tabs = new Map<string, { button: HTMLElement; counts: HTMLElement[]; el: HTMLElement; onShow?: () => void }>();
+  const strip = h("div", { class: "side-tabs", role: "tablist" });
   const body = h("div", { class: "side-body" });
-  const el = h("div", { class: "sidebar" }, tabRow, body);
-  const buttons = h("span", { class: "side-buttons" });
+  const el = h("div", { class: "sidebar" }, strip, body);
 
-  function mark() {
-    for (const [n, t] of tabs) {
-      if (n === current) title.textContent = n;
-      t.bar.classList.toggle("on", open && n === current);
-    }
-  }
   function show(name: string) {
     current = name;
     remember();
     body.replaceChildren(tabs.get(name)?.el ?? "");
-    mark();
-    if (open) tabs.get(name)?.onShow?.();
-  }
-  function setOpen(v: boolean) {
-    open = v;
-    remember();
-    mark();
-    onToggle(v);
-    if (v) tabs.get(current)?.onShow?.();
+    body.scrollTop = 0;
+    for (const [n, t] of tabs) {
+      t.button.classList.toggle("on", n === current);
+      t.button.setAttribute("aria-selected", String(n === current));
+    }
+    tabs.get(name)?.onShow?.();
   }
   return {
     el,
-    /** For the bar: a button per tab (added as tabs are), each opening the sidebar on its tab, or closing it when it's already showing. */
-    buttons,
-    /** A count on a tab and its bar button (open chats, pending changes); 0 hides it. */
+    /** A count on a tab (open chats, pending changes); 0 hides it. */
     setCount: (name: string, n: number) => {
       for (const c of tabs.get(name)?.counts ?? []) c.textContent = n ? String(n) : "";
     },
-    isOpen: () => open,
-    /** Is this tab in view (the sidebar open on it)? */
-    shows: (name: string) => open && current === name,
-    setOpen,
-    /** Open the sidebar on a tab. */
+    /** Is this tab in view? */
+    shows: (name: string) => current === name,
+    /** Bring a tab into view. */
     showTab: (name: string) => {
-      show(name);
-      if (!open) setOpen(true);
+      if (current !== name) show(name);
     },
     addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string, onShow?: () => void) {
       const counts = [h("span", { class: "count" })];
-      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), h("span", { class: "label" }, name), counts[0]);
-      bar.addEventListener("click", () => {
-        if (open && current === name) setOpen(false);
-        else {
-          show(name);
-          if (!open) setOpen(true);
-        }
-      });
-      buttons.append(bar);
-      tabs.set(name, { bar, counts, el: content, onShow });
+      const button = h("button", { class: "side-tab", role: "tab", title }, icon(iconName, 13), h("span", { class: "label" }, name), counts[0]);
+      button.addEventListener("click", () => current !== name && show(name));
+      strip.append(button);
+      tabs.set(name, { button, counts, el: content, onShow });
       // The tab it was left on, once it's added; init() falls back to the first.
       if (current === name) show(name);
     },
-    /** Start in the state it was left in. */
+    /** Start on the tab it was left on. */
     init: () => {
       if (!tabs.has(current)) show(tabs.keys().next().value ?? "");
-      setOpen(open);
     },
   };
 }

@@ -10,9 +10,19 @@
 //   the app until dragged somewhere else by their title.
 // Every frame runs its own Spark client; the board keeps them in step: one
 // mode, one open panel (the selected frame's), one change list, one undo
-// history. Clicking in a frame selects it (the bar's size fields, the panel
-// and Ctrl 0 act on it); in view mode every frame stays usable and the
-// selected one has a dashed outline. Only Fit and 100% move the camera.
+// history. Clicking in a frame selects it (its properties in the inspector,
+// the panel and Ctrl 0 act on it); in view mode every frame stays usable and
+// the selected one has a dashed outline. Only Fit and 100% move the camera.
+//
+// Around the canvas, Figma style: the title bar on top (titlebar.ts), the
+// left panel with its Layers, Chats and Changes tabs (sidebar.ts), and on the
+// right two columns, the selected frame's inspector and, rightmost, its chat
+// with Claude (both the client's, mode.ts). The panels are always there and
+// each resizes from its inner edge; they cover the canvas rather than push
+// it, so resizing one crops the view and never moves what's on it. The
+// floating toolbar at the bottom has View/Edit, "+ Frame", the device and
+// the zoom; the selected frame's own properties (size, device, ratio, a
+// component frame's layout) are in the inspector (frameProps).
 //
 // The canvas zooms and pans on its own: Ctrl+wheel or a pinch zooms at the
 // pointer, Ctrl +/- steps, Ctrl 0 is 100% on the selected frame; wheel over
@@ -33,9 +43,10 @@ import { name as projectName } from "/@spark/project";
 import { inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
 import { getState, setState } from "./state.ts";
 
-const BAR_H = 40;
-/** The inspector's default width; dragging its left edge changes it (grip.ts). */
-const PANEL_W = 340;
+const BAR_H = 36;
+/** The inspector's and the chat's default widths; dragging their left edges changes them (grip.ts). */
+const PANEL_W = 300;
+const CHAT_W = 340;
 const PAD = 48;
 const GAP = 80;
 const MIN_Z = 0.05;
@@ -86,6 +97,12 @@ type Frame = {
   y: number;
   w: number;
   h: number;
+  /**
+   * A Fill frame's width as the frames beside it last saw it: set when the
+   * window resizes or the frame is set to Fill, not when a panel does, so
+   * resizing a panel reflows the Fill frame and moves nothing else.
+   */
+  anchorW?: number;
   /** App frames: "fill", a preset id, or "custom". */
   preset: string;
   /** A component frame the user moved; the others follow the app frames. */
@@ -111,6 +128,8 @@ type Saved = {
   layouts?: Record<string, Layout>;
   /** Zoom and pan: the board opens where it was left. */
   camera?: Camera;
+  /** 2: the camera is from the window-wide canvas under the panels; before, the canvas started right of an open sidebar. */
+  canvas?: 2;
 };
 
 let frames: Frame[] = [];
@@ -118,14 +137,12 @@ let selectedId = "app-1";
 let z = 1;
 let px = 0;
 let py = 0;
-let docked = false;
 let edit = false;
 /** The frames' names and sizes as the Layers tab last saw them. */
 let frameNames = "";
 
 function loadSaved(): Saved {
   const fresh: Saved = { apps: [{ id: "app-1", x: 0, y: 0, w: 1280, h: 720, preset: "fill" }], placed: {}, selected: "app-1" };
-  docked = getState<boolean>("panel-open") === true;
   const saved = getState<Saved>("board");
   if (saved && Array.isArray(saved.apps) && saved.apps.length) return { ...fresh, ...saved, placed: saved.placed ?? {} };
   // Nothing saved yet: one app frame filling the window.
@@ -147,6 +164,7 @@ function save(delay = 0) {
     selected: selectedId,
     layouts: Object.fromEntries(frames.filter((f) => f.layout !== "auto").map((f) => [f.file, f.layout])),
     camera,
+    canvas: 2,
   };
   setState("board", s, delay);
 }
@@ -167,23 +185,26 @@ root.append(
     :host { all: initial; }
     * { box-sizing: border-box; }
     .bar {
-      position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px;
+      position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 3;
       display: flex; align-items: center; gap: 6px; padding: 0 10px;
       background: var(--sp-bg); color: var(--sp-text); border-bottom: 1px solid var(--sp-line);
-      font: var(--sp-fs-md)/1 var(--sp-font); user-select: none;
-      overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+      font: var(--sp-fs-md)/1 var(--sp-font); user-select: none; overflow: hidden;
     }
-    .docked .bar, .docked .canvas { right: var(--sp-panel-w, ${PANEL_W}px); }
+    .bar .project { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--sp-text-strong); }
     .sidebar { top: ${BAR_H}px; }
     ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
     ${GRIP_STYLE}
     ${TITLE_BAR_STYLE}
-    .side-grip { top: ${BAR_H}px; left: var(--sp-side-w, ${SIDEBAR_W}px); z-index: 2; }
-    .side-open .side-grip { display: block; }
-    /* Over the panels (mounted after it would cover it: register inserts them before it). */
-    .panel-grip { position: fixed; left: calc(100% - var(--sp-panel-w, ${PANEL_W}px)); z-index: 2147483647; }
-    .panel-grip.on { display: block; }
+    /* The right columns' backgrounds, under the selected frame's inspector and chat (they mount over them, mode.ts). */
+    .rcol { position: absolute; top: ${BAR_H}px; bottom: 0; z-index: 1; background: var(--sp-bg); border-left: 1px solid var(--sp-line); }
+    .rcol.inspector { right: var(--sp-chat-w, ${CHAT_W}px); width: var(--sp-panel-w, ${PANEL_W}px); }
+    .rcol.chat { right: 0; width: var(--sp-chat-w, ${CHAT_W}px); }
+    /* The edges between the panels and the canvas, over everything (the panels mount after the shell). */
+    .grip { display: block; position: fixed; top: ${BAR_H}px; z-index: 2147483647; }
+    .side-grip { left: var(--sp-side-w, ${SIDEBAR_W}px); }
+    .panel-grip { left: calc(100% - var(--sp-panel-w, ${PANEL_W}px) - var(--sp-chat-w, ${CHAT_W}px)); }
+    .chat-grip { left: calc(100% - var(--sp-chat-w, ${CHAT_W}px)); }
     button, select, input {
       font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
       border-radius: var(--sp-r-sm); height: 26px; padding: 0 8px; flex: none;
@@ -192,12 +213,25 @@ root.append(
     button:hover, select:hover { border-color: var(--sp-line-strong); }
     button:disabled, select:disabled, input:disabled { opacity: .4; cursor: default; }
     select { padding: 0 4px; max-width: 220px; }
-    input { width: 62px; font: var(--sp-fs-sm) var(--sp-mono); text-align: center; }
     input:focus, select:focus { outline: 1px solid var(--sp-accent); border-color: var(--sp-accent); }
-    .x { color: var(--sp-text-dim); }
-    .sep { width: 1px; height: 18px; background: var(--sp-line); flex: none; margin: 0 4px; }
     .grow { flex: 1; min-width: 8px; }
-    .zoom { width: 52px; text-align: center; font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); flex: none; }
+    /* The toolbar: floating at the bottom middle of the canvas's visible part, Figma style. */
+    .toolbar {
+      position: absolute; bottom: 16px; z-index: 2; display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 6px;
+      left: calc(var(--sp-side-w, ${SIDEBAR_W}px) + (100% - var(--sp-side-w, ${SIDEBAR_W}px) - var(--sp-panel-w, ${PANEL_W}px) - var(--sp-chat-w, ${CHAT_W}px)) / 2);
+      transform: translateX(-50%); max-width: calc(100% - var(--sp-side-w, ${SIDEBAR_W}px) - var(--sp-panel-w, ${PANEL_W}px) - var(--sp-chat-w, ${CHAT_W}px) - 24px);
+      background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: 12px;
+      box-shadow: 0 8px 28px #0009, 0 2px 6px #0006; color: var(--sp-text);
+      font: var(--sp-fs-md)/1 var(--sp-font); user-select: none; white-space: nowrap; overflow: hidden;
+    }
+    .toolbar button, .toolbar select { border-color: transparent; background: transparent; }
+    .toolbar button:hover, .toolbar select:hover { background: var(--sp-field); border-color: transparent; }
+    .toolbar .tb { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
+    .toolbar select { width: 150px; min-width: 0; flex: 0 1 auto; }
+    .toolbar .sep { width: 1px; height: 20px; background: var(--sp-line-strong); flex: none; margin: 0 4px; }
+    .zoom { min-width: 52px; text-align: center; font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); }
+    .shell { position: absolute; inset: 0; }
+    /* The canvas is the whole window under the bar: the panels cover its edges, so resizing them never moves it. */
     .canvas {
       position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: hidden;
       background-color: #0e0f11;
@@ -251,118 +285,95 @@ root.append(
     /* Covers the frames while panning, so the drag isn't lost into an app. */
     .shield { position: absolute; inset: 0; display: none; }
     .panning .shield, .space .shield { display: block; }
-    /* The mode island: in the middle of the bar, so the mode is never in doubt
-       and it never covers the app. */
-    .island {
-      display: none; flex: none; align-items: center; gap: 8px; padding: 2px 6px 2px 2px; height: 32px;
-      background: #16171aee; border: 1px solid var(--sp-line); border-radius: 999px;
-      box-shadow: 0 6px 20px #0008; font: var(--sp-fs-md)/1 var(--sp-font); color: var(--sp-text-dim);
-      user-select: none;
-    }
+    /* View/Edit: the toolbar's first group, so the mode is never in doubt. */
+    .island { display: none; flex: none; align-items: center; gap: 6px; color: var(--sp-text-dim); }
     .island.ready { display: flex; }
-    .island button { border-radius: 999px; height: 26px; font-weight: 600; padding: 0 14px; border-color: transparent; background: transparent; }
-    .island button.on { background: var(--sp-text-strong); color: var(--sp-bg); }
-    .island.edit button.on { background: var(--sp-accent); color: var(--sp-text-strong); }
+    .island .seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--sp-bg); }
+    .island .seg button { border-radius: 7px; height: 26px; font-weight: 600; padding: 0 12px; }
+    .island .seg button.on { background: var(--sp-text-strong); color: var(--sp-bg); }
+    .island.edit .seg button.on { background: var(--sp-accent); color: var(--sp-text-strong); }
     .island kbd {
       font: var(--sp-fs-xs) var(--sp-mono); color: var(--sp-text); border: 1px solid var(--sp-line-strong);
       border-bottom-width: 2px; border-radius: var(--sp-r-sm); padding: 2px 5px;
     }
-    /* Edit mode: a soft glow in from the canvas edges, unlike any selection outline. */
-    .canvas::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .2s;
+    /* Edit mode: a soft glow in from the edges of the canvas's visible part, unlike any selection outline. */
+    .glow {
+      position: absolute; top: ${BAR_H}px; bottom: 0; left: var(--sp-side-w, ${SIDEBAR_W}px);
+      right: calc(var(--sp-panel-w, ${PANEL_W}px) + var(--sp-chat-w, ${CHAT_W}px));
+      pointer-events: none; opacity: 0; transition: opacity .2s;
       box-shadow: inset 0 0 48px 0 color-mix(in srgb, var(--sp-accent) 30%, transparent),
         inset 0 0 12px 0 color-mix(in srgb, var(--sp-accent) 22%, transparent);
     }
-    .edit-mode .canvas::after { opacity: 1; }
+    .edit-mode .glow { opacity: 1; }
     `,
   ),
 );
 
-const presetSel = h("select", { title: "Device or resolution of the selected app frame" }) as HTMLSelectElement;
-{
+/** A device dropdown: the toolbar has one, the frame's properties another. */
+function presetSelect(title: string) {
+  const sel = h("select", { title }) as HTMLSelectElement;
   let group: HTMLElement | null = null;
   for (const p of PRESETS) {
     const opt = h("option", { value: p.id }, p.name);
-    if (!p.group) presetSel.append(opt);
+    if (!p.group) sel.append(opt);
     else {
       if (!group || group.getAttribute("label") !== p.group) {
         group = h("optgroup", { label: p.group });
-        presetSel.append(group);
+        sel.append(group);
       }
       group.append(opt);
     }
   }
-  presetSel.append(h("option", { value: "custom" }, "Custom"));
+  sel.append(h("option", { value: "custom" }, "Custom"));
+  sel.addEventListener("change", () => {
+    const f = selectedApp();
+    if (f) setPreset(f, sel.value);
+    sel.blur();
+  });
+  return sel;
 }
-const addBtn = h("button", { title: "Add an app frame (another size of the app, side by side)" }, "+ Frame");
-const prevBtn = h("button", { class: "step", title: "Previous size" }, "‹");
-const nextBtn = h("button", { class: "step", title: "Next size" }, "›");
-const wIn = h("input", { title: "Width (px)", inputmode: "numeric" }) as HTMLInputElement;
-const hIn = h("input", { title: "Height (px)", inputmode: "numeric" }) as HTMLInputElement;
-const rotateBtn = h("button", { title: "Swap width and height" }, "⟲");
-// Aspect ratios as one dropdown, so the bar keeps room for the mode island and zoom.
-const ratioSel = h("select", { class: "ratio", title: "Aspect ratio: keeps the width" }) as HTMLSelectElement;
-ratioSel.append(h("option", { value: "" }, "Ratio"));
-for (const [i, [name]] of RATIOS.entries()) ratioSel.append(h("option", { value: String(i) }, name));
-ratioSel.addEventListener("change", () => {
-  const f = selectedApp();
-  if (f && ratioSel.value !== "") setSize(f, f.w, f.w / RATIOS[Number(ratioSel.value)][1]);
-});
-const zoomOut = h("button", { title: "Zoom out (Ctrl −)" }, "−");
-const zoomLabel = h("span", { class: "zoom", title: "Ctrl+wheel or pinch to zoom at the pointer" });
-const zoomIn = h("button", { title: "Zoom in (Ctrl +)" }, "+");
-const fitBtn = h("button", { title: "Zoom to fit every frame" }, "Fit");
-const oneBtn = h("button", { title: "The selected frame at actual size (Ctrl 0)" }, "100%");
+const presetSel = presetSelect("Device or resolution of the selected app frame");
+const addBtn = h("button", { class: "tb", title: "Add an app frame (another size of the app, side by side)" }, icon("plus", 14), h("span", { class: "label" }, "Frame"));
+const zoomOut = h("button", { title: "Zoom out (Ctrl −)" }, icon("minus", 14));
+const zoomLabel = h("button", { class: "zoom", title: "The selected frame at actual size (Ctrl 0). Ctrl+wheel or pinch zooms at the pointer" });
+const zoomIn = h("button", { title: "Zoom in (Ctrl +)" }, icon("plus", 14));
+const fitBtn = h("button", { title: "Zoom to fit every frame (Shift 1)" }, "Fit");
 
 const islandView = h("button", { title: "Use the selected frame normally (Tab)" }, "View");
 const islandEdit = h("button", { title: "Select and edit elements (Tab)" }, "Edit");
 const island = h("div", { class: "island" }, h("span", { class: "seg" }, islandView, islandEdit), h("kbd", { title: "Tab switches mode" }, "Tab"));
 islandView.addEventListener("click", () => switchMode(false));
 islandEdit.addEventListener("click", () => switchMode(true));
-const sizeControls = [presetSel, prevBtn, nextBtn, wIn, hIn, rotateBtn, ratioSel];
 
-// The left sidebar: Layers, Chats and Changes (sidebar.ts). Opening it gives the canvas less room.
-const side = sidebar((open) => {
-  shellEl.classList.toggle("side-open", open);
-  fitPanels();
-  apply();
-});
-const bar = h(
+// The left panel: Layers, Chats and Changes (sidebar.ts), always shown.
+const side = sidebar();
+// The title bar: in Spark's window titleBar adds the home button, the project's name and the window buttons.
+const bar = h("div", { class: "bar" }, h("span", { class: "grow" }));
+const toolbar = h(
   "div",
-  { class: "bar" },
-  side.buttons,
+  { class: "toolbar" },
+  island,
   h("span", { class: "sep" }),
   addBtn,
-  h("span", { class: "sep" }),
   presetSel,
-  prevBtn,
-  nextBtn,
   h("span", { class: "sep" }),
-  wIn,
-  h("span", { class: "x" }, "×"),
-  hIn,
-  rotateBtn,
-  h("span", { class: "sep" }),
-  ratioSel,
-  h("span", { class: "grow" }),
-  island,
-  h("span", { class: "grow" }),
   zoomOut,
   zoomLabel,
   zoomIn,
   fitBtn,
-  oneBtn,
 );
 
-// The bar's buttons and dropdowns never keep focus: Tab and Esc are Spark's
+// The bars' buttons and dropdowns never keep focus: Tab and Esc are Spark's
 // shortcuts, not focus moves, and the first Esc mustn't go to a dropdown.
-bar.addEventListener("click", (e) => {
-  const b = (e.target as Element).closest("button");
-  if (b && root.activeElement === b) b.blur();
-});
-bar.addEventListener("change", (e) => {
-  if (e.target instanceof HTMLSelectElement) e.target.blur();
-});
+for (const el of [bar, toolbar]) {
+  el.addEventListener("click", (e) => {
+    const b = (e.target as Element).closest("button");
+    if (b && root.activeElement === b) b.blur();
+  });
+  el.addEventListener("change", (e) => {
+    if (e.target instanceof HTMLSelectElement) e.target.blur();
+  });
+}
 
 /** Take focus out of the bar and every panel (they're shadow roots in the shell). */
 function blurChrome() {
@@ -375,43 +386,49 @@ function blurChrome() {
 const stage = h("div", { class: "stage" });
 const shield = h("div", { class: "shield" });
 const canvas = h("div", { class: "canvas" }, stage, shield);
-const shellEl = h("div", { class: "shell" }, bar, side.el, canvas);
-// In Spark's window the bar is the window's title bar too (titlebar.ts), and
-// the inspector docks under it, so the window buttons keep the corner.
+const shellEl = h(
+  "div",
+  { class: "shell" },
+  canvas,
+  h("div", { class: "glow" }),
+  toolbar,
+  side.el,
+  h("div", { class: "rcol inspector" }),
+  h("div", { class: "rcol chat" }),
+  bar,
+);
+// In Spark's window the bar is the window's title bar too (titlebar.ts).
 if (inSpark) {
   shellEl.append(titleBar(bar, projectName));
   shellEl.classList.add("titled");
-  host.style.setProperty("--sp-panel-top", `${BAR_H}px`);
-}
+} else bar.prepend(h("span", { class: "project", title: projectName }, projectName));
+host.style.setProperty("--sp-panel-top", `${BAR_H}px`);
 
-// Both side panels resize from their inner edge (grip.ts); the canvas keeps
-// at least MIN_CANVAS, and its ResizeObserver re-lays out the frames.
+// The three panels resize from their inner edge (grip.ts); the canvas keeps at
+// least MIN_CANVAS visible. They cover the canvas, so a resize only re-lays out
+// a Fill frame, never the camera.
 const sizing = (on: boolean) => {
   shellEl.classList.toggle("moving", on);
   shellEl.classList.toggle("sizing", on);
 };
-const sideEdge = edgeGrip(
-  host,
-  { name: "sidebar", prop: "--sp-side-w", def: SIDEBAR_W, min: 200, max: 560, dir: 1 },
-  () => window.innerWidth - (docked ? panelEdge.width() : 0) - MIN_CANVAS,
-  sizing,
-);
-const panelEdge = edgeGrip(
-  host,
-  { name: "panel", prop: "--sp-panel-w", def: PANEL_W, min: 280, max: 640, dir: -1 },
-  () => window.innerWidth - (side.isOpen() ? sideEdge.width() : 0) - MIN_CANVAS,
-  sizing,
-);
+const rest = () => window.innerWidth - MIN_CANVAS;
+const sideEdge = edgeGrip(host, { name: "sidebar", prop: "--sp-side-w", def: SIDEBAR_W, min: 200, max: 560, dir: 1 }, () => rest() - panelEdge.width() - chatEdge.width(), sizing, () => apply());
+const panelEdge = edgeGrip(host, { name: "panel", prop: "--sp-panel-w", def: PANEL_W, min: 240, max: 640, dir: -1 }, () => rest() - sideEdge.width() - chatEdge.width(), sizing, () => apply());
+const chatEdge = edgeGrip(host, { name: "chat", prop: "--sp-chat-w", def: CHAT_W, min: 260, max: 720, dir: -1 }, () => rest() - sideEdge.width() - panelEdge.width(), sizing, () => apply());
 sideEdge.grip.classList.add("side-grip");
 panelEdge.grip.classList.add("panel-grip");
-shellEl.append(sideEdge.grip);
-/** Fit both widths to the window and to each other (a panel opened or closed, the window resized). */
+chatEdge.grip.classList.add("chat-grip");
+/** Fit the widths to the window and to each other (at the start, and when the window resizes). */
 function fitPanels() {
   sideEdge.show();
   panelEdge.show();
+  chatEdge.show();
+  // The window, unlike a panel, may move the frames beside a Fill frame.
+  for (const f of frames) f.anchorW = undefined;
+  apply();
 }
 window.addEventListener("resize", fitPanels);
-root.append(shellEl, panelEdge.grip);
+root.append(shellEl, panelEdge.grip, chatEdge.grip, sideEdge.grip);
 
 // ---------------------------------------------------------------------------
 // Frames
@@ -611,8 +628,10 @@ function moveFrame(f: Frame, e: PointerEvent) {
 // ---------------------------------------------------------------------------
 // Layout
 
+/** The canvas's visible part, between the panels: its left edge (`cl`) and size, in canvas pixels. */
 function canvasSize() {
-  return { cw: canvas.clientWidth, ch: canvas.clientHeight };
+  const cl = sideEdge.width();
+  return { cl, cw: Math.max(1, canvas.clientWidth - cl - panelEdge.width() - chatEdge.width()), ch: canvas.clientHeight };
 }
 
 function clampZ(v: number) {
@@ -629,7 +648,7 @@ function gridStep() {
 /** Component frames nobody moved: a column to the right of the app frames. */
 function layout() {
   const apps = frames.filter((f) => f.kind === "app");
-  const left = Math.max(...apps.map((f) => f.x + f.w)) + GAP;
+  const left = Math.max(...apps.map((f) => f.x + (f.preset === "fill" ? (f.anchorW ??= f.w) : f.w))) + GAP;
   let y = Math.min(...apps.map((f) => f.y));
   const fixed = frames.filter((f) => f.kind === "app" || f.placed);
   for (const f of frames) {
@@ -700,26 +719,20 @@ function apply() {
     frameNames = names;
     layers.refresh();
   }
-  shellEl.classList.toggle("docked", docked);
-  panelEdge.grip.classList.toggle("on", docked);
   showPanels();
   zoomLabel.textContent = `${Math.round(z * 100)}%`;
   if (started && JSON.stringify({ z, x: Math.round(px), y: Math.round(py) }) !== savedCamera) save(CAMERA_SAVE_DELAY);
   const app = selectedApp();
-  for (const c of sizeControls) (c as HTMLInputElement).disabled = !app;
+  presetSel.disabled = !app;
   presetSel.value = app?.preset ?? "custom";
-  const focused = (el: HTMLElement) => document.activeElement === host && root.activeElement === el;
-  if (!focused(wIn)) wIn.value = app ? String(app.w) : "";
-  if (!focused(hIn)) hIn.value = app ? String(app.h) : "";
-  const ratio = !app || app.preset === "fill" ? -1 : RATIOS.findIndex(([, r]) => Math.abs(app.w / app.h - r) < 0.01);
-  ratioSel.value = ratio < 0 ? "" : String(ratio);
+  props.update(sel);
 }
 
 /** Center the box (world coordinates) at zoom `zz`. */
 function centerOn(x: number, y: number, w: number, hh: number, zz: number) {
-  const { cw, ch } = canvasSize();
+  const { cl, cw, ch } = canvasSize();
   z = clampZ(zz);
-  px = Math.round((cw - w * z) / 2 - x * z);
+  px = Math.round(cl + (cw - w * z) / 2 - x * z);
   py = Math.round((ch - hh * z) / 2 - y * z);
 }
 
@@ -733,7 +746,7 @@ function focusFrame(f: Frame, zz?: number) {
   apply();
   if (f.kind === "app" && f.preset === "fill") {
     z = 1;
-    px = -f.x;
+    px = canvasSize().cl - f.x;
     py = -f.y;
     return;
   }
@@ -753,6 +766,7 @@ function fitAll() {
 function setPreset(f: Frame, id: string) {
   const p = PRESETS.find((p) => p.id === id);
   f.preset = id;
+  f.anchorW = undefined;
   if (p && p.id !== "fill") {
     f.w = p.w;
     f.h = p.h;
@@ -781,9 +795,9 @@ function zoomAt(zz: number, cx: number, cy: number) {
 }
 
 function zoomStep(dir: 1 | -1) {
-  const { cw, ch } = canvasSize();
+  const { cl, cw, ch } = canvasSize();
   const next = dir > 0 ? STEPS.find((s) => s > z + 0.001) : [...STEPS].reverse().find((s) => s < z - 0.001);
-  zoomAt(next ?? z, cw / 2, ch / 2);
+  zoomAt(next ?? z, cl + cw / 2, ch / 2);
 }
 
 function wheelDelta(e: WheelEvent) {
@@ -805,49 +819,155 @@ function panBy(dx: number, dy: number) {
 // Bar
 
 addBtn.addEventListener("click", addApp);
-presetSel.addEventListener("change", () => {
-  const f = selectedApp();
-  if (f) setPreset(f, presetSel.value);
-});
-
-function stepPreset(dir: 1 | -1) {
-  const f = selectedApp();
-  if (!f) return;
-  const i = PRESETS.findIndex((p) => p.id === f.preset);
-  const next = PRESETS[(Math.max(0, i) + dir + PRESETS.length) % PRESETS.length];
-  setPreset(f, next.id);
-}
-prevBtn.addEventListener("click", () => stepPreset(-1));
-nextBtn.addEventListener("click", () => stepPreset(1));
-
-function typedSize() {
-  const f = selectedApp();
-  const nw = parseInt(wIn.value, 10);
-  const nh = parseInt(hIn.value, 10);
-  if (f && nw > 0 && nh > 0) setSize(f, nw, nh);
-  else apply();
-}
-for (const input of [wIn, hIn]) {
-  input.addEventListener("change", typedSize);
-  input.addEventListener("keydown", (e) => {
-    const k = e as KeyboardEvent;
-    if (k.key === "Enter") input.blur();
-    if (k.key === "ArrowUp" || k.key === "ArrowDown") {
-      k.preventDefault();
-      const d = (k.key === "ArrowUp" ? 1 : -1) * (k.shiftKey ? 10 : 1);
-      input.value = String((parseInt(input.value, 10) || 0) + d);
-      typedSize();
-    }
-  });
-}
-rotateBtn.addEventListener("click", () => {
-  const f = selectedApp();
-  if (f) setSize(f, f.h, f.w);
-});
 zoomOut.addEventListener("click", () => zoomStep(-1));
 zoomIn.addEventListener("click", () => zoomStep(1));
 fitBtn.addEventListener("click", fitAll);
-oneBtn.addEventListener("click", () => zoomKey("reset"));
+zoomLabel.addEventListener("click", () => zoomKey("reset"));
+
+// ---------------------------------------------------------------------------
+// The selected frame's properties, in its inspector (frameProps): an app
+// frame's device, size and ratio; a component frame's file and layout.
+// Their own element and shadow root, so the client can mount it as is.
+
+const props = frameProperties();
+
+function frameProperties() {
+  const el = document.createElement("spark-frame-props");
+  el.style.cssText = "display: block;";
+  const r = el.attachShadow({ mode: "open" });
+  const row = (k: string, ...v: (HTMLElement | string)[]) => h("div", { class: "row" }, h("span", { class: "k" }, k), h("div", { class: "v" }, ...v));
+  const name = h("span", { class: "nm" });
+  const meta = h("span", { class: "meta" });
+  const kindIcon = h("span", { class: "ic" });
+  const device = presetSelect("Device or resolution of this frame");
+  const wIn = h("input", { title: "Width (px); arrow keys step, Shift by 10", inputmode: "numeric" }) as HTMLInputElement;
+  const hIn = h("input", { title: "Height (px); arrow keys step, Shift by 10", inputmode: "numeric" }) as HTMLInputElement;
+  const rotate = h("button", { class: "ib", title: "Swap width and height" }, icon("rotate-ccw", 13));
+  const ratio = h("select", { title: "Aspect ratio: keeps the width" }) as HTMLSelectElement;
+  ratio.append(h("option", { value: "" }, "Free"));
+  for (const [i, [n]] of RATIOS.entries()) ratio.append(h("option", { value: String(i) }, n));
+  const remove = h("button", { class: "danger", title: "Remove this app frame from the board" }, "Remove frame");
+  const file = h("span", { class: "file" });
+  const layoutSel = h("select", { title: "Cases in a row or stacked in a column" }) as HTMLSelectElement;
+  for (const [v, n] of [["auto", "Auto"], ["row", "Row"], ["column", "Stacked"]]) layoutSel.append(h("option", { value: v }, n));
+  const app = h(
+    "div",
+    {},
+    row("Device", device),
+    row("Size", h("label", { class: "dim" }, h("i", {}, "W"), wIn), h("label", { class: "dim" }, h("i", {}, "H"), hIn), rotate),
+    row("Ratio", ratio),
+    h("div", { class: "actions" }, remove),
+  );
+  const comp = h("div", {}, row("File", file), row("Cases", layoutSel), row("Size", meta.cloneNode() as HTMLElement));
+  const compSize = comp.querySelector(".meta") as HTMLElement;
+  r.append(
+    h(
+      "style",
+      {},
+      `${THEME}
+      :host { all: initial; display: block; }
+      * { box-sizing: border-box; }
+      .fp { margin: 0 0 var(--sp-3); padding: var(--sp-2) var(--sp-2) var(--sp-1); border-radius: var(--sp-r-md); background: var(--sp-surface); color: var(--sp-text); font: var(--sp-fs-md)/1.45 var(--sp-font); }
+      .head { display: flex; align-items: center; gap: 6px; margin-bottom: var(--sp-2); color: var(--sp-text-dim); font: 600 var(--sp-fs-sm)/1.2 var(--sp-font); text-transform: uppercase; letter-spacing: .06em; }
+      .head .ic { display: inline-flex; color: var(--sp-accent); }
+      .fp.component .head .ic { color: var(--sp-component); }
+      .head .nm { color: var(--sp-text-strong); text-transform: none; letter-spacing: 0; font-size: var(--sp-fs-md); }
+      .head .meta { margin-left: auto; font: var(--sp-fs-xs) var(--sp-mono); text-transform: none; letter-spacing: 0; }
+      .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+      .row .k { width: 64px; flex: none; color: var(--sp-text-dim); }
+      .row .v { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+      button, select, input {
+        font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
+        border-radius: var(--sp-r-sm); height: 24px; padding: 0 6px;
+      }
+      button { cursor: pointer; }
+      select { flex: 1; min-width: 0; }
+      input:focus, select:focus { outline: 1px solid var(--sp-accent); border-color: var(--sp-accent); }
+      .dim { flex: 1; min-width: 0; display: flex; align-items: center; height: 24px; background: var(--sp-field); border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-sm); }
+      .dim:focus-within { border-color: var(--sp-accent); }
+      .dim i { padding: 0 2px 0 7px; font: var(--sp-fs-xs) var(--sp-mono); font-style: normal; color: var(--sp-text-dim); }
+      .dim input { flex: 1; min-width: 0; width: 100%; border: none; background: none; font: var(--sp-fs-sm) var(--sp-mono); outline: none; }
+      .ib { width: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--sp-text-dim); }
+      .ib:hover { color: var(--sp-text-strong); }
+      .file { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .meta { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text); }
+      .actions { display: flex; justify-content: flex-end; padding: 4px 0 2px; }
+      .actions:empty { display: none; }
+      button.danger { background: transparent; border-color: transparent; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+      button.danger:hover { color: var(--sp-danger); border-color: var(--sp-line-strong); }
+      `,
+    ),
+    h("div", { class: "fp" }, h("div", { class: "head" }, kindIcon, name, meta), app, comp),
+  );
+  // Buttons and dropdowns never keep focus (Tab and Esc are Spark's).
+  r.addEventListener("click", (e) => {
+    const b = (e.composedPath()[0] as Element).closest?.("button");
+    if (b && r.activeElement === b) b.blur();
+  });
+  let shown: Frame | null = null;
+  function typed() {
+    const nw = parseInt(wIn.value, 10);
+    const nh = parseInt(hIn.value, 10);
+    if (shown?.kind === "app" && nw > 0 && nh > 0) setSize(shown, nw, nh);
+    else apply();
+  }
+  for (const input of [wIn, hIn]) {
+    input.addEventListener("change", typed);
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" || e.key === "Escape") input.blur();
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const d = (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1);
+        input.value = String((parseInt(input.value, 10) || 0) + d);
+        typed();
+      }
+    });
+  }
+  rotate.addEventListener("click", () => shown?.kind === "app" && setSize(shown, shown.h, shown.w));
+  ratio.addEventListener("change", () => {
+    if (shown?.kind === "app" && ratio.value !== "") setSize(shown, shown.w, shown.w / RATIOS[Number(ratio.value)][1]);
+    ratio.blur();
+  });
+  remove.addEventListener("click", () => shown && removeFrame(shown));
+  layoutSel.addEventListener("change", () => {
+    if (shown?.kind === "component") setLayout(shown, layoutSel.value as Layout);
+    layoutSel.blur();
+  });
+  return {
+    el,
+    /** Show the selected frame's values (every apply: cheap, it only sets what changed). */
+    update(f: Frame) {
+      shown = f;
+      if (!el.isConnected) return;
+      const isApp = f.kind === "app";
+      r.querySelector(".fp")!.className = `fp ${f.kind}`;
+      app.style.display = isApp ? "" : "none";
+      comp.style.display = isApp ? "none" : "";
+      const iconName = isApp ? "app-window" : "component";
+      if (kindIcon.dataset.icon !== iconName) {
+        kindIcon.dataset.icon = iconName;
+        kindIcon.replaceChildren(icon(iconName, 13));
+      }
+      name.textContent = f.name.textContent || fileTitle(f.file);
+      meta.textContent = isApp ? (f.preset === "fill" ? "Fills the canvas" : "") : "";
+      if (isApp) {
+        device.value = f.preset;
+        if (r.activeElement !== wIn) wIn.value = String(f.w);
+        if (r.activeElement !== hIn) hIn.value = String(f.h);
+        const ri = f.preset === "fill" ? -1 : RATIOS.findIndex(([, x]) => Math.abs(f.w / f.h - x) < 0.01);
+        ratio.value = ri < 0 ? "" : String(ri);
+        ratio.disabled = rotate.toggleAttribute("disabled", f.preset === "fill");
+        remove.style.display = f.id === "app-1" ? "none" : "";
+      } else {
+        file.textContent = f.file.replace(/^\//, "") || "No case files yet";
+        file.title = file.textContent;
+        layoutSel.value = f.layout;
+        compSize.textContent = `${f.w} × ${f.h}`;
+      }
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Zoom and pan input on the canvas
@@ -973,6 +1093,8 @@ function activate(win: Window) {
   if (activeWin && activeWin !== win) clients.get(activeWin)?.deselect();
   activeWin = win;
   showPanels();
+  // Its inspector takes the frame's properties (frameProps).
+  clients.get(win)?.refresh?.();
 }
 
 /** Only the selected frame's panel shows. */
@@ -1012,7 +1134,7 @@ const api: ShellApi = {
     if (hooks.changes) changesTab.append(hooks.changes);
     if (frameOf(hooks.win) === selected()) activate(hooks.win);
     else showPanels();
-    hooks.setOpen(docked);
+    hooks.setOpen(true);
     hooks.setPicking(edit);
     // Its tree in the Layers tab.
     layers.refresh();
@@ -1042,12 +1164,15 @@ const api: ShellApi = {
   selectedElsewhere(win) {
     return !!selWin && selWin !== win && clients.has(selWin);
   },
-  setDocked(v) {
-    if (v === docked) return;
-    docked = v;
-    fitPanels();
-    for (const hooks of clients.values()) hooks.setOpen(v);
-    apply();
+  // The panels are always open on the board.
+  setDocked() {},
+  frameProps(win) {
+    const f = frameOf(win);
+    if (!f || f !== selected()) return null;
+    props.update(f);
+    // Mounted only now, so update it again once it's in the page.
+    queueMicrotask(() => props.update(f));
+    return props.el;
   },
   wheelZoom(x, y, deltaY) {
     const f = selected();
@@ -1285,10 +1410,10 @@ function openChat(chat: ChatRef): boolean {
 
 /** Bring a box in a frame (the frame's own coordinates) into view when it's off screen, at the current zoom. */
 function bringIntoView(f: Frame, box: { x: number; y: number; w: number; h: number }) {
-  const { cw, ch } = canvasSize();
+  const { cl, cw, ch } = canvasSize();
   const x = px + (f.x + box.x) * z;
   const y = py + (f.y + box.y) * z;
-  if (x < 0 || y < 0 || x + box.w * z > cw || y + box.h * z > ch) {
+  if (x < cl || y < 0 || x + box.w * z > cl + cw || y + box.h * z > ch) {
     centerOn(f.x + box.x, f.y + box.y, box.w, box.h, z);
     apply();
   }
@@ -1319,10 +1444,10 @@ const layers = layersTab({
       hooks.selectFrame();
     } else hooks?.deselect();
     // Off screen: bring the frame's corner into view.
-    const { cw, ch } = canvasSize();
+    const { cl, cw, ch } = canvasSize();
     const x = px + f.x * z;
     const y = py + f.y * z;
-    if (x + f.w * z < 0 || y + f.h * z < 0 || x > cw || y > ch) bringIntoView(f, { x: 0, y: 0, w: Math.min(f.w, cw / z), h: Math.min(f.h, ch / z) });
+    if (x + f.w * z < cl || y + f.h * z < 0 || x > cl + cw || y > ch) bringIntoView(f, { x: 0, y: 0, w: Math.min(f.w, cw / z), h: Math.min(f.h, ch / z) });
     layers.refresh();
   },
   focusFrame: (id) => {
@@ -1359,7 +1484,7 @@ const layers = layersTab({
   },
   shown: () => side.shows("Layers"),
 });
-side.addTab("Layers", layers.el, "layers", "Layers: every frame and the elements in it", () => layers.draw());
+side.addTab("Layers", layers.el, "layers", "Every frame and the elements in it", () => layers.draw());
 const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
 side.addTab("Chats", chatList.el, "message-circle", "Chats with Claude, on every element");
 // Changes: the active frame's change list and Implement changes (each client mounts its own; showPanels picks).
@@ -1398,13 +1523,14 @@ selectedId = loaded.selected;
 document.documentElement.append(host);
 syncComponents(caseFiles);
 window.addEventListener("spark:cases", (e) => syncComponents((e as CustomEvent<string[]>).detail));
-shellEl.classList.toggle("docked", docked);
 side.init();
+fitPanels();
 // The camera where it was left; the first time, the selected frame in view.
 const cam = loaded.camera;
 if (cam && [cam.z, cam.x, cam.y].every(Number.isFinite)) {
   z = clampZ(cam.z);
-  px = cam.x;
+  // Saved when the canvas started right of an open sidebar: the frames stay where they were on screen.
+  px = cam.x + (loaded.canvas !== 2 && getState<{ open?: boolean }>("sidebar")?.open === true ? sideEdge.width() : 0);
   py = cam.y;
   savedCamera = JSON.stringify({ z, x: px, y: py });
 } else focusFrame(selected());

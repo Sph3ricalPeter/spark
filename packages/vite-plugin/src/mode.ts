@@ -40,7 +40,7 @@ export type Layer = {
 /** What a client in one of the shell's frames hands the shell. */
 export type ClientHooks = {
   win: Window;
-  /** The client's panel host, mounted in the shell; only the active frame's shows. */
+  /** The client's panel host, mounted in the shell (the inspector and, on the board, the chat column); only the active frame's shows. */
   panel: HTMLElement;
   /** The client's change list (with Implement changes), mounted in the sidebar's Changes tab; only the active frame's shows. */
   changes?: HTMLElement;
@@ -48,6 +48,8 @@ export type ClientHooks = {
   setPicking(edit: boolean): void;
   /** Another frame became active: drop the selection here. */
   deselect(): void;
+  /** This frame became the selected one: draw the inspector again (it shows the frame's properties, frameProps). */
+  refresh?(): void;
   /** Another frame took the hover: drop the hover box here. */
   unhover?(): void;
   /** The frame's title was clicked in edit mode: select the frame itself (to Ask Claude about all of it). */
@@ -99,8 +101,15 @@ export type ShellApi = {
   setChangeCount?(n: number): void;
   /** Is an element selected in a frame other than this one? */
   selectedElsewhere?(win: Window): boolean;
-  /** The panel was opened or closed (in the active frame): all frames follow, the canvas docks. */
+  /** The panel was opened or closed (in the active frame). On the board the panels are always open, so it does nothing. */
   setDocked(docked: boolean): void;
+  /**
+   * This frame's properties on the board (an app frame's device, size and
+   * ratio; a component frame's layout), for the inspector to show when the
+   * frame itself or nothing is selected. One element, moved between the
+   * panels: only the selected frame's gets it, null for the others.
+   */
+  frameProps?(win: Window): HTMLElement | null;
   /** Ctrl+wheel or a pinch over the app, at a point in the app's own coordinates. */
   wheelZoom(x: number, y: number, deltaY: number): void;
   /** Ctrl +, Ctrl -, Ctrl 0 pressed inside the app. */

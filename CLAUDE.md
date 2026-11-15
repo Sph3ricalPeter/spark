@@ -40,7 +40,7 @@ Zustand). Release and deploy are ported from dawg and described in
   `tag.ts` adds `data-spark-src` / `data-spark-comp` to DOM elements and
   `data-spark-call` to component call sites; `client.ts` is the overlay and
   docked panel (Shadow DOM, no React; Alt+S). View mode (default) leaves the
-  app usable; edit mode (Tab or Alt+E; the View/Edit island in the canvas bar shows which) picks elements, Esc steps back out to view.
+  app usable; edit mode (Tab or Alt+E; the View/Edit switch in the board's bottom toolbar shows which) picks elements, Esc steps back out to view.
   Spark's own buttons and dropdowns never keep focus: Tab and Esc are
   always Spark's shortcuts except while typing in a text field.
   Shift+click adds to the selection (the first pick leads: inspector,
@@ -76,10 +76,17 @@ Zustand). Release and deploy are ported from dawg and described in
   more) and one component frame per `*.spark.tsx`, sized to its cases and
   draggable by its title; the board keeps the clients in step (one mode,
   the selected frame's panel, one change list and undo history), and view
-  mode leaves every frame usable, the selected one outlined dashed. Its left sidebar (`sidebar.ts`) has the
+  mode leaves every frame usable, the selected one outlined dashed. Its layout is Figma's: a slim title bar, the
+  floating bottom toolbar (View/Edit, + Frame, device, zoom), and three always-shown panels that
+  cover the window-wide canvas instead of pushing it (resizing one crops the view, never moves the
+  camera; only a Fill frame reflows): on the left the sidebar, on the right the selected frame's
+  inspector and, rightmost, its chat with Claude (the client's Ask box as a column, about the
+  selection or, with nothing selected, the whole frame). The inspector shows the frame's own
+  properties (device, size, ratio; a component frame's layout) from `ShellApi.frameProps` when
+  the frame or nothing is selected. Its left sidebar (`sidebar.ts`) has the
   Layers (`layers.ts`: every frame and its element tree, Figma style, in
   step with the canvas selection both ways; the client names the tree
-  through `ClientHooks.layers`), Chats and Changes tabs (opened from their bar buttons; the head only names the tab); chats are never
+  through `ClientHooks.layers`), Chats and Changes tabs (a tab strip at its top); chats are never
   deleted: "Resolve" archives one into the Chats tab's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;

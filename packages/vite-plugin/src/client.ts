@@ -463,6 +463,35 @@ const ASK_STYLE = `
     .ask .ib.send.ready { background: var(--sp-accent); color: var(--sp-text-strong); }
 `;
 
+/**
+ * On the board the panel and the Ask chat are columns on the right (shell.ts):
+ * the inspector, and rightmost the chat, each as wide as the board's resize
+ * grips say (--sp-panel-w, --sp-chat-w), under the title bar (--sp-panel-top).
+ */
+const COLUMN_STYLE = `
+    .panel.in-shell { right: var(--sp-chat-w, 340px); width: var(--sp-panel-w, ${PANEL_W}px); }
+    .panel.in-shell > header { display: none; }
+    .panel.in-shell .tabs { display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 8px; flex: none; }
+    .panel.in-shell .tabs button {
+      height: 26px; padding: 0 8px; border: none; border-radius: var(--sp-r-sm); background: transparent;
+      color: var(--sp-text-dim); font: 500 var(--sp-fs-md)/1 var(--sp-font);
+    }
+    .panel.in-shell .tabs button:hover { color: var(--sp-text-strong); background: var(--sp-field); }
+    .panel.in-shell .tabs button.on { color: var(--sp-text-strong); background: var(--sp-line-strong); }
+    .ask.column {
+      top: var(--sp-panel-top, 0px); right: 0; bottom: 0; left: auto; width: var(--sp-chat-w, 340px); padding: 0;
+      background: var(--sp-bg); border: none; border-left: 1px solid var(--sp-line); border-radius: 0; box-shadow: none;
+    }
+    .ask.column .ask-top, .ask.column.has-chat .ask-top {
+      display: flex; flex: none; height: 40px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--sp-line);
+      color: var(--sp-text-strong); font: 600 var(--sp-fs-md)/1 var(--sp-font);
+    }
+    .ask.column .ask-thread { display: flex; flex: 1; min-height: 0; max-height: none; margin: 0; padding: 12px 14px; gap: 10px; }
+    .ask.column .ask-main { flex: none; margin: 0 10px 10px; height: 38px; }
+    .ask.column .chat-empty { margin: auto 0; padding: 0 8px; text-align: center; color: var(--sp-text-dim); }
+    .ask.column .chat-empty b { color: var(--sp-text); font-weight: 600; }
+`;
+
 const STYLE = `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
@@ -521,6 +550,7 @@ const STYLE = `${THEME}
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     ${ASK_STYLE}
+    ${COLUMN_STYLE}
     /* A chat's pin: a speech-bubble badge on the element's top-right corner, like a comment. */
     .pin {
       position: fixed; display: none; width: 22px; height: 22px; padding: 0; pointer-events: auto; cursor: pointer;
@@ -803,8 +833,10 @@ const panel = h(
   footer,
 );
 panel.addEventListener("click", () => closePopover());
-// On the board the bar's View/Edit switch is right there; the panel doesn't repeat it.
+// On the board the toolbar's View/Edit switch is right there; the panel doesn't repeat it.
 if (shell) modeToggle.style.display = "none";
+// On the board the inspector is always open, a column left of the chat (COLUMN_STYLE): no header, no Spark button.
+if (shell) panel.classList.add("in-shell");
 const fab = h("button", { class: "fab", title: "Open Spark (Alt+S)", click: () => setOpen(true) }, "Spark");
 // Ask Claude, right on the selection.
 const askInput = h("input", { placeholder: "Ask Claude to change this…", spellcheck: "false" }) as HTMLInputElement;
@@ -856,7 +888,8 @@ if (shell) {
   panelHost.style.cssText = host.style.cssText;
   panelRoot.append(h("style", {}, STYLE));
 }
-panelRoot.append(panel, fab);
+panelRoot.append(panel);
+if (!shell) panelRoot.append(fab);
 // On the board the change list lives in the sidebar's Changes tab, out of the inspector's way.
 const changesHost = shell ? document.createElement("spark-changes") : null;
 if (changesHost) {
@@ -865,8 +898,9 @@ if (changesHost) {
   r.append(h("style", {}, STYLE), h("div", { class: "changes-tab" }, footer));
   dropFocus(r);
 }
-// On the board the popup lives in the shell too, so it can sit outside a small
-// frame (over the canvas) instead of on top of the element it's about.
+// On the board the chat is the rightmost column, always there (COLUMN_STYLE);
+// on a page on its own it's a popup next to the selection.
+if (shell) askBox.classList.add("column");
 panelRoot.append(askBox);
 
 // Spark's own buttons and dropdowns never keep focus: Tab and Esc are Spark's
@@ -924,6 +958,8 @@ let editFrom = "";
 let resizing = false;
 
 function setOpen(v: boolean) {
+  // On the board the panels are always open.
+  if (shell) v = true;
   open = v;
   panel.classList.toggle("open", v);
   fab.classList.toggle("hidden", v);
@@ -1760,7 +1796,7 @@ function implement() {
 function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
-  const el = selected;
+  const el = askElement();
   // A frame or variant box isn't one element: no owners or text, just its target.
   const about = (x: Element, label?: string) => {
     const own = targetOf(x) ? {} : { owners: instancePath(x), text: (x.textContent ?? "").trim().slice(0, 200) };
@@ -2007,6 +2043,23 @@ function keepSelection(now: number) {
   }
 }
 
+/**
+ * What the chat is about: the selection; on the board with nothing selected,
+ * the whole frame (its chat column is always there, so it's never about nothing).
+ */
+function askElement(): Element | null {
+  if (selected?.isConnected) return selected;
+  return shell ? document.documentElement : null;
+}
+
+/** Point the chat at what it's about (askElement), whatever the inspector shows. */
+function syncAsk() {
+  const el = askElement();
+  if (!el) return;
+  const t = targetOf(el);
+  renderAsk(el, t ? [] : instancePath(el), t ? "box" : kindOf(el, getComputedStyle(el)));
+}
+
 /** Fill the popup for the selection: its name, then its conversation. */
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   const t = targetOf(el);
@@ -2078,6 +2131,18 @@ function renderChat() {
       ),
     );
   }
+  // The chat column is always there: with nothing said yet it says what it's for.
+  if (shell && !nodes.length) {
+    nodes.push(
+      h(
+        "div",
+        { class: "chat-empty" },
+        "Ask Claude about ",
+        h("b", {}, askOn?.label ?? "the selection"),
+        ". Select an element (Edit, Tab) to ask about that one instead; Shift+click adds more.",
+      ),
+    );
+  }
   const stick = askThread.scrollHeight - askThread.scrollTop - askThread.clientHeight < 24;
   askThread.replaceChildren(...nodes);
   if (stick || answering) askThread.scrollTop = askThread.scrollHeight;
@@ -2122,6 +2187,11 @@ function placeBeside(e: Box, w: number, hgt: number, room: Box, gap: number): { 
  * canvas, so a small component frame doesn't squeeze it onto the element.
  */
 function placeAsk() {
+  // On the board it's a column, always shown, and the selection keeps its floating label.
+  if (shell) {
+    askBox.style.display = "flex";
+    return;
+  }
   const show = open && picking && !!selected && selected.isConnected && !editing && !resizing;
   const hide = () => {
     askBox.style.display = "none";
@@ -2346,15 +2416,20 @@ function renderTarget(el: Element, t: Target) {
       h("span", { class: "size", title: "Size on screen" }, `${Math.round(r.width)} × ${Math.round(r.height)}`),
     ),
     ...(file ? [h("div", { class: "el-src", title: "Its cases are written in" }, locLink(file.replace(/^\//, "")))] : []),
+  );
+  // The frame's own properties (size, device, layout), like a component's.
+  const fp = t.kind === "frame" ? shell?.frameProps?.(window) : null;
+  if (fp) body.append(h("div", { style: "margin-top: var(--sp-3)" }, fp));
+  const where = shell ? "in the chat on the right" : "in the popup next to it";
+  body.append(
     h(
       "p",
       { class: "empty" },
       t.kind === "frame"
-        ? "The whole frame. Ask Claude about all of it in the popup next to it; click an element inside to edit that one."
-        : "This variant (case) of the component. Ask Claude about it in the popup next to it; click an element inside to edit that one, Arrow Up for the frame.",
+        ? `The whole frame. Ask Claude about all of it ${where}; click an element inside to edit that one.`
+        : `This variant (case) of the component. Ask Claude about it ${where}; click an element inside to edit that one, Arrow Up for the frame.`,
     ),
   );
-  renderAsk(el, [], "box");
 }
 
 function locLink(loc: string | null) {
@@ -2437,6 +2512,7 @@ function renderPageView() {
 function render() {
   renderChanges();
   closePopover();
+  syncAsk();
   body.replaceChildren();
   if (view === "variables") {
     renderVariablesView();
@@ -2447,6 +2523,9 @@ function render() {
     return;
   }
   if (!selected) {
+    // On the board: the frame's own properties (its size, device, layout) first.
+    const fp = shell?.frameProps?.(window);
+    if (fp) body.append(fp);
     body.append(
       h(
         "div",
@@ -2600,7 +2679,6 @@ function render() {
   });
   body.append(all);
   if (!sectionsOpen.all) for (const f of editedRest) all.append(fieldRow(f));
-  renderAsk(el, path, kind);
 
   // Variables this element uses: editing one changes everything that uses it.
   const tokens = tokensUsed(el, rules);
@@ -3315,6 +3393,7 @@ if (shell) {
     setOpen,
     setPicking,
     deselect: () => select(null),
+    refresh: () => render(),
     unhover: () => hovered && hover(null),
     // The frame's title on the board was clicked in edit mode: the frame itself is the selection.
     selectFrame: () => select(document.documentElement),

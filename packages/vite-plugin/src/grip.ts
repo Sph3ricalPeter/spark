@@ -1,5 +1,5 @@
 // Resizable side panels on the board (shell.ts): the left sidebar's right
-// edge and the inspector's left edge drag to change their width.
+// edge, and the inspector's and the chat's left edges, drag to change their width.
 //
 // A width is a CSS variable on the shell's host (`--sp-side-w`,
 // `--sp-panel-w`). Custom properties cross shadow roots, so the client's
@@ -10,7 +10,7 @@
 import { h } from "./fields.ts";
 import { getState, setState } from "./state.ts";
 
-type Widths = Partial<Record<"sidebar" | "panel", number>>;
+type Widths = Partial<Record<"sidebar" | "panel" | "chat", number>>;
 
 export type Edge = {
   /** Its name in the saved "panel-widths". */
@@ -30,7 +30,7 @@ export const MIN_CANVAS = 240;
 export const GRIP_STYLE = `
   /* 7px to grab, centered on the panel's border; an accent line once hovered a moment or while dragging. */
   .grip {
-    position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; display: none;
+    position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px;
     cursor: col-resize; touch-action: none; pointer-events: auto;
   }
   .grip::after {
@@ -43,12 +43,12 @@ export const GRIP_STYLE = `
 `;
 
 /**
- * A draggable edge for one panel; call `show` once both panels have theirs. `room` is the most the panel may take right
- * now (the window minus the other panel and the canvas's minimum);
+ * A draggable edge for one panel; call `show` once every panel has its own. `room` is the most the panel may take right
+ * now (the window minus the other panels and the canvas's minimum);
  * `dragging` is told when a drag starts and ends (the board stops its frames
- * from swallowing the pointer).
+ * from swallowing the pointer); `resized` after every change of width.
  */
-export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dragging: (on: boolean) => void) {
+export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dragging: (on: boolean) => void, resized?: () => void) {
   let saved = edge.def;
   const v = getState<Widths>("panel-widths")?.[edge.name];
   if (typeof v === "number" && Number.isFinite(v) && v > 0) saved = v;
@@ -60,6 +60,7 @@ export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dr
   function show() {
     width = clamp(saved);
     target.style.setProperty(edge.prop, `${width}px`);
+    resized?.();
   }
   function store() {
     setState("panel-widths", { ...getState<Widths>("panel-widths"), [edge.name]: saved });

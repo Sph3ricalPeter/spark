@@ -1,7 +1,7 @@
 // The window's title bar, when the board is open in Spark's own window.
 //
 // Spark's window has no native frame (decorations off, like dawg), so the
-// board's bar is the title bar too: the spark button goes home (back to the
+// board's bar is the title bar, and only that: the spark button goes home (back to the
 // launcher, src-tauri/src/project.rs), the project's name and every empty bit
 // of the bar drag the window (a double-click maximizes), and the window
 // buttons sit at the right end. In a plain browser tab (`npm run fixture`)
@@ -34,20 +34,8 @@ const label = () => tauri?.metadata?.currentWindow?.label ?? "main";
 const win = (cmd: string) => void tauri?.invoke(`plugin:window|${cmd}`, { label: label() }).catch(() => {});
 
 export const TITLE_BAR_STYLE = `
-  /* The bar also holds the title bar's parts: on a narrower window the
-     sidebar buttons keep just their icons, then the size steppers, the
-     ratio dropdown and the mode island's key hint go (the size dropdown and
-     the Tab key do the same). Past that it scrolls, as before. */
-  .titled .bar { container-type: inline-size; }
-  @container (max-width: 1340px) {
-    .side-toggle .label { display: none; }
-  }
-  @container (max-width: 1180px) {
-    .step, .ratio, .island kbd { display: none; }
-    .bar select { max-width: 130px; }
-  }
-  .titled .bar, .titled.docked .bar { right: ${WINCTL_W}px; }
-  .titled .panel-grip { top: var(--sp-panel-top, 0px); }
+  /* Just the title bar: the board's controls are in its toolbar and panels (shell.ts). */
+  .titled .bar { right: ${WINCTL_W}px; }
   .home {
     display: inline-flex; align-items: center; justify-content: center; border-color: transparent; background: transparent;
     color: #ffd23f; padding: 0; width: 28px; margin-left: -4px;
@@ -59,7 +47,7 @@ export const TITLE_BAR_STYLE = `
     font-weight: 600; color: var(--sp-text-strong); padding-right: 4px;
   }
   .winctl {
-    position: absolute; top: 0; right: 0; height: 40px; display: flex;
+    position: absolute; top: 0; right: 0; height: var(--sp-panel-top, 36px); display: flex; z-index: 3;
     background: var(--sp-bg); border-bottom: 1px solid var(--sp-line);
   }
   .winctl button {
