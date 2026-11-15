@@ -23,6 +23,10 @@ Zustand). Release and deploy are ported from dawg and described in
   The window is frameless: the launcher's `TitleBar.tsx` and, with a project
   open, the board's bar (`titlebar.ts`) are the title bar (drag, double-click
   maximizes, window buttons).
+  `update.rs` keeps updates going with a project open: the board's title
+  bar asks over `spark://update-check` / `spark://update-install` events
+  (the launcher uses the updater's JS API instead), answered with
+  `spark://update-state`; installing still only follows a click.
   `capabilities/project.json` lets that window on the dev server's origin
   use the system dialogs, read-only window/event/path calls and the title
   bar's window calls; `mode.ts` `borrowTauri` lends Tauri to the board's

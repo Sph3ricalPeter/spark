@@ -1,4 +1,5 @@
 mod project;
+mod update;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -67,6 +68,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(project::Projects::default())
+        .manage(update::Pending::default())
         .setup(|app| {
             if updates_enabled(app.handle()) {
                 app.handle()
@@ -78,6 +80,7 @@ pub fn run() {
                 }
             }
             project::init(app.handle());
+            update::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

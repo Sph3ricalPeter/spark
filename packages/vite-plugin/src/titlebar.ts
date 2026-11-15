@@ -4,7 +4,7 @@
 // board's bar is the title bar, and only that: the spark button goes home (back to the
 // launcher, src-tauri/src/project.rs), the project's name and every empty bit
 // of the bar drag the window (a double-click maximizes), and the window
-// buttons sit at the right end. In a plain browser tab (`npm run fixture`)
+// buttons sit at the right end, after the update button (updateButton). In a plain browser tab (`npm run fixture`)
 // there's no window to drive, so none of this shows.
 //
 // The calls go straight to Tauri's IPC: this page is the project's dev server
@@ -16,6 +16,7 @@ import { h } from "./fields.ts";
 
 type Internals = {
   invoke(cmd: string, args?: unknown): Promise<unknown>;
+  transformCallback(cb: (response: unknown) => void, once?: boolean): number;
   metadata?: { currentWindow?: { label?: string } };
 };
 
@@ -46,6 +47,18 @@ export const TITLE_BAR_STYLE = `
     flex: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 600; color: var(--sp-text-strong); padding-right: 4px;
   }
+  /* Updates: a quiet version tag, or "Restart to update" once one is downloaded (like the launcher's). */
+  .upd {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-color: transparent; background: transparent;
+    color: var(--sp-text-dim); font: var(--sp-fs-sm)/1 var(--sp-font); white-space: nowrap;
+  }
+  .upd:hover { background: var(--sp-field); color: var(--sp-text-strong); }
+  .upd svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .upd.busy svg { animation: upd-spin .9s linear infinite; }
+  @keyframes upd-spin { to { transform: rotate(360deg); } }
+  .upd.ready { background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); font-weight: 600; }
+  .upd.ready:hover { filter: brightness(1.1); background: var(--sp-accent); }
+  .upd.bad { color: var(--sp-warn); }
   .winctl {
     position: absolute; top: 0; right: 0; height: var(--sp-panel-top, 36px); display: flex; z-index: 3;
     background: var(--sp-bg); border-bottom: 1px solid var(--sp-line);
@@ -81,6 +94,7 @@ export function titleBar(bar: HTMLElement, project: string): HTMLElement {
   const name = h("span", { class: "project", "data-drag": "", title: project }, project);
   bar.prepend(home, name);
   for (const el of bar.querySelectorAll(".grow")) el.setAttribute("data-drag", "");
+  bar.append(updateButton());
 
   // Like Tauri's own drag regions: a press drags, a double press maximizes.
   bar.addEventListener("mousedown", (e) => {
@@ -103,4 +117,106 @@ export function titleBar(bar: HTMLElement, project: string): HTMLElement {
     button("", "Maximize", "M.5.5h9v9h-9z", "toggle_maximize"),
     button("close", "Close", "M0 0l10 10M10 0 0 10", "close"),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Updates, while a project is open (the launcher has its own, src/components/UpdateIndicator.tsx).
+// The board can't use the updater's JS API or call Spark's commands, so it
+// asks through events, like the home button (src-tauri/src/update.rs): a check
+// downloads quietly and answers with the state, and only a click on "Restart
+// to update" installs and relaunches.
+
+type BoardUpdate = {
+  enabled: boolean;
+  channel: "release" | "dev";
+  current: string;
+  ready: { version: string; notes: string | null; commit: string | null } | null;
+  error: string | null;
+};
+const emit = (event: string) => tauri!.invoke("plugin:event|emit", { event, payload: null });
+
+/** How often the board checks: "spark dev" updates on every push to dev. */
+const CHECK_MS = { release: 60 * 60 * 1000, dev: 10 * 60 * 1000 };
+
+/** "0.0.1-dev.42" → "dev 42", "0.2.0" → "v0.2.0" (as the launcher says it). */
+function shortVersion(v: string): string {
+  const run = /-dev\.(\d+)$/.exec(v)?.[1];
+  return run ? `dev ${run}` : `v${v}`;
+}
+
+function updateGlyph(kind: "ok" | "busy" | "ready" | "bad"): SVGSVGElement {
+  const d = {
+    ok: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM5.3 8.2 7.2 10l3.5-3.8",
+    busy: "M8 2a6 6 0 1 0 6 6",
+    ready: "M8 2v7.5M5 6.7 8 9.6l3-2.9M2.5 10v3.5h11V10",
+    bad: "M8 2 1.5 13.5h13zM8 6.5v3.5M8 11.5v.5",
+  }[kind];
+  return glyph(d, "0 0 16 16");
+}
+
+function updateButton(): HTMLElement {
+  const btn = h("button", { class: "upd", style: "display: none" });
+  let state: BoardUpdate | null = null;
+  let busy = false;
+  let error = "";
+  let checked = 0;
+  let timer = 0;
+
+  function draw() {
+    if (!state?.enabled) {
+      btn.style.display = "none";
+      return;
+    }
+    btn.style.display = "";
+    btn.className = "upd";
+    if (state.ready) {
+      const r = state.ready;
+      btn.classList.add("ready");
+      btn.replaceChildren(updateGlyph("ready"), `Restart to update · ${shortVersion(r.version)}`);
+      btn.title = [`${state.current} → ${r.version}${r.commit ? ` (${r.commit})` : ""}`, r.notes, "Installs it and restarts Spark."].filter(Boolean).join("\n\n");
+    } else if (busy) {
+      btn.classList.add("busy");
+      btn.replaceChildren(updateGlyph("busy"), "Checking for updates…");
+      btn.title = "";
+    } else if (error) {
+      btn.classList.add("bad");
+      btn.replaceChildren(updateGlyph("bad"), "Update check failed");
+      btn.title = `${error}\n\nClick to try again.`;
+    } else {
+      btn.replaceChildren(updateGlyph("ok"), shortVersion(state.current));
+      const at = checked ? new Date(checked).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+      btn.title = `Spark ${state.current} · up to date${at ? `, checked ${at}` : ""}. Click to check now.`;
+    }
+  }
+
+  function check() {
+    if (busy || state?.ready) return;
+    busy = true;
+    draw();
+    emit("spark://update-check").catch((e) => answer({ ...(state ?? { enabled: true, channel: "release", current: "", ready: null }), error: String(e) }));
+  }
+  /** Spark's answer to a check (or a failed install). */
+  function answer(s: BoardUpdate) {
+    state = s;
+    error = s.error ?? "";
+    busy = false;
+    checked = Date.now();
+    draw();
+    clearTimeout(timer);
+    if (s.enabled && !s.ready) timer = window.setTimeout(check, CHECK_MS[s.channel] ?? CHECK_MS.release);
+  }
+
+  btn.addEventListener("click", () => {
+    if (!state?.ready) return check();
+    btn.replaceChildren(updateGlyph("busy"), "Restarting…");
+    btn.classList.add("busy");
+    void emit("spark://update-install");
+  });
+  if (tauri) {
+    const handler = tauri.transformCallback((e) => answer((e as { payload: BoardUpdate }).payload));
+    tauri
+      .invoke("plugin:event|listen", { event: "spark://update-state", target: { kind: "Any" }, handler })
+      .then(check, () => {});
+  }
+  return btn;
 }
