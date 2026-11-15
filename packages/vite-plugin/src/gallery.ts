@@ -58,8 +58,9 @@ const STYLE = `
   .spark-gallery-cases { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
   .spark-gallery-case > .spark-gallery-name { font: 500 11px/1 ${UI_FONT}; color: #8a8f98; margin: 0 0 6px; cursor: text; outline: none; }
   .spark-gallery-case > .spark-gallery-name[contenteditable="plaintext-only"] { color: #fff; box-shadow: 0 1px 0 #4f8cff; }
+  /* A containing block for the case's absolute and fixed parts (readouts, popovers), so each stays in its own box. */
   .spark-gallery-case > .spark-gallery-stage {
-    padding: 24px; border: 1px dashed rgba(138, 143, 152, 0.35); border-radius: 8px; min-width: 120px;
+    position: relative; contain: layout; padding: 24px; border: 1px dashed rgba(138, 143, 152, 0.35); border-radius: 8px; min-width: 120px;
   }
   .spark-gallery-error { color: #e5534b; font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; max-width: 360px; }
   .spark-gallery-empty { max-width: 520px; margin: 64px auto; color: #8a8f98; font: 13px/1.6 ${UI_FONT}; }
@@ -74,6 +75,32 @@ const STYLE = `
   }
   .spark-gallery-empty button:disabled { opacity: 0.6; cursor: default; }
 `;
+
+/**
+ * A case whose component is positioned absolutely or fixed (a readout, a
+ * popover) takes no room in its box: grow the box to hold it, so the cases
+ * don't pile up on each other. Only parts that stick out past the box count,
+ * so a part sized to the box (width: 100%) never makes it grow.
+ */
+function fitStages(root: HTMLElement) {
+  for (const stage of Array.from(root.querySelectorAll<HTMLElement>(".spark-gallery-stage"))) {
+    stage.style.minWidth = stage.style.minHeight = "";
+    const box = stage.getBoundingClientRect();
+    let right = box.right;
+    let bottom = box.bottom;
+    for (const d of Array.from(stage.querySelectorAll("*"))) {
+      const pos = getComputedStyle(d).position;
+      if (pos !== "absolute" && pos !== "fixed") continue;
+      const r = d.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      right = Math.max(right, r.right);
+      bottom = Math.max(bottom, r.bottom);
+    }
+    const pad = 24;
+    if (right > box.right + 0.5) stage.style.minWidth = `${Math.ceil(right - box.left + pad)}px`;
+    if (bottom > box.bottom + 0.5) stage.style.minHeight = `${Math.ceil(bottom - box.top + pad)}px`;
+  }
+}
 
 /** A component frame stacks its cases when one is wider than this. */
 const STACK_W = 360;
@@ -149,6 +176,7 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
       // (a case wider than STACK_W), the board's toggle picks one for good.
       let layout = params.get("layout") ?? "auto";
       const arrange = () => {
+        fitStages(el);
         const widest = Math.max(0, ...Array.from(el.querySelectorAll(".spark-gallery-case"), (c) => c.getBoundingClientRect().width));
         el.classList.toggle("stack", layout === "column" || (layout === "auto" && widest > STACK_W));
         // The board sizes the frame to the cases (with the page's own margin

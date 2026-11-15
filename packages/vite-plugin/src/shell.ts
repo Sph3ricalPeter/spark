@@ -601,8 +601,12 @@ function moveFrame(f: Frame, e: PointerEvent) {
     t.removeEventListener("pointercancel", up);
     save();
     apply();
-    const win = f.iframe.contentWindow;
-    if (!moved && edit && win) clients.get(win)?.selectFrame?.();
+    // A click (no drag) selects the frame itself, to Ask Claude about all of it: from View mode too, which it leaves.
+    const hooks = moved ? undefined : clients.get(f.iframe.contentWindow!);
+    if (hooks?.selectFrame) {
+      if (!edit) switchMode(true);
+      hooks.selectFrame();
+    }
   };
   t.addEventListener("pointermove", move as EventListener);
   t.addEventListener("pointerup", up);
@@ -1233,9 +1237,11 @@ const layers = layersTab({
     selectFrame(f);
     const win = f.iframe.contentWindow;
     const hooks = win ? clients.get(win) : undefined;
-    // In Edit mode the frame itself is selected (its title does the same); in View mode no element is.
-    if (edit && hooks?.selectFrame) hooks.selectFrame();
-    else hooks?.deselect();
+    // The frame itself is selected, like a click on its title (from View mode too, which it leaves).
+    if (hooks?.selectFrame) {
+      if (!edit) switchMode(true);
+      hooks.selectFrame();
+    } else hooks?.deselect();
     // Off screen: bring the frame's corner into view.
     const { cw, ch } = canvasSize();
     const x = px + f.x * z;

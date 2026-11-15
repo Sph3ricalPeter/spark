@@ -46,7 +46,7 @@ Zustand). Release and deploy are ported from dawg and described in
   Shift+click adds to the selection (the first pick leads: inspector,
   handles and the Ask popup stay on it; Ask Claude sends them all).
   Besides elements, edit mode selects the whole frame (click its title on
-  the board, an empty spot, or Arrow Up past the outermost element) and a
+  the board, which also leaves View mode, an empty spot, or Arrow Up past the outermost element) and a
   component frame's variant boxes (`data-spark-case` from `gallery.ts`):
   no style fields, just Ask Claude with chats of their own
   (`@frame:<frame id>`, `@case:<file>#<export>` keys, `target` in the prompt).
@@ -92,7 +92,8 @@ Zustand). Release and deploy are ported from dawg and described in
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
   `gallery.ts` renders a component frame (`?spark=components&file=…`;
   the board lists the files through `/@spark/cases`): a `*.spark.tsx` next to a component exports one
-  function per case, rendered alone with the app's global CSS and React;
+  function per case, rendered alone with the app's global CSS and React
+  (each case's box contains its absolute/fixed parts and grows to hold them);
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
