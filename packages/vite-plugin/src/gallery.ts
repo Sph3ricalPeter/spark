@@ -10,8 +10,8 @@
 //
 // An optional `spark.setup.tsx` in the project root can export a default
 // `Wrapper` component (providers, a theme) that wraps every case, and
-// `tauri`: an object of command name → (args) => result, which fakes Tauri's
-// `invoke` when the page isn't running inside Tauri.
+// `tauri`: an object of command name → (args) => result, which fakes the
+// app's own Tauri commands (its Rust side doesn't run inside Spark).
 //
 // On the board (shell.ts) each file gets a frame of its own
 // (`?spark=components&file=/src/ui/Meter.spark.tsx`): its cases in a row, no
@@ -96,10 +96,16 @@ function fileTitle(path: string) {
   return path.split("/").pop()!.replace(/\.spark\.[jt]sx?$/, "");
 }
 
-/** Outside Tauri, answer the app's `invoke` calls from the setup's fakes. */
+/**
+ * Answer the app's own `invoke` calls from the setup's fakes. Inside Spark's
+ * window the frame already has Tauri (mode.ts, borrowTauri), which asks the
+ * fakes first; in a plain browser there's none, so fake the rest too.
+ */
 function fakeTauri(fakes: Setup["tauri"]) {
+  if (!fakes) return;
+  window.__sparkTauriFakes = fakes;
   const w = window as unknown as { __TAURI_INTERNALS__?: unknown };
-  if (!fakes || w.__TAURI_INTERNALS__) return;
+  if (w.__TAURI_INTERNALS__) return;
   let next = 1;
   w.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },

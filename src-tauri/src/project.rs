@@ -468,6 +468,38 @@ mod tests {
     }
 
     #[test]
+    fn project_windows_get_the_dialogs_and_nothing_that_changes_spark() {
+        use std::str::FromStr;
+        use tauri::utils::acl::RemoteUrlPattern;
+        let cap: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/project.json")).unwrap();
+        // Every project window, whatever its folder.
+        let window = cap["windows"][0].as_str().unwrap();
+        let label = window_label(Path::new(r"C:\Users\me\dawg"));
+        assert!(label.starts_with(window.strip_suffix('*').unwrap()));
+        // The dev server on any port, and nothing else.
+        let pattern =
+            RemoteUrlPattern::from_str(cap["remote"]["urls"][0].as_str().unwrap()).unwrap();
+        let url = |u: &str| tauri::Url::parse(u).unwrap();
+        assert!(pattern.test(&url("http://127.0.0.1:54321/")));
+        assert!(pattern.test(&url(
+            "http://127.0.0.1:5179/?spark=components&file=/src/a.tsx"
+        )));
+        assert!(!pattern.test(&url("https://example.com/")));
+        let permissions: Vec<&str> = cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str())
+            .collect();
+        assert!(permissions.contains(&"dialog:default"));
+        // The app in a frame can't close, move or retitle Spark's window.
+        assert!(permissions.iter().all(|p| p.ends_with(":default")
+            && !p.starts_with("core:menu")
+            && !p.starts_with("core:tray")));
+    }
+
+    #[test]
     fn strips_terminal_colors() {
         assert_eq!(
             strip_ansi("\u{1b}[32m➜\u{1b}[39m  Local: \u{1b}[1mhttp://x\u{1b}[22m"),

@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "project",
+  "description": "Project windows: the app's dev server, with the app in the board's frames. The app's frontend gets the system dialogs and read-only window, event and path calls; nothing that changes or closes Spark's window.",
+  "windows": ["project-*"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:path:default",
+    "core:webview:default",
+    "core:window:default",
+    "dialog:default"
+  ]
+}

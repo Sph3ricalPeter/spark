@@ -17,6 +17,10 @@ Zustand). Release and deploy are ported from dawg and described in
   resource) into `<project>/.spark/plugin`, starts the project's own Vite
   with `.spark/vite.config.mjs` (the project's config plus the plugin), and
   opens the dev server in a window of its own; closing it stops the server.
+  `capabilities/project.json` lets that window (the dev server's origin) use
+  the system dialogs and read-only window/event/path calls; `mode.ts`
+  `borrowTauri` lends Tauri to the board's frames, sending plugin commands
+  to Spark and the app's own commands to spark.setup fakes or an error.
 - `src`: the UI. Design tokens in `src/tokens.css`, never literals in
   `src/styles.css` or components. `stores/updater-store.ts` checks, downloads
   and installs updates; `components/UpdateIndicator.tsx` is the title-bar
