@@ -10,9 +10,9 @@
 //   the app until dragged somewhere else by their title.
 // Every frame runs its own Spark client; the board keeps them in step: one
 // mode, one open panel (the selected frame's), one change list, one undo
-// history. Clicking in a frame selects it; Tab (or View in the bar) puts the
-// selected frame in view mode: the others dim. Only Fit and 100% move the
-// camera.
+// history. Clicking in a frame selects it (the bar's size fields, the panel
+// and Ctrl 0 act on it); in view mode every frame stays usable and the
+// selected one has a dashed outline. Only Fit and 100% move the camera.
 //
 // The canvas zooms and pans on its own: Ctrl+wheel or a pinch zooms at the
 // pointer, Ctrl +/- steps, Ctrl 0 is 100% on the selected frame; wheel over
@@ -206,7 +206,7 @@ root.append(
     .canvas.panning, .canvas.panning * { cursor: grabbing !important; }
     .canvas.space { cursor: grab; }
     .stage { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
-    .frame { position: absolute; left: 0; top: 0; transition: opacity .15s; }
+    .frame { position: absolute; left: 0; top: 0; }
     /* The selected frame is on top of any it overlaps. */
     .frame.selected { z-index: 1; }
     .frame iframe {
@@ -218,8 +218,12 @@ root.append(
     .edit-mode .frame.selected iframe {
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) color-mix(in srgb, var(--sp-accent) 45%, transparent), 0 12px 40px #0008;
     }
-    .frame.dim { opacity: .35; cursor: pointer; }
-    .frame.dim iframe { pointer-events: none; }
+    /* View mode: the selected frame (where the bar, the panel and the keys go) has a dashed outline. */
+    .shell:not(.edit-mode) .frame.selected iframe {
+      outline: calc(1px / var(--z, 1)) dashed color-mix(in srgb, var(--sp-accent) 60%, transparent);
+      outline-offset: calc(4px / var(--z, 1));
+    }
+    .shell:not(.edit-mode) .frame.component.selected iframe { outline-color: color-mix(in srgb, var(--sp-component) 60%, transparent); }
     .moving .frame iframe { pointer-events: none; }
     /* The frame's title: above it, at a constant on-screen size. */
     .ftitle {
@@ -460,11 +464,6 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
     title.append(flip);
   }
   title.addEventListener("pointerdown", (e) => moveFrame(f, e as PointerEvent));
-  // A dimmed frame (view mode) takes the click itself: select it, where it is.
-  el.addEventListener("pointerdown", (e) => {
-    if ((e as PointerEvent).button !== 0 || !el.classList.contains("dim")) return;
-    selectFrame(f);
-  });
   stage.append(el);
   iframe.src = kind === "app" ? appUrl() : componentUrl(file, f.layout);
   return f;
@@ -688,7 +687,6 @@ function apply() {
     f.iframe.style.width = `${f.w}px`;
     f.iframe.style.height = `${f.h}px`;
     f.el.classList.toggle("selected", f === sel);
-    f.el.classList.toggle("dim", !edit && f !== sel);
     if (f.kind === "app") {
       const apps = frames.filter((x) => x.kind === "app");
       f.name.textContent = apps.length > 1 ? `App ${apps.indexOf(f) + 1}` : "App";

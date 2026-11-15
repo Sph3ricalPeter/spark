@@ -76,7 +76,7 @@ Zustand). Release and deploy are ported from dawg and described in
   more) and one component frame per `*.spark.tsx`, sized to its cases and
   draggable by its title; the board keeps the clients in step (one mode,
   the selected frame's panel, one change list and undo history), and view
-  mode focuses the selected frame. Its left sidebar (`sidebar.ts`) has the
+  mode leaves every frame usable, the selected one outlined dashed. Its left sidebar (`sidebar.ts`) has the
   Layers (`layers.ts`: every frame and its element tree, Figma style, in
   step with the canvas selection both ways; the client names the tree
   through `ClientHooks.layers`), Chats and Changes tabs (opened from their bar buttons; the head only names the tab); chats are never
