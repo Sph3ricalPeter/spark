@@ -263,17 +263,32 @@ function Empty({ h }: { h: typeof ReactNS.createElement }) {
     h("h2", {}, "No components to show yet"),
     h("p", {}, "Add a ", h("code", {}, "*.spark.tsx"), " file next to a component. Each function it exports is one case, rendered here on its own with the props you give it:"),
     h("pre", {}, example),
-    h("p", {}, "Or let Claude write them for the components in this project:"),
+    h("p", {}, "Or let Claude write them for the components in this project (it's a chat in Chats):"),
     h(
       "button",
       {
+        className: "spark-gallery-write",
         onClick: (e: ReactNS.MouseEvent<HTMLButtonElement>) => {
           e.currentTarget.disabled = true;
           e.currentTarget.textContent = "Claude is writing them…";
           import.meta.hot?.send("spark:gallery-generate", {});
         },
       },
-      "Write them with Claude",
+      WRITE,
     ),
   );
 }
+
+const WRITE = "Write them with Claude";
+/** The run ended (its reply is in its chat) or Claude was busy: the button can be pressed again. */
+function resetWrite(text = WRITE) {
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".spark-gallery-write")) {
+    if (!b.disabled) continue;
+    b.disabled = false;
+    b.textContent = text;
+  }
+}
+import.meta.hot?.on("spark:run", (e: { type: string }) => {
+  if (e.type === "done" || e.type === "error") resetWrite();
+});
+import.meta.hot?.on("spark:busy", () => resetWrite(`Claude is busy in another chat. ${WRITE}`));

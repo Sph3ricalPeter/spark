@@ -1,5 +1,5 @@
-// Runs the local Claude CLI on the project, for "Implement changes" and
-// "Ask Claude" in the panel. Dev server side (Node).
+// Runs the local Claude CLI on the project. Only claude.ts calls it, so every
+// run is a chat. Dev server side (Node).
 //
 // One run at a time. The prompt goes in on stdin; `--output-format
 // stream-json` comes back as one JSON event per line, which we boil down to

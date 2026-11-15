@@ -146,7 +146,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
 // The Chats tab
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; kind?: "implement" };
+type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; kind?: "implement" | "task" };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
@@ -186,12 +186,14 @@ export function chatsTab(deps: ChatsDeps) {
       const last = c.messages.at(-1);
       const first = c.messages.find((m) => m.role === "user");
       const busy = running === c.id;
-      // An Implement changes run has no element: its transcript opens here.
-      const run = c.kind === "implement";
+      // A chat with no element (an Implement changes run, a task): its transcript opens here.
+      const run = !!c.kind;
       const state = busy
-        ? run
+        ? c.kind === "implement"
           ? "Claude is implementing"
-          : "Claude is answering"
+          : c.kind === "task"
+            ? "Claude is working"
+            : "Claude is answering"
         : last?.ok === false
           ? "Failed"
           : run
@@ -221,7 +223,7 @@ export function chatsTab(deps: ChatsDeps) {
       });
       const row = h(
         "div",
-        { class: cls, title: `${state}${c.sessionId ? ` · session ${c.sessionId}` : ""}`, role: "button", tabindex: "-1" },
+        { class: cls, title: `${state}${c.sessionId ? ` · session ${c.sessionId}` : ""}`, role: "button", tabindex: "-1", "data-chat": c.id },
         h("span", { class: "st" }),
         h("div", { class: "top" }, h("span", { class: "el" }, c.label || "Element"), h("span", { class: "when" }, ago(c.updated))),
         first ? h("div", { class: "first" }, first.text) : null,
@@ -271,6 +273,14 @@ export function chatsTab(deps: ChatsDeps) {
       chats = list;
       running = run;
       render();
+    },
+    /** Show a chat's transcript open in the list (a run with no element, as it starts). */
+    reveal(id: string) {
+      if (!chats.some((c) => c.id === id && c.kind)) return false;
+      expanded.add(id);
+      render();
+      el.querySelector(`[data-chat="${id}"]`)?.scrollIntoView({ block: "nearest" });
+      return true;
     },
     openCount: () => chats.filter((c) => !c.closed && !c.kind && c.messages.length).length,
   };

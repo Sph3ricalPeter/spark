@@ -17,7 +17,7 @@ import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { tagJsx } from "./tag.ts";
 import type { Change, ChangeLog } from "./changes.ts";
 import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
-import { run, running, stop, type RunEvent } from "./runner.ts";
+import { claude } from "./claude.ts";
 import { chatStore } from "./chats.ts";
 import { stateStore } from "./state-file.ts";
 
@@ -203,7 +203,7 @@ export default function spark(): Plugin {
         } catch {
           // No changes yet.
         }
-        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes, chats: (await chats.load()).chats, runningChat: running() ? runningChat : null });
+        client.send("spark:ready", { name: path.basename(root), root: root.split(path.sep).join("/"), changes, chats: (await chats.load()).chats, runningChat: ai.running() });
       });
       // The current selection, for the MCP server's get_selection (milestone 3).
       server.ws.on("spark:select", (data) => save("selection.json", data));
@@ -240,105 +240,72 @@ export default function spark(): Plugin {
       };
       const implementRequest = (pending: Change[]) =>
         `Implement ${pending.length} change${pending.length === 1 ? "" : "s"}:\n\n${pending.map((c) => `- ${changeLine(c)}`).join("\n")}`;
-      const start = async (kind: "implement" | "ask", prompt: string, ids: string[], chat?: { id: string; resume?: string; then: (e: RunEvent) => void }) => {
-        const emit = (e: RunEvent) => server.ws.send("spark:run", chat && (e.type === "start" || e.type === "done" || e.type === "session") ? { ...e, chat: chat.id } : e);
-        runningChat = chat?.id ?? null;
-        run({
-          cwd: root,
-          prompt,
-          kind,
-          ids,
-          resume: chat?.resume,
-          emit: (e) => {
-            if (e.type === "done" || e.type === "error") runningChat = null;
-            emit(e);
-            if (e.type === "done" || e.type === "error" || e.type === "session") chat?.then(e);
-            if (e.type !== "done" || e.applied.length === 0) return;
-            // Mark what Claude applied, against the latest log (edits may have arrived meanwhile).
-            void loadLog().then(async (log) => {
-              const done = new Set(e.applied.filter((id) => ids.includes(id)));
-              for (const id of done) appliedIds.add(id);
-              for (const c of log.changes) if (done.has(c.id)) c.status = "applied";
-              await save("changes.json", log);
-              server.ws.send("spark:log", log);
-            });
-          },
-        });
+
+      // Every Claude run goes through here, and each one is a chat (claude.ts).
+      const ai = claude({
+        cwd: root,
+        chats,
+        broadcast: (e) => server.ws.send("spark:run", e),
+        // Mark what Claude applied, against the latest log (edits may have arrived meanwhile).
+        applied: (ids) =>
+          void loadLog().then(async (log) => {
+            for (const id of ids) appliedIds.add(id);
+            for (const c of log.changes) if (ids.includes(c.id)) c.status = "applied";
+            await save("changes.json", log);
+            server.ws.send("spark:log", log);
+          }),
+      });
+      /** Claude is busy with another chat: the one who asked hears so (nothing was recorded). */
+      const busy = (client: { send: (event: string, payload?: unknown) => void }) => (id: string | null) => {
+        if (id === null) client.send("spark:busy", { chat: ai.running() });
       };
-      server.ws.on("spark:implement", async (data: { ids?: string[] }) => {
+
+      server.ws.on("spark:implement", async (data: { ids?: string[] }, client) => {
         const log = await loadLog();
         const pending = log.changes.filter((c) => c.status === "pending" && (!data?.ids || data.ids.includes(c.id)));
-        if (pending.length === 0 || running()) return;
+        if (pending.length === 0) return;
         // The run is a chat in the Chats list: the changes asked for, then Claude's result.
-        const id = await chats.begin(implementRequest(pending));
-        const say = (text: string, ok: boolean) => chats.update(id, (c) => c.messages.push({ role: "claude", text, ok, at: Date.now() }));
-        await start("implement", implementPrompt(pending), pending.map((c) => c.id), {
-          id,
-          then: (e) => {
-            if (e.type === "error") void say(e.text, false);
-            else if (e.type === "session") {
-              void chats.update(id, (c) => {
-                c.sessionId = e.sessionId;
-                if (e.model) c.model = e.model;
-              });
-            } else if (e.type === "done") {
-              const what = new Map(pending.map((c) => [c.id, changeLine(c)]));
+        const what = new Map(pending.map((c) => [c.id, changeLine(c)]));
+        await ai
+          .ask({
+            topic: { kind: "implement", label: "Implement changes" },
+            request: implementRequest(pending),
+            prompt: () => implementPrompt(pending),
+            kind: "implement",
+            ids: pending.map((c) => c.id),
+            reply: (e) => {
               const bits = [`${e.applied.length} applied · ${e.skipped.length} skipped`, ...(e.cost !== undefined ? [`$${e.cost.toFixed(2)}`] : [])];
               const skipped = e.skipped.map((x) => `- Skipped ${what.get(x.id) ?? x.id}: ${x.why}`).join("\n");
-              const text = [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped, `_${bits.join(" · ")}_`].filter(Boolean).join("\n\n");
-              void chats.update(id, (c) => {
-                if (e.model) c.model = e.model;
-                c.messages.push({ role: "claude", text, ok: e.ok, at: Date.now() });
-              });
-            }
-          },
-        });
+              return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped, `_${bits.join(" · ")}_`].filter(Boolean).join("\n\n");
+            },
+          })
+          .then(busy(client));
       });
       // Ask Claude, from the popup on an element: the element's open chat (by its
       // `chat` key), one Claude session that later prompts resume (chats.ts).
-      let runningChat: string | null = null;
-      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string }) => {
-        if (running()) return;
-        const log = await loadLog();
-        const pending = log.changes.filter((c) => c.status === "pending");
-        const ids = pending.map((c) => c.id);
-        if (!data.chat) return start("ask", askPrompt(data.request, data.selection, pending), ids);
-        const { id, sessionId } = await chats.ask(data.chat, data.selection?.label, data.request);
-        const say = (text: string, ok: boolean) => chats.update(id, (c) => c.messages.push({ role: "claude", text, ok, at: Date.now() }));
-        const answer = (resumed: boolean) => (e: RunEvent) => {
-          if (e.type === "error") void say(e.text, false);
-          else if (e.type === "session") {
-            void chats.update(id, (c) => {
-              c.sessionId = e.sessionId;
-              if (e.model) c.model = e.model;
-            });
-          } else if (e.type === "done") {
-            // The session is gone (cleared history, another machine): start a new one with the full prompt.
-            if (!e.ok && resumed && /no conversation found|session/i.test(e.summary)) {
-              void start("ask", askPrompt(data.request, data.selection, pending), ids, { id, then: answer(false) });
-              return;
-            }
-            void chats.update(id, (c) => {
-              if (e.sessionId) c.sessionId = e.sessionId;
-              if (e.model) c.model = e.model;
-              c.messages.push({ role: "claude", text: e.summary || (e.ok ? "Done." : "Claude stopped."), ok: e.ok, at: Date.now() });
-            });
-          }
-        };
-        const resume = sessionId ?? undefined;
-        const prompt = resume ? followupPrompt(data.request, data.selection, pending) : askPrompt(data.request, data.selection, pending);
-        await start("ask", prompt, ids, { id, resume, then: answer(!!resume) });
+      // With no element, a chat of its own.
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string }, client) => {
+        if (ai.busy()) return busy(client)(null);
+        const pending = (await loadLog()).changes.filter((c) => c.status === "pending");
+        await ai
+          .ask({
+            topic: data.chat ? { element: data.chat, label: data.selection?.label } : { kind: "task", label: data.selection?.label || "Ask Claude" },
+            request: data.request,
+            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(data.request, data.selection, pending),
+            kind: "ask",
+            ids: pending.map((c) => c.id),
+          })
+          .then(busy(client));
       });
       // The board's Chats list asks for the list when it loads.
-      server.ws.on("spark:chats-get", async (_d, client) => client.send("spark:chats", { chats: (await chats.load()).chats, running: running() ? runningChat : null }));
+      server.ws.on("spark:chats-get", async (_d, client) => client.send("spark:chats", { chats: (await chats.load()).chats, running: ai.running() }));
       // "New chat": the element's open chat closes (it stays in the Chats list).
       server.ws.on("spark:chat-new", (data: { chat: string }) => chats.close(data.chat));
       // The Chats list: open an earlier chat again, or delete one.
       server.ws.on("spark:chat-open", (data: { id: string }) => chats.reopen(data.id));
-      server.ws.on("spark:chat-delete", (data: { id: string }) => (runningChat === data.id && running() ? undefined : chats.remove(data.id)));
+      server.ws.on("spark:chat-delete", (data: { id: string }) => (ai.running() === data.id ? undefined : chats.remove(data.id)));
       // A chat's element moved (Claude's edit shifted its lines): its chats follow it.
       server.ws.on("spark:chat-move", (data: { from: string; to: string }) => chats.move(data.from, data.to));
-      // The empty Components view: Claude writes the *.spark.tsx files.
       // A component frame's case renamed in place (gallery.ts): rename its export.
       server.ws.on("spark:rename-case", async (data: { file: string; from: string; to: string }) => {
         const ident = /^[A-Za-z_$][\w$]*$/;
@@ -351,9 +318,20 @@ export default function spark(): Plugin {
         if (!decl.test(code) || new RegExp(`^export\\s+(?:const|let|function)\\s+${data.to}\\b`, "m").test(code)) return;
         await writeFile(file, code.replace(decl, `$1${data.to}`));
       });
-      server.ws.on("spark:gallery-generate", () => start("ask", galleryPrompt(), []));
-      server.ws.on("spark:stop", () => stop());
-      server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: running(), chat: running() ? runningChat : null }));
+      // The empty Components view: Claude writes the *.spark.tsx files, in a chat of its own.
+      server.ws.on("spark:gallery-generate", (_d, client) =>
+        ai
+          .ask({
+            topic: { kind: "task", label: "Components" },
+            request: "Write the Components view's case files (*.spark.tsx) for this project's components.",
+            prompt: () => galleryPrompt(),
+            kind: "ask",
+            ids: [],
+          })
+          .then(busy(client)),
+      );
+      server.ws.on("spark:stop", () => ai.stop());
+      server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: ai.busy(), chat: ai.running() }));
     },
   };
 }

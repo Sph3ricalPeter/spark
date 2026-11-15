@@ -1,5 +1,5 @@
-// The Ask chats: conversations with Claude about elements, kept in
-// `.spark/chats.json`. Dev server side (Node).
+// The chats: every conversation with Claude, kept in `.spark/chats.json`.
+// Dev server side (Node). Runs reach it only through claude.ts.
 //
 // Each chat is one Claude session (its id is resumed by later prompts) about
 // one element (its key, see client.ts chatKey). An element can have many
@@ -29,9 +29,12 @@ export type Chat = {
   updated: number;
   /** "New chat" closed it: it no longer shows in the element's popup. */
   closed?: boolean;
-  /** "implement": an Implement changes run (no element; key `implement:<id>`). */
-  kind?: "implement";
+  /** A chat with no element (key `<kind>:<id>`): "implement" is an Implement changes run, "task" any other run
+   * (the Components view's "Write them with Claude", an Ask with nothing selected). Absent: an element's chat. */
+  kind?: ChatKind;
 };
+
+export type ChatKind = "implement" | "task";
 
 export type ChatFile = { version: 2; chats: Chat[] };
 
@@ -100,12 +103,12 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
         c.updated = Date.now();
         return { id: c.id, sessionId: c.sessionId };
       }),
-    /** A chat of its own for one Implement changes run, with what was asked. */
-    begin: (text: string) =>
+    /** A chat of its own, with no element (one Implement changes run, one task), with what was asked. */
+    begin: (kind: ChatKind, label: string, text: string) =>
       change((f) => {
         const id = newId();
         const now = Date.now();
-        f.chats.push({ id, key: `implement:${id}`, label: "Implement changes", kind: "implement", sessionId: null, messages: [{ role: "user", text, at: now }], created: now, updated: now });
+        f.chats.push({ id, key: `${kind}:${id}`, label, kind, sessionId: null, messages: [{ role: "user", text, at: now }], created: now, updated: now });
         return id;
       }),
     /** Change one chat by id. */

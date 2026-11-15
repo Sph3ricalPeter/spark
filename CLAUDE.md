@@ -56,8 +56,12 @@ Zustand). Release and deploy are ported from dawg and described in
   Chats and Changes tabs (opened from their bar buttons; the head only names the tab); the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
-  `runner.ts` runs the local `claude -p` for "Implement changes" and the
-  Ask Claude box on the selection, with prompts in `prompt.ts` (Claude ends
+  `claude.ts` is the one way Spark runs Claude: every run (Implement
+  changes, Ask Claude on the selection, the Components view's "Write them
+  with Claude", anything new) goes through its `ask` and is a chat in the
+  Chats list (`chats.ts`, `.spark/chats.json`), an element's chat or one of
+  its own (`kind` "implement" / "task"); never call `runner.ts` (the local
+  `claude -p`) directly. Prompts are in `prompt.ts` (Claude ends
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
   `gallery.ts` renders a component frame (`?spark=components&file=…`;
   the board lists the files through `/@spark/cases`): a `*.spark.tsx` next to a component exports one
