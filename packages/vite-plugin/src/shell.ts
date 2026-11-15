@@ -22,6 +22,7 @@
 import { installFont } from "./fonts.ts";
 import { THEME, icon } from "./theme.ts";
 import { h } from "./fields.ts";
+import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE } from "./sidebar.ts";
 import caseFiles from "/@spark/cases";
@@ -113,6 +114,8 @@ let px = 0;
 let py = 0;
 let docked = false;
 let edit = false;
+/** The frames' names and sizes as the Layers tab last saw them. */
+let frameNames = "";
 
 function loadSaved(): Saved {
   const fresh: Saved = { apps: [{ id: "app-1", x: 0, y: 0, w: 1280, h: 720, preset: "fill" }], placed: {}, selected: "app-1" };
@@ -166,6 +169,7 @@ root.append(
     }
     .docked .bar, .docked .canvas { right: ${PANEL_W}px; }
     .sidebar { top: ${BAR_H}px; }
+    ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
     button, select, input {
       font: inherit; color: inherit; background: var(--sp-field); border: 1px solid var(--sp-line-strong);
@@ -300,7 +304,7 @@ islandView.addEventListener("click", () => switchMode(false));
 islandEdit.addEventListener("click", () => switchMode(true));
 const sizeControls = [presetSel, prevBtn, nextBtn, wIn, hIn, rotateBtn, ratioSel];
 
-// The left sidebar: Chats (sidebar.ts). Opening it gives the canvas less room.
+// The left sidebar: Layers, Chats and Changes (sidebar.ts). Opening it gives the canvas less room.
 const side = sidebar((open) => {
   shellEl.classList.toggle("side-open", open);
   apply();
@@ -448,6 +452,7 @@ function selectFrame(f: Frame) {
   if (win) activate(win);
   save();
   apply();
+  layers.refresh();
 }
 
 function removeFrame(f: Frame) {
@@ -468,6 +473,7 @@ function removeFrame(f: Frame) {
   }
   save();
   apply();
+  layers.refresh();
 }
 
 function addApp() {
@@ -486,6 +492,7 @@ function addApp() {
   apply();
   focusFrame(f);
   apply();
+  layers.refresh();
 }
 
 /** The case files changed (one added or removed): frames follow. */
@@ -510,6 +517,7 @@ function syncComponents(files: string[]) {
   }
   if (!frames.some((f) => f.id === selectedId)) selectedId = frames[0].id;
   apply();
+  layers.refresh();
 }
 
 /** Drag a frame by its title. */
@@ -635,6 +643,12 @@ function apply() {
       f.name.textContent = apps.length > 1 ? `App ${apps.indexOf(f) + 1}` : "App";
       f.meta.textContent = f.preset === "fill" ? `Fill · ${f.w} × ${f.h}` : `${f.w} × ${f.h}`;
     } else f.name.textContent = fileTitle(f.file);
+  }
+  // The Layers tab names the frames and their sizes: redraw it when they change.
+  const names = frames.map((f) => `${f.id}:${f.name.textContent}:${f.meta.textContent}`).join("|");
+  if (names !== frameNames) {
+    frameNames = names;
+    layers.refresh();
   }
   shellEl.classList.toggle("docked", docked);
   showPanels();
@@ -954,6 +968,8 @@ const api: ShellApi = {
     else showPanels();
     hooks.setOpen(docked);
     hooks.setPicking(edit);
+    // Its tree in the Layers tab.
+    layers.refresh();
   },
   setChangeCount(n) {
     side.setCount("Changes", n);
@@ -961,9 +977,16 @@ const api: ShellApi = {
   isActive(win) {
     return selected().iframe.contentWindow === win;
   },
-  setSelected(win, has) {
+  setSelected(win, has, el) {
     if (has) selWin = win;
     else if (selWin === win) selWin = null;
+    layers.selected(win, clients.get(win), has ? (el ?? null) : null);
+  },
+  setHovered(_win, el) {
+    layers.hovered(el);
+  },
+  layersChanged() {
+    layers.refresh();
   },
   selectedElsewhere(win) {
     return !!selWin && selWin !== win && clients.has(selWin);
@@ -1115,20 +1138,69 @@ function openChat(chat: ChatRef): boolean {
     selectFrame(f);
     if (!edit) switchMode(true);
     const box = hooks.openChat?.(chat.key);
-    if (box) {
-      // Bring the element into view when it's off screen, at the current zoom.
-      const { cw, ch } = canvasSize();
-      const x = px + (f.x + box.x) * z;
-      const y = py + (f.y + box.y) * z;
-      if (x < 0 || y < 0 || x + box.w * z > cw || y + box.h * z > ch) {
-        centerOn(f.x + box.x, f.y + box.y, box.w, box.h, z);
-        apply();
-      }
-    }
+    if (box) bringIntoView(f, box);
     return true;
   }
   return false;
 }
+
+/** Bring a box in a frame (the frame's own coordinates) into view when it's off screen, at the current zoom. */
+function bringIntoView(f: Frame, box: { x: number; y: number; w: number; h: number }) {
+  const { cw, ch } = canvasSize();
+  const x = px + (f.x + box.x) * z;
+  const y = py + (f.y + box.y) * z;
+  if (x < 0 || y < 0 || x + box.w * z > cw || y + box.h * z > ch) {
+    centerOn(f.x + box.x, f.y + box.y, box.w, box.h, z);
+    apply();
+  }
+}
+// Layers: every frame, and the element tree in each (layers.ts), in step with the canvas selection.
+const layers = layersTab({
+  frames: () =>
+    frames.map((f) => {
+      const win = f.iframe.contentWindow;
+      return {
+        id: f.id,
+        kind: f.kind,
+        name: f.name.textContent || fileTitle(f.file),
+        meta: f.meta.textContent ?? "",
+        hooks: win ? clients.get(win) : undefined,
+        selected: f === selected(),
+      };
+    }),
+  pickFrame: (id) => {
+    const f = frames.find((x) => x.id === id);
+    if (!f) return;
+    selectFrame(f);
+    const win = f.iframe.contentWindow;
+    if (win) clients.get(win)?.deselect();
+    // Off screen: bring the frame's corner into view.
+    const { cw, ch } = canvasSize();
+    const x = px + f.x * z;
+    const y = py + f.y * z;
+    if (x + f.w * z < 0 || y + f.h * z < 0 || x > cw || y > ch) bringIntoView(f, { x: 0, y: 0, w: Math.min(f.w, cw / z), h: Math.min(f.h, ch / z) });
+    layers.refresh();
+  },
+  focusFrame: (id) => {
+    const f = frames.find((x) => x.id === id);
+    if (!f) return;
+    selectFrame(f);
+    focusFrame(f);
+    apply();
+  },
+  pickLayer: (id, el) => {
+    const f = frames.find((x) => x.id === id);
+    const win = f?.iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    if (!f || !hooks?.selectLayer) return;
+    selectFrame(f);
+    if (!edit) switchMode(true);
+    const box = hooks.selectLayer(el);
+    if (box) bringIntoView(f, box);
+  },
+  shown: () => side.shows("Layers"),
+});
+side.addTab("Layers", layers.el, "layers", "Layers: every frame and the elements in it", () => layers.draw());
 const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
 side.addTab("Chats", chatList.el, "message-circle", "Chats with Claude, on every element");
 // Changes: the active frame's change list and Implement changes (each client mounts its own; showPanels picks).

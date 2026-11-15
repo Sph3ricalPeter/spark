@@ -11,10 +11,11 @@
 //   panel-open client.ts: the inspector is docked open
 //   sections   client.ts: which inspector sections are unfolded
 //   sidebar    sidebar.ts: the left sidebar is open, and on which tab
+//   layers     layers.ts: the Layers tree's unfolded rows and folded frames
 // A new key is added to this list and to LEGACY if it had a localStorage one.
 // Values are JSON; the file is read by people too, so shapes only grow.
 
-export type StateKey = "board" | "panel-open" | "sections" | "sidebar";
+export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "layers";
 
 const ENDPOINT = "/@spark/state";
 
