@@ -9,3 +9,7 @@ declare module "*@spark/icon-libs" {
   const libs: string[];
   export default libs;
 }
+declare module "*@spark/project" {
+  /** The project's folder name. */
+  export const name: string;
+}

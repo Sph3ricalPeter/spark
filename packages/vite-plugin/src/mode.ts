@@ -164,7 +164,28 @@ declare global {
 }
 
 /**
- * Tauri injects its IPC into the top window only: Spark's project window,
+ * What the board's title bar does to Spark's window (titlebar.ts), which the
+ * app in a frame may not: an app with a title bar of its own (dawg's) would
+ * otherwise close or move Spark. Spark's own events (going home) are the
+ * board's too.
+ */
+const TITLE_BAR_COMMANDS = new Set([
+  "plugin:window|minimize",
+  "plugin:window|toggle_maximize",
+  "plugin:window|internal_toggle_maximize",
+  "plugin:window|close",
+  "plugin:window|start_dragging",
+]);
+
+/** Is this a call only the board makes? */
+export function boardOnly(cmd: string, args: unknown): boolean {
+  if (TITLE_BAR_COMMANDS.has(cmd)) return true;
+  const event = (args as { event?: unknown } | null | undefined)?.event;
+  return cmd === "plugin:event|emit" && typeof event === "string" && event.startsWith("spark://");
+}
+
+/**
+ * Tauri injects its IPC into the top window only: Spark's window with the project open,
  * which runs the shell. Lend it to the frame, so the app's Tauri calls work
  * there, the system Open and Save dialogs above all.
  *
@@ -172,7 +193,9 @@ declare global {
  *   so they're named here, not found by walking its keys.
  * - Plugin commands (`plugin:dialog|open`, events, window getters) go to
  *   Spark's window, which allows what `src-tauri/capabilities/project.json`
- *   lists: dialogs and read-only calls, never closing or moving Spark.
+ *   lists: dialogs and read-only calls. The title bar's calls are in that
+ *   list too, for the board; the app is refused them (`boardOnly`), so it
+ *   never closes, moves or resizes Spark.
  * - The app's own commands (`invoke("open_file")`) belong to its Rust side,
  *   which doesn't run inside Spark. spark.setup's fakes answer them when
  *   there are some; otherwise they fail and say why. They're never sent to
@@ -190,6 +213,7 @@ export function borrowTauri() {
       value: (cmd: string, args?: unknown, options?: unknown) => {
         const fake = window.__sparkTauriFakes?.[cmd];
         if (fake) return Promise.resolve().then(() => fake(args));
+        if (boardOnly(cmd, args)) return Promise.reject(new Error(`Spark's window belongs to Spark: "${cmd}" isn't available to the app inside it.`));
         if (cmd.startsWith("plugin:")) return host.invoke(cmd, args, options);
         return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, isn't available here.`));
       },

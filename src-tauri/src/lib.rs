@@ -48,8 +48,9 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // `spark <folder>` while Spark runs opens that project here.
             if let Some(folder) = project::folder_arg(&args) {
-                project::open_in_background(app.clone(), folder);
-            } else if let Some(window) = app.get_webview_window("main") {
+                project::open_later(app, folder);
+            }
+            if let Some(window) = app.get_webview_window(project::MAIN) {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
@@ -71,16 +72,18 @@ pub fn run() {
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
             }
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(project::MAIN) {
                 if !is_release(app.handle()) {
                     window.set_title("spark dev")?;
                 }
             }
+            project::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
-            project::open_project,
+            project::start_project,
+            project::show_project,
             project::check_project,
             project::launch_folder
         ])

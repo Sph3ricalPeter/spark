@@ -47,6 +47,9 @@ const ICONS_ID = "\0spark-icons:";
 /** The icon libraries the project depends on. */
 const ICON_LIBS = "/@spark/icon-libs";
 const ICON_LIBS_ID = "\0spark-icon-libs";
+/** The project's name (its folder's), for the board's title bar. */
+const PROJECT = "/@spark/project";
+const PROJECT_ID = "\0spark-project";
 
 /** The icon libraries in the nearest package.json's dependencies, at or above `root`. */
 function projectIconLibraries(root: string): string[] {
@@ -179,6 +182,7 @@ export default function spark(): Plugin {
       if (id in MODULES) return MODULES[id];
       if (id === CASES) return CASES_ID;
       if (id === ICON_LIBS) return ICON_LIBS_ID;
+      if (id === PROJECT) return PROJECT_ID;
       if (id.startsWith(`${ICONS}?lib=`)) {
         const lib = decodeURIComponent(id.slice(ICONS.length + 5));
         return ICON_LIBRARY.test(lib) ? ICONS_ID + lib : null;
@@ -191,6 +195,7 @@ export default function spark(): Plugin {
     load(id) {
       if (id === CASES_ID) return CASES_MODULE;
       if (id === ICON_LIBS_ID) return `export default ${JSON.stringify(projectIconLibraries(root))};`;
+      if (id === PROJECT_ID) return `export const name = ${JSON.stringify(path.basename(root))};`;
       if (id.startsWith(ICONS_ID)) return iconsModule(id.slice(ICONS_ID.length));
       if (id.startsWith(ENTRY_ID)) return entryModule(id.slice(ENTRY_ID.length));
       if (id.startsWith(COMPONENTS_ID)) return componentsModule(root, id.slice(COMPONENTS_ID.length));

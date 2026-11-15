@@ -1,6 +1,7 @@
-// Projects: folders with a Vite app that Spark opens in a window of their own
-// (src-tauri/src/project.rs starts the dev server with the Spark plugin).
-// The launcher keeps the recent ones.
+// Projects: folders with a Vite app that Spark opens in its window, in place
+// of the launcher (src-tauri/src/project.rs starts the dev server with the
+// Spark plugin; the board's home button comes back here). The launcher keeps
+// the recent ones.
 import { create } from "zustand";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -79,9 +80,11 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     if (get().opening) return;
     set({ opening: { folder, step: "Opening…" }, error: null });
     try {
-      const opened = await invoke<Opened>("open_project", { folder });
+      const opened = await invoke<Opened>("start_project", { folder });
+      // Remembered before the window leaves this page for the project.
       remember(opened.folder, opened.name);
-      set({ opening: null });
+      await invoke("show_project", { folder: opened.folder });
+      // The window is on its way to the project; "opening" stays until it's there.
     } catch (err) {
       set({ opening: null, error: { folder, message: errorMessage(err) } });
     }
@@ -100,24 +103,12 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
 
 // Progress from the backend while a project starts (installing, starting…).
 if (isTauri()) {
-  // Launched as `spark <folder>`: open it.
+  // Launched as `spark <folder>` (or given one while running): open it.
   void invoke<string | null>("launch_folder").then((folder) => {
     if (folder) void useProjectsStore.getState().open(folder);
   });
   void listen<{ folder: string; step: string }>("project-progress", (e) => {
     const { opening } = useProjectsStore.getState();
     if (opening?.folder === e.payload.folder) useProjectsStore.setState({ opening: e.payload });
-  });
-  // `spark <folder>` while Spark already runs: the backend opens it.
-  void listen<string>("project-opening", (e) => {
-    useProjectsStore.setState({ opening: { folder: e.payload, step: "Opening…" }, error: null });
-  });
-  void listen<{ folder: string; name?: string; error?: string }>("project-opened", (e) => {
-    const { folder, name, error } = e.payload;
-    if (error) useProjectsStore.setState({ opening: null, error: { folder, message: error } });
-    else {
-      remember(folder, name ?? folderName(folder));
-      useProjectsStore.setState({ opening: null });
-    }
   });
 }

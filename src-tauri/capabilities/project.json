@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "project",
-  "description": "Project windows: the app's dev server, with the app in the board's frames. The app's frontend gets the system dialogs and read-only window, event and path calls; nothing that changes or closes Spark's window.",
-  "windows": ["project-*"],
+  "description": "An open project: Spark's window showing the project's dev server (the board, with the app in its frames). The board is the window's title bar, so it can move, minimize, maximize and close the window; the app's frontend gets the system dialogs and read-only window, event and path calls through the board, which keeps the title bar's calls to itself (mode.ts borrowTauri).",
+  "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
@@ -12,6 +12,10 @@
     "core:path:default",
     "core:webview:default",
     "core:window:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
     "dialog:default"
   ]
 }

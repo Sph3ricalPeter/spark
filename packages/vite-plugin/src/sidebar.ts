@@ -139,7 +139,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
     },
     addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string, onShow?: () => void) {
       const counts = [h("span", { class: "count" })];
-      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), name, counts[0]);
+      const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), h("span", { class: "label" }, name), counts[0]);
       bar.addEventListener("click", () => {
         if (open && current === name) setOpen(false);
         else {

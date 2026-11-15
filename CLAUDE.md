@@ -16,17 +16,24 @@ Zustand). Release and deploy are ported from dawg and described in
   `spark <folder>`): it copies the Vite plugin (bundled as the `plugin/`
   resource) into `<project>/.spark/plugin`, starts the project's own Vite
   with `.spark/vite.config.mjs` (the project's config plus the plugin), and
-  opens the dev server in a window of its own; closing it stops the server.
-  `capabilities/project.json` lets that window (the dev server's origin) use
-  the system dialogs and read-only window/event/path calls; `mode.ts`
-  `borrowTauri` lends Tauri to the board's frames, sending plugin commands
-  to Spark and the app's own commands to spark.setup fakes or an error.
+  shows the dev server in Spark's one window (`main`), in place of the
+  launcher: `start_project` starts it (one project runs at a time),
+  `show_project` navigates the window there, and the board's home button
+  emits `spark://home` to come back (the project keeps running).
+  The window is frameless: the launcher's `TitleBar.tsx` and, with a project
+  open, the board's bar (`titlebar.ts`) are the title bar (drag, double-click
+  maximizes, window buttons).
+  `capabilities/project.json` lets that window on the dev server's origin
+  use the system dialogs, read-only window/event/path calls and the title
+  bar's window calls; `mode.ts` `borrowTauri` lends Tauri to the board's
+  frames, sending plugin commands to Spark (never the title bar's,
+  `boardOnly`) and the app's own commands to spark.setup fakes or an error.
 - `src`: the UI. Design tokens in `src/tokens.css`, never literals in
   `src/styles.css` or components. `stores/updater-store.ts` checks, downloads
   and installs updates; `components/UpdateIndicator.tsx` is the title-bar
   button; `components/TitleBar.tsx` is the frameless window's title bar;
-  `components/Launcher.tsx` and `stores/projects-store.ts` are the main
-  window: open a folder, recent projects.
+  `components/Launcher.tsx` and `stores/projects-store.ts` are the
+  launcher (home): open a folder, recent projects.
 
 - `packages/vite-plugin`: `spark-vite-plugin`, added to an app's
   `vite.config.ts` to make it editable from inside itself (dev server only).

@@ -1,8 +1,10 @@
 //! Opening a project: a folder with a Vite app in it.
 //!
 //! Spark runs the project's own Vite dev server with the Spark plugin added,
-//! and opens it in a window of its own, where the page is the viewport shell
-//! with the app, the overlay and the panel (`packages/vite-plugin`).
+//! and shows it in Spark's one window, where the page is the viewport shell
+//! with the app, the overlay and the panel (`packages/vite-plugin`). The
+//! window goes back and forth between the launcher (Spark's own page, "home")
+//! and the open project's dev server.
 //!
 //! The project doesn't need to list the plugin. Spark ships the plugin's
 //! source as a resource and copies it into `<project>/.spark/plugin`, so its
@@ -10,8 +12,8 @@
 //! `node_modules`, then starts Vite with a config in `.spark/` that loads the
 //! project's config and adds the plugin. `.spark/` ignores itself in git.
 //!
-//! One dev server per project; closing the project's window stops it, and so
-//! does quitting Spark.
+//! One project runs at a time: opening another stops the one before, going
+//! home keeps it running (reopening it is instant), quitting Spark stops it.
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -21,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager, Url};
 
 /// How long a dev server gets to start listening.
 const START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -53,18 +55,32 @@ export default async (env) => {
 };
 "#;
 
+/// The one window: the launcher and the open project take turns in it.
+pub const MAIN: &str = "main";
+/// What the board's home button emits (shell.ts): show the launcher again.
+pub const HOME_EVENT: &str = "spark://home";
+
 struct Running {
     child: Child,
-    window: String,
+    url: String,
 }
 
-/// Dev servers Spark started, by project folder.
+/// The project Spark runs, and where the window goes home to.
 #[derive(Default)]
-pub struct Projects(Mutex<HashMap<PathBuf, Running>>);
+pub struct Projects {
+    /// The running dev server(s), by project folder (one at a time, see `start_project`).
+    running: Mutex<HashMap<PathBuf, Running>>,
+    /// The launcher's URL, as the window first loaded it.
+    home: Mutex<Option<Url>>,
+    /// The window's title on the launcher ("spark" or "spark dev").
+    title: Mutex<String>,
+    /// A folder to open once the launcher loads (`spark <folder>`); taken once.
+    pending: Mutex<Option<String>>,
+}
 
 impl Projects {
     fn stop(&self, folder: &Path) {
-        if let Some(mut r) = self.0.lock().unwrap().remove(folder) {
+        if let Some(mut r) = self.running.lock().unwrap().remove(folder) {
             let _ = r.child.kill();
             let _ = r.child.wait();
         }
@@ -72,7 +88,7 @@ impl Projects {
 
     /// Quitting Spark: stop every dev server.
     pub fn stop_all(&self) {
-        for (_, mut r) in self.0.lock().unwrap().drain() {
+        for (_, mut r) in self.running.lock().unwrap().drain() {
             let _ = r.child.kill();
             let _ = r.child.wait();
         }
@@ -313,18 +329,6 @@ fn start(app: &AppHandle, folder: &Path, report: &dyn Fn(&str)) -> Result<(Child
     }
 }
 
-/// A window label for a project folder: stable across launches (the window-state
-/// plugin keys saved size and position by label), and only characters labels allow.
-pub fn window_label(folder: &Path) -> String {
-    // FNV-1a over the path.
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in folder.to_string_lossy().to_lowercase().bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("project-{h:016x}")
-}
-
 fn name_of(folder: &Path) -> String {
     folder
         .file_name()
@@ -332,27 +336,33 @@ fn name_of(folder: &Path) -> String {
         .unwrap_or_else(|| folder.to_string_lossy().into_owned())
 }
 
-/// Open a project folder in its own window, starting its dev server first.
-/// An open project's window is focused instead.
+/// The window's title with a project open: "dawg — spark".
+pub fn project_title(name: &str, base: &str) -> String {
+    format!("{name} — {base}")
+}
+
+/// Start a project's dev server, or find it running. Any other project's
+/// server stops once this one is up. The launcher remembers the project, then
+/// shows it (`show_project`).
 #[tauri::command]
-pub async fn open_project(app: AppHandle, folder: String) -> Result<Opened, String> {
+pub async fn start_project(app: AppHandle, folder: String) -> Result<Opened, String> {
     let path = PathBuf::from(&folder);
     let name = name_of(&path);
     let projects = app.state::<Projects>();
-    let open = projects
-        .0
-        .lock()
-        .unwrap()
-        .get(&path)
-        .map(|r| r.window.clone());
-    if let Some(label) = open {
-        if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.unminimize();
-            let _ = w.set_focus();
-            let url = w.url().map(|u| u.to_string()).unwrap_or_default();
-            return Ok(Opened { folder, name, url });
+    let running = {
+        let mut map = projects.running.lock().unwrap();
+        // A server that stopped by itself is started again.
+        let alive = match map.get_mut(&path) {
+            Some(r) => matches!(r.child.try_wait(), Ok(None)),
+            None => true,
+        };
+        if !alive {
+            map.remove(&path);
         }
-        projects.stop(&path);
+        map.get(&path).map(|r| r.url.clone())
+    };
+    if let Some(url) = running {
+        return Ok(Opened { folder, name, url });
     }
 
     let (child, url) = {
@@ -375,42 +385,74 @@ pub async fn open_project(app: AppHandle, folder: String) -> Result<Opened, Stri
         .map_err(|e| e.to_string())??
     };
 
-    // The same folder gets the same label, so the window comes back where it was.
-    let label = window_label(&path);
-    let parsed = url.parse().map_err(|e| format!("{e}"))?;
-    let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
-        .title(format!("{name} — spark"))
-        .inner_size(1440.0, 900.0)
-        .min_inner_size(800.0, 500.0)
-        .theme(Some(tauri::Theme::Dark))
-        .background_color(tauri::window::Color(13, 13, 13, 255))
-        // The board zooms its own canvas; the webview's page zoom (Ctrl+wheel,
-        // Ctrl +/-) would scale Spark's panel and bar too. Off is Tauri's
-        // default; said here so it stays that way.
-        .zoom_hotkeys_enabled(false)
-        .build();
-    let window = match window {
-        Ok(w) => w,
-        Err(e) => {
-            let mut child = child;
-            let _ = child.kill();
-            return Err(format!("Couldn't open the project window: {e}"));
-        }
-    };
-    projects.0.lock().unwrap().insert(
-        path.clone(),
+    // One project at a time: the others' servers stop.
+    let others: Vec<PathBuf> = projects
+        .running
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|f| **f != path)
+        .cloned()
+        .collect();
+    for other in others {
+        projects.stop(&other);
+    }
+    projects.running.lock().unwrap().insert(
+        path,
         Running {
             child,
-            window: label,
+            url: url.clone(),
         },
     );
-    let handle = app.clone();
-    window.on_window_event(move |e| {
-        if let tauri::WindowEvent::Destroyed = e {
-            handle.state::<Projects>().stop(&path);
-        }
-    });
     Ok(Opened { folder, name, url })
+}
+
+/// Show a started project in the window, in place of the launcher.
+#[tauri::command]
+pub async fn show_project(app: AppHandle, folder: String) -> Result<(), String> {
+    let path = PathBuf::from(&folder);
+    let projects = app.state::<Projects>();
+    let url = projects
+        .running
+        .lock()
+        .unwrap()
+        .get(&path)
+        .map(|r| r.url.clone())
+        .ok_or_else(|| format!("{} isn't running. Open it again.", name_of(&path)))?;
+    let window = app
+        .get_webview_window(MAIN)
+        .ok_or("Spark's window is gone.")?;
+    let base = projects.title.lock().unwrap().clone();
+    let _ = window.set_title(&project_title(&name_of(&path), &base));
+    window
+        .navigate(url.parse().map_err(|e| format!("{e}"))?)
+        .map_err(|e| format!("Couldn't show the project: {e}"))
+}
+
+/// Back to the launcher. The project keeps running, so reopening it is instant.
+pub fn go_home(app: &AppHandle) {
+    let projects = app.state::<Projects>();
+    let Some(window) = app.get_webview_window(MAIN) else {
+        return;
+    };
+    let Some(home) = projects.home.lock().unwrap().clone() else {
+        return;
+    };
+    let _ = window.set_title(&projects.title.lock().unwrap());
+    let _ = window.navigate(home);
+}
+
+/// At startup: where home is, the launcher's title, the folder Spark was
+/// launched with, and the board's home button.
+pub fn init(app: &AppHandle) {
+    let projects = app.state::<Projects>();
+    if let Some(window) = app.get_webview_window(MAIN) {
+        *projects.home.lock().unwrap() = window.url().ok();
+        *projects.title.lock().unwrap() = window.title().unwrap_or_else(|_| "spark".into());
+    }
+    *projects.pending.lock().unwrap() = folder_arg(&std::env::args().collect::<Vec<_>>());
+    let handle = app.clone();
+    app.listen_any(HOME_EVENT, move |_| go_home(&handle));
 }
 
 /// The project folder given on the command line (`spark <folder>`), if any.
@@ -421,25 +463,17 @@ pub fn folder_arg(args: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// The folder Spark was launched with (`spark <folder>`); the launcher opens it.
+/// The folder to open as the launcher loads (`spark <folder>`), once.
 #[tauri::command]
-pub fn launch_folder() -> Option<String> {
-    folder_arg(&std::env::args().collect::<Vec<_>>())
+pub fn launch_folder(app: AppHandle) -> Option<String> {
+    app.state::<Projects>().pending.lock().unwrap().take()
 }
 
-/// Open a project without a caller waiting: errors go to the launcher.
-pub fn open_in_background(app: AppHandle, folder: String) {
-    tauri::async_runtime::spawn(async move {
-        let _ = app.emit("project-opening", &folder);
-        let result = open_project(app.clone(), folder.clone()).await;
-        let _ = app.emit(
-            "project-opened",
-            match result {
-                Ok(o) => serde_json::json!({ "folder": folder, "name": o.name }),
-                Err(e) => serde_json::json!({ "folder": folder, "error": e }),
-            },
-        );
-    });
+/// `spark <folder>` while Spark runs: the launcher comes back and opens it,
+/// so it's remembered and its progress and errors show there.
+pub fn open_later(app: &AppHandle, folder: String) {
+    *app.state::<Projects>().pending.lock().unwrap() = Some(folder);
+    go_home(app);
 }
 
 /// Whether a folder can be opened, before trying (for the launcher's list).
@@ -460,23 +494,18 @@ mod tests {
     }
 
     #[test]
-    fn window_labels_are_stable_per_folder() {
-        let a = window_label(Path::new(r"C:\Users\me\dawg"));
-        assert_eq!(a, window_label(Path::new(r"c:\users\me\dawg")));
-        assert_ne!(a, window_label(Path::new(r"C:\Users\me\other")));
-        assert!(a.starts_with("project-") && a.len() == 24);
+    fn a_project_is_named_in_the_title() {
+        assert_eq!(project_title("dawg", "spark dev"), "dawg — spark dev");
     }
 
     #[test]
-    fn project_windows_get_the_dialogs_and_nothing_that_changes_spark() {
+    fn an_open_project_gets_the_dialogs_and_the_title_bar() {
         use std::str::FromStr;
         use tauri::utils::acl::RemoteUrlPattern;
         let cap: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/project.json")).unwrap();
-        // Every project window, whatever its folder.
-        let window = cap["windows"][0].as_str().unwrap();
-        let label = window_label(Path::new(r"C:\Users\me\dawg"));
-        assert!(label.starts_with(window.strip_suffix('*').unwrap()));
+        // Spark's one window, with a project open in it.
+        assert_eq!(cap["windows"], serde_json::json!([MAIN]));
         // The dev server on any port, and nothing else.
         let pattern =
             RemoteUrlPattern::from_str(cap["remote"]["urls"][0].as_str().unwrap()).unwrap();
@@ -493,10 +522,20 @@ mod tests {
             .filter_map(|p| p.as_str())
             .collect();
         assert!(permissions.contains(&"dialog:default"));
-        // The app in a frame can't close, move or retitle Spark's window.
-        assert!(permissions.iter().all(|p| p.ends_with(":default")
-            && !p.starts_with("core:menu")
-            && !p.starts_with("core:tray")));
+        // Beyond the defaults, only the board's title bar: move, minimize,
+        // maximize, close (borrowTauri keeps these from the app in a frame).
+        // Never retitling it, menus or the tray.
+        let title_bar = [
+            "core:window:allow-minimize",
+            "core:window:allow-toggle-maximize",
+            "core:window:allow-close",
+            "core:window:allow-start-dragging",
+        ];
+        assert!(permissions
+            .iter()
+            .all(|p| (p.ends_with(":default") || title_bar.contains(p))
+                && !p.starts_with("core:menu")
+                && !p.starts_with("core:tray")));
     }
 
     #[test]

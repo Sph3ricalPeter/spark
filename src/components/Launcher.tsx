@@ -1,6 +1,6 @@
 import { folderName, useProjectsStore } from "@/stores/projects-store";
 
-/** The main window: open a project folder, or one of the recent ones. */
+/** Spark's home: open a project folder, or one of the recent ones. A project replaces it in the window. */
 export function Launcher() {
   const { recent, opening, error, pick, open, forget, dismissError } = useProjectsStore();
   const busy = opening !== null;
@@ -10,7 +10,7 @@ export function Launcher() {
       <div className="launcher-head">
         <h1>Open a project</h1>
         <p className="faint">
-          A folder with a Vite + React app. Spark runs its dev server and opens it in its own window, ready to edit.
+          A folder with a Vite + React app. Spark runs its dev server and opens it here, ready to edit. The spark button in the project's bar comes back to this list.
         </p>
         <button className="btn primary" disabled={busy} onClick={() => void pick()}>
           Open folder…

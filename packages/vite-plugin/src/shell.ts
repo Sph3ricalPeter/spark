@@ -27,6 +27,8 @@ import type { ClientHooks, ShellApi } from "./mode.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
+import { name as projectName } from "/@spark/project";
+import { inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
 import { getState, setState } from "./state.ts";
 
 const BAR_H = 40;
@@ -174,6 +176,7 @@ root.append(
     ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
     ${GRIP_STYLE}
+    ${TITLE_BAR_STYLE}
     .side-grip { top: ${BAR_H}px; left: var(--sp-side-w, ${SIDEBAR_W}px); z-index: 2; }
     .side-open .side-grip { display: block; }
     /* Over the panels (mounted after it would cover it: register inserts them before it). */
@@ -286,13 +289,13 @@ const presetSel = h("select", { title: "Device or resolution of the selected app
   presetSel.append(h("option", { value: "custom" }, "Custom"));
 }
 const addBtn = h("button", { title: "Add an app frame (another size of the app, side by side)" }, "+ Frame");
-const prevBtn = h("button", { title: "Previous size" }, "‹");
-const nextBtn = h("button", { title: "Next size" }, "›");
+const prevBtn = h("button", { class: "step", title: "Previous size" }, "‹");
+const nextBtn = h("button", { class: "step", title: "Next size" }, "›");
 const wIn = h("input", { title: "Width (px)", inputmode: "numeric" }) as HTMLInputElement;
 const hIn = h("input", { title: "Height (px)", inputmode: "numeric" }) as HTMLInputElement;
 const rotateBtn = h("button", { title: "Swap width and height" }, "⟲");
 // Aspect ratios as one dropdown, so the bar keeps room for the mode island and zoom.
-const ratioSel = h("select", { title: "Aspect ratio: keeps the width" }) as HTMLSelectElement;
+const ratioSel = h("select", { class: "ratio", title: "Aspect ratio: keeps the width" }) as HTMLSelectElement;
 ratioSel.append(h("option", { value: "" }, "Ratio"));
 for (const [i, [name]] of RATIOS.entries()) ratioSel.append(h("option", { value: String(i) }, name));
 ratioSel.addEventListener("change", () => {
@@ -367,6 +370,13 @@ const stage = h("div", { class: "stage" });
 const shield = h("div", { class: "shield" });
 const canvas = h("div", { class: "canvas" }, stage, shield);
 const shellEl = h("div", { class: "shell" }, bar, side.el, canvas);
+// In Spark's window the bar is the window's title bar too (titlebar.ts), and
+// the inspector docks under it, so the window buttons keep the corner.
+if (inSpark) {
+  shellEl.append(titleBar(bar, projectName));
+  shellEl.classList.add("titled");
+  host.style.setProperty("--sp-panel-top", `${BAR_H}px`);
+}
 
 // Both side panels resize from their inner edge (grip.ts); the canvas keeps
 // at least MIN_CANVAS, and its ResizeObserver re-lays out the frames.
