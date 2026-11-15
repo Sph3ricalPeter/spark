@@ -45,7 +45,7 @@ import { closePopover, colorField, colorTokens, displayColor, h, menuButton, num
 import { frameGlue } from "./frame.ts";
 import { words as caseTitle } from "./gallery.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
-import { shell } from "./mode.ts";
+import { shell, type Layer } from "./mode.ts";
 import { installReorder } from "./reorder.ts";
 import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
@@ -1251,7 +1251,7 @@ function label(el: Element | null) {
 }
 
 function hover(el: Element | null) {
-  if (el && el !== hovered) shell?.setHovered?.(window);
+  if (el !== hovered) shell?.setHovered?.(window, el);
   hovered = el;
   roleColor("--hov", el);
   place(hoverBox, el);
@@ -1291,7 +1291,7 @@ function select(el: Element | null) {
   placeHandles();
   label(el);
   render();
-  shell?.setSelected?.(window, !!el);
+  shell?.setSelected?.(window, !!el, el);
   placePins();
   if (el) import.meta.hot?.send("spark:select", snapshot(el));
 }
@@ -2908,6 +2908,148 @@ installReorder({
   scopeWords,
   changed,
 });
+// ---------------------------------------------------------------------------
+// Layers: this frame's tree, for the board's Layers tab (layers.ts)
+//
+// A layer is a tagged element (`data-spark-src`) under the nearest tagged
+// ancestor, so untagged wrappers (a library's, React portals' hosts) fold
+// away. An svg is one layer: its paths aren't. A component frame's cases are
+// the top level, each holding what the case renders.
+
+const CASE = ".spark-gallery-case";
+const isLayer = (el: Element) => el.hasAttribute("data-spark-src") && !skip(el);
+const leafLayer = (el: Element) => el.tagName.toLowerCase() === "svg";
+
+/** The tagged elements right under `of`: its descendants with no tagged element between. */
+function layerKids(of: Element): Element[] {
+  const out: Element[] = [];
+  const walk = (p: Element) => {
+    for (const c of Array.from(p.children)) {
+      if (c === host || c.hasAttribute("data-spark") || c.matches("script, style, template")) continue;
+      if (isLayer(c)) out.push(c);
+      else walk(c);
+    }
+  };
+  if (!leafLayer(of)) walk(of);
+  return out;
+}
+
+/** Does `el` start its component's markup (the first element of an instance) rather than sit inside it? */
+function isInstanceRoot(el: Element): boolean {
+  for (let f = fiberOf(el)?.return; f; f = f.return) {
+    if (typeof f.type === "string") return false;
+    if ((f.type as { sparkInternal?: boolean } | null)?.sparkInternal) return false;
+    const name = componentName(f.type);
+    if (name) return name === el.getAttribute("data-spark-comp");
+  }
+  return false;
+}
+
+/** A layer's own name, Figma style: an instance by its component, text by what it says, the rest by its class or tag. */
+function layerOf(el: Element): Layer {
+  const comp = el.getAttribute("data-spark-comp");
+  const role = roleOf(el);
+  const root = !!comp && isInstanceRoot(el);
+  const cs = getComputedStyle(el);
+  const kind = kindOf(el, cs);
+  const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+  const cls = Array.from(el.classList).find((c) => /^[a-z_-][\w-]*$/i.test(c) && !/^(css|sc|jsx|svelte)-/.test(c));
+  const tag = el.tagName.toLowerCase();
+  let name: string;
+  let hint: string | undefined;
+  if (root) {
+    name = comp!;
+    // A list's item by its key, else the variant it is.
+    const own = ownersOf(el)[0];
+    hint = own?.key ?? (own?.variant ? variantName(own.variant) : undefined);
+  } else if (kind === "text" && text) {
+    name = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  } else name = cls ?? tag;
+  if (!root && kind === "stack") hint = /grid/.test(cs.display) ? "grid" : cs.flexDirection.startsWith("column") ? "column" : "row";
+  const box = el.getBoundingClientRect();
+  return {
+    el,
+    name,
+    hint,
+    role,
+    icon: root ? "component" : kind === "stack" && !/grid/.test(cs.display) && !cs.flexDirection.startsWith("column") ? "columns-2" : KIND_ICON[kind],
+    root,
+    hasKids: layerKids(el).length > 0,
+    hidden: cs.display === "none" || cs.visibility === "hidden" || (box.width === 0 && box.height === 0),
+  };
+}
+
+function layers(of: Element | null): Layer[] {
+  if (!of && inComponentFrame) {
+    return Array.from(document.querySelectorAll(CASE)).map((c) => ({
+      el: c,
+      name: c.querySelector(".spark-gallery-name")?.textContent?.trim() || "Case",
+      role: "case" as const,
+      icon: "hash",
+      root: false,
+      hasKids: layerKids(c).length > 0,
+      hidden: false,
+    }));
+  }
+  if (of?.matches(CASE)) return layerKids(of).map(layerOf);
+  return layerKids(of ?? document.body).map(layerOf);
+}
+
+/** The layers from the top down to the one showing `el`. */
+function layerChain(el: Element): Element[] {
+  const chain: Element[] = [];
+  for (let p: Element | null | undefined = el.closest("[data-spark-src]"); p; p = p.parentElement?.closest("[data-spark-src]")) {
+    if (skip(p)) continue;
+    // Inside an svg the svg is the layer.
+    if (leafLayer(p)) chain.length = 0;
+    chain.unshift(p);
+  }
+  if (inComponentFrame) {
+    const c = el.closest(CASE);
+    if (c) chain.unshift(c);
+  }
+  return chain;
+}
+
+/**
+ * Scroll the page (and anything scrolling inside it) so `el` shows, the least
+ * needed. Not `scrollIntoView`: that would scroll the board around the frame too.
+ */
+function scrollTo(el: Element) {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const page = p === document.documentElement;
+    const cs = getComputedStyle(p);
+    if (!page && !/auto|scroll/.test(cs.overflowX + cs.overflowY)) continue;
+    if (p.scrollHeight <= p.clientHeight && p.scrollWidth <= p.clientWidth) continue;
+    const r = el.getBoundingClientRect();
+    const v = page ? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight } : p.getBoundingClientRect();
+    const dy = r.top < v.top ? r.top - v.top : r.bottom > v.bottom ? Math.min(r.bottom - v.bottom, r.top - v.top) : 0;
+    const dx = r.left < v.left ? r.left - v.left : r.right > v.right ? Math.min(r.right - v.right, r.left - v.left) : 0;
+    if (dx || dy) p.scrollBy(dx, dy);
+  }
+}
+
+function selectLayer(el: Element) {
+  if (!el.isConnected) return null;
+  const isCase = el.matches(CASE);
+  select(isCase ? null : el);
+  scrollTo(el);
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, w: r.width, h: r.height };
+}
+
+/** Tell the board when the tree changes: React rendering, hot reloads, class or text changes (at most every 250 ms). */
+if (shell?.layersChanged) {
+  let pending = 0;
+  new MutationObserver(() => {
+    if (pending) return;
+    pending = window.setTimeout(() => {
+      pending = 0;
+      shell!.layersChanged!(window);
+    }, 250);
+  }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+}
+
 render();
 const reopen = getState<boolean>("panel-open") === true;
 if (shell) {
@@ -2937,6 +3079,10 @@ if (shell) {
       const r = el.getBoundingClientRect();
       return { x: r.left, y: r.top, w: r.width, h: r.height };
     },
+    layers,
+    layerChain,
+    selectLayer,
+    hoverLayer: (el) => hover(el && el.isConnected ? el : null),
   });
 } else if (reopen) setOpen(true);
 requestAnimationFrame(follow);

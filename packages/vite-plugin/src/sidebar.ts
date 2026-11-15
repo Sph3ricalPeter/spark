@@ -1,13 +1,14 @@
-// The board's left sidebar (shell.ts): a panel of tabs. Chats: every chat
+// The board's left sidebar (shell.ts): a panel of tabs. Layers: the board's
+// frames and the element tree in each (layers.ts). Chats: every chat
 // with Claude about an element (chats.ts), newest first, with its element,
 // state and model; clicking one opens it on its element. "Resolve" archives a
 // chat into the Resolved view at the bottom of the list, where it can be read
 // and reopened (chats are never deleted). Changes: the
 // pending edits and Implement changes (the active frame's client renders it).
 //
-// Add a tab with `addTab(name, element, icon, title)`: it gets a button on the
-// bar that opens the sidebar on it (`buttons` lists them, `setCount` shows a
-// count on one).
+// Add a tab with `addTab(name, element, icon, title, onShow?)`: it gets a
+// button on the bar that opens the sidebar on it (`buttons` lists them,
+// `setCount` shows a count on one); `onShow` runs each time it comes into view.
 import { h } from "./fields.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { icon } from "./theme.ts";
@@ -88,7 +89,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
   let open = saved?.open === true;
   let current = saved?.tab ?? "";
   const remember = () => setState("sidebar", { open, tab: current });
-  const tabs = new Map<string, { bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement }>();
+  const tabs = new Map<string, { bar: HTMLElement; counts: HTMLElement[]; el: HTMLElement; onShow?: () => void }>();
   const tabRow = h("div", { class: "side-head" });
   const grow = h("span", { class: "grow" });
   const close = h("button", { class: "close", title: "Close the sidebar", click: () => setOpen(false) }, icon("x"));
@@ -110,12 +111,14 @@ export function sidebar(onToggle: (open: boolean) => void) {
     remember();
     body.replaceChildren(tabs.get(name)?.el ?? "");
     mark();
+    if (open) tabs.get(name)?.onShow?.();
   }
   function setOpen(v: boolean) {
     open = v;
     remember();
     mark();
     onToggle(v);
+    if (v) tabs.get(current)?.onShow?.();
   }
   return {
     el,
@@ -126,13 +129,15 @@ export function sidebar(onToggle: (open: boolean) => void) {
       for (const c of tabs.get(name)?.counts ?? []) c.textContent = n ? String(n) : "";
     },
     isOpen: () => open,
+    /** Is this tab in view (the sidebar open on it)? */
+    shows: (name: string) => open && current === name,
     setOpen,
     /** Open the sidebar on a tab. */
     showTab: (name: string) => {
       show(name);
       if (!open) setOpen(true);
     },
-    addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string) {
+    addTab(name: string, content: HTMLElement, iconName: Parameters<typeof icon>[0], title: string, onShow?: () => void) {
       const counts = [h("span", { class: "count" })];
       const bar = h("button", { class: "side-toggle", title }, icon(iconName, 13), name, counts[0]);
       bar.addEventListener("click", () => {
@@ -143,7 +148,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
         }
       });
       buttons.append(bar);
-      tabs.set(name, { bar, counts, el: content });
+      tabs.set(name, { bar, counts, el: content, onShow });
       // The tab it was left on, once it's added; init() falls back to the first.
       if (current === name) show(name);
     },

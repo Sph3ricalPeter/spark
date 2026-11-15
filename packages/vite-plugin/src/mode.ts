@@ -13,6 +13,28 @@
 
 export type Mode = "shell" | "frame" | "page";
 
+/**
+ * One row of the board's Layers tab (layers.ts): an element of a frame's
+ * tree as the client names it. The tree is the frame's tagged elements
+ * (`data-spark-src`), each under the nearest tagged ancestor; a component
+ * frame groups them by case.
+ */
+export type Layer = {
+  el: Element;
+  name: string;
+  /** Said dimmer after the name: an instance's variant, a layout's direction. */
+  hint?: string;
+  /** "case": a component frame's case, not an element of its own. */
+  role: "plain" | "definition" | "instance" | "case";
+  /** A Lucide icon name from theme.ts. */
+  icon: string;
+  /** The root of a component instance (or of the frame's own component). */
+  root: boolean;
+  hasKids: boolean;
+  /** Not drawn: display none, or no size. */
+  hidden: boolean;
+};
+
 /** What a client in one of the shell's frames hands the shell. */
 export type ClientHooks = {
   win: Window;
@@ -34,6 +56,14 @@ export type ClientHooks = {
   findChat?(key: string): boolean;
   /** Select that element and open its chat; its box in the frame, or null when it's not here. */
   openChat?(key: string): { x: number; y: number; w: number; h: number } | null;
+  /** The Layers tab: the layers under `of` (null: the frame's top level). */
+  layers?(of: Element | null): Layer[];
+  /** The layers from the top level down to the one showing `el` (an element in an svg shows as its svg). */
+  layerChain?(el: Element): Element[];
+  /** A layer was clicked: select its element (a case: drop the selection); its box in the frame, or null. */
+  selectLayer?(el: Element): { x: number; y: number; w: number; h: number } | null;
+  /** The pointer is over a layer's row (null: it left). */
+  hoverLayer?(el: Element | null): void;
 };
 
 /**
@@ -50,9 +80,11 @@ export type ShellApi = {
   /** Is this frame the active one (its panel shows, the shell's keys go to it)? */
   isActive(win: Window): boolean;
   /** This frame's selection came or went (the chat pins hide while another frame has one). */
-  setSelected?(win: Window, has: boolean): void;
-  /** This frame hovers an element: the shell drops the hover in every other frame (one hover on the board). */
-  setHovered?(win: Window): void;
+  setSelected?(win: Window, has: boolean, el?: Element | null): void;
+  /** The element under the pointer in this frame: the shell drops the hover in every other frame (one hover on the board) and the Layers tab marks its row. */
+  setHovered?(win: Window, el: Element | null): void;
+  /** This frame's tree changed (the Layers tab redraws). */
+  layersChanged?(win: Window): void;
   /** The frame's name on the board ("App 2", "Meter"), for what the popup and its chat call it. */
   frameTitle?(win: Window): string;
   /** How many changes are pending (the bar's Changes button shows it). */
