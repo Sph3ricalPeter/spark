@@ -1447,7 +1447,7 @@ const isDelete = (e: KeyboardEvent) => (e.key === "Delete" || e.key === "Backspa
 
 // ---------------------------------------------------------------------------
 // Claude: "Implement changes" and "Ask Claude" run the local claude CLI on the
-// dev server (runner.ts); progress comes back as spark:run events.
+// dev server, each run a chat (claude.ts); progress comes back as spark:run events.
 
 type RunEvent =
   | { type: "start"; kind: "implement" | "ask"; ids: string[]; chat?: string }

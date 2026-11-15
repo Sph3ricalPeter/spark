@@ -1095,7 +1095,7 @@ function guardFrames() {
 // ---------------------------------------------------------------------------
 // Chats: every chat with Claude about an element, from the dev server (chats.ts)
 
-type ChatRef = { id: string; key: string };
+type ChatRef = { id: string; key: string; kind?: string };
 /** Open a chat on its element: the frame that has it becomes the selected one, in Edit mode. */
 function openChat(chat: ChatRef): boolean {
   for (const f of frames) {
@@ -1140,6 +1140,9 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   else if (e.type === "done" || e.type === "error") runningChat = null;
   else return;
   showChats();
+  // A task (the Components view's "Write them with Claude", an Ask with nothing selected) has no element
+  // to show its chat on: the Chats tab opens on it, so every run is in sight as it goes.
+  if (e.type === "start" && e.chat && chatData.find((c) => c.id === e.chat)?.kind === "task" && chatList.reveal(e.chat)) side.showTab("Chats");
 });
 import.meta.hot?.send("spark:chats-get", {});
 
