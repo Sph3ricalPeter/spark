@@ -131,16 +131,27 @@ const GROUPS: Record<VarKind, string> = { color: "Colors", size: "Sizes", other:
 
 export function renderVariables(into: HTMLElement, deps: VariablesDeps) {
   const vars = collectVariables(deps.skip);
-  into.append(newVariableForm(vars, deps));
+  const form = newVariableForm(vars, deps);
+  const add = h("button", { class: `var-add${form.hidden ? "" : " on"}`, type: "button", title: "New variable" }, icon("plus", 14));
+  add.addEventListener("click", (e) => {
+    e.stopPropagation();
+    form.hidden = !form.hidden;
+    add.classList.toggle("on", !form.hidden);
+    if (!form.hidden) (form.querySelector("input") as HTMLInputElement | null)?.focus();
+  });
   if (vars.length === 0) {
-    into.append(h("div", { class: "empty" }, "This app's stylesheets don't define any CSS variables yet (custom properties like --radius-sm)."));
+    form.hidden = false;
+    into.append(form, h("div", { class: "empty" }, "This app's stylesheets don't define any CSS variables yet (custom properties like --radius-sm)."));
     return;
   }
   const colors: Token[] = vars.filter((v) => v.kind === "color").map((v) => ({ name: v.name, value: deps.pendingValue(v.name) ?? v.resolved }));
 
   const search = h("input", { class: "var-filter", placeholder: `Filter ${vars.length} variables`, value: filter, spellcheck: "false" }) as HTMLInputElement;
   search.addEventListener("keydown", (e) => e.stopPropagation());
-  into.append(search, h("div", { class: "hint" }, "Editing a variable changes it where it's defined, so everything that uses it follows."));
+  into.append(
+    h("div", { class: "var-top", title: "Editing a variable changes it where it's defined, so everything that uses it follows." }, search, add),
+    form,
+  );
 
   const rows: { el: HTMLElement; text: string; group: HTMLElement }[] = [];
   let group: HTMLElement | null = null;
@@ -148,7 +159,14 @@ export function renderVariables(into: HTMLElement, deps: VariablesDeps) {
   for (const v of vars) {
     if (v.kind !== kind) {
       kind = v.kind;
-      group = h("h3", {}, GROUPS[kind]);
+      const count = vars.filter((x) => x.kind === kind).length;
+      group = h(
+        "h3",
+        { class: "var-group" },
+        h("span", {}, GROUPS[kind]),
+        h("span", { class: "var-count" }, String(count)),
+        h("span", { class: "var-uses-h", title: "How many rules and variables read it" }, "Uses"),
+      );
       into.append(group);
     }
     const el = varRow(v, colors, deps);
@@ -171,6 +189,11 @@ export function renderVariables(into: HTMLElement, deps: VariablesDeps) {
   apply();
 }
 
+/**
+ * One line per variable, like a table: swatch (colors), name, value, uses.
+ * The value is the same field the inspector uses (color text with the swatch's
+ * picker, scrubbable number, text); "Uses" folds out where it's read below the line.
+ */
 function varRow(v: Variable, colors: Token[], deps: VariablesDeps): HTMLElement {
   const pending = deps.pendingValue(v.name);
   const value = pending ?? v.authored;
@@ -186,28 +209,36 @@ function varRow(v: Variable, colors: Token[], deps: VariablesDeps): HTMLElement 
   } else field = textField(value, changed, onValue);
 
   const refs = varsIn(v.authored);
-  const head = h(
-    "div",
-    { class: "var-head" },
-    h("span", { class: "var-name", title: v.name }, v.name),
-    refs.length > 0 && h("span", { class: "resolved", title: "Resolved value" }, `= ${shown}`),
-    h(
-      "button",
-      { class: `var-uses${v.uses.length ? "" : " none"}`, title: "Where it's used", click: () => toggle() },
-      v.uses.length === 1 ? "1 use" : `${v.uses.length} uses`,
-    ),
+  const tip = refs.length > 0 ? `${v.name}: ${v.authored} = ${shown}` : `${v.name}: ${shown}`;
+  const uses = h(
+    "button",
+    { class: `var-uses${v.uses.length ? "" : " none"}`, type: "button", title: `${v.uses.length === 1 ? "1 use" : `${v.uses.length} uses`}: show where` },
+    String(v.uses.length),
   );
   const list = h("div", { class: "var-list" });
-  const row = h("div", { class: "var", "data-var": v.name }, head, h("div", { class: "field" }, field), list);
+  const row = h(
+    "div",
+    { class: `var is-${v.kind}${changed ? " changed" : ""}`, "data-var": v.name },
+    h("span", { class: "var-name", title: tip }, v.name),
+    h("div", { class: "var-value", title: tip }, field),
+    uses,
+    list,
+  );
 
   const toggle = () => {
     if (expanded.has(v.name)) expanded.delete(v.name);
     else expanded.add(v.name);
     fill();
   };
+  uses.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggle();
+  });
   const fill = () => {
     list.replaceChildren();
+    row.classList.toggle("open", expanded.has(v.name));
     if (!expanded.has(v.name)) return;
+    if (refs.length > 0) list.append(h("div", { class: "var-def" }, h("span", { class: "resolved" }, `= ${shown}`)));
     list.append(h("div", { class: "var-def" }, `defined in ${v.selector} · ${deps.shortFile(v.file)}`));
     if (v.uses.length === 0) list.append(h("div", { class: "empty" }, "Not used by any rule."));
     for (const u of v.uses) {
@@ -250,22 +281,55 @@ export const VARIABLES_STYLE = `
     .tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--sp-line); }
     .tabs button { border: none; border-radius: var(--sp-r-sm) 4px 0 0; background: transparent; color: var(--sp-text-dim); padding: 4px 10px 6px; }
     .tabs button.on { background: var(--sp-field); color: var(--sp-text-strong); }
-    .var-filter { margin-bottom: 4px; font-family: var(--sp-font); }
-    .var { padding: 6px 0; border-bottom: 1px solid #1f2125; }
-    .var.flash { background: #4f8cff22; margin: 0 -12px; padding: 6px 12px; transition: background .6s; }
-    .var-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-width: 0; }
-    .var-name { font: 600 var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .var-head .resolved { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .var-uses { margin-left: auto; padding: 0 6px; font-size: var(--sp-fs-xs); color: var(--sp-link); background: transparent; border-color: var(--sp-line); }
+    .var-top { display: flex; gap: var(--sp-1); margin-bottom: var(--sp-1); }
+    .var-filter { flex: 1; min-width: 0; height: 24px; font-family: var(--sp-font); }
+    .var-add { flex: none; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--sp-text-dim); }
+    .var-add:hover, .var-add.on { color: var(--sp-text-strong); }
+    .var-add.on { border-color: var(--sp-accent); }
+    h3.var-group { display: flex; align-items: baseline; gap: 6px; margin: var(--sp-3) 0 2px; }
+    h3.var-group:first-of-type { margin-top: var(--sp-2); }
+    .var-count { flex: 1; font: 500 var(--sp-fs-xs)/1 var(--sp-font); letter-spacing: 0; }
+    .var-uses-h { font: 500 var(--sp-fs-xs)/1 var(--sp-font); text-transform: none; letter-spacing: 0; }
+    /* One line per variable: [swatch] name · value · uses; the uses list folds out below. */
+    .var {
+      display: grid; grid-template-columns: minmax(0, 1fr) 104px 28px; align-items: center; column-gap: 6px;
+      position: relative; margin: 0 -12px; padding: 2px 6px 2px 12px;
+    }
+    .var.is-size { grid-template-columns: minmax(0, 1fr) 76px 28px; }
+    .var.is-other { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 28px; }
+    .var:hover, .var.open { background: var(--sp-surface); }
+    .var.flash { background: color-mix(in srgb, var(--sp-accent) 14%, transparent); transition: background .6s; }
+    .var-name { font: 500 var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .var-value { min-width: 0; }
+    .var-value > input, .var-value > .num, .var-value > .color > input { height: 22px; }
+    /* Fields look like plain values until the row is hovered or the field is in use; an edit keeps its border. */
+    .var:not(:hover) .var-value > input:not(:focus):not(.changed), .var:not(:hover) .var-value > .color > input:not(:focus):not(.changed),
+    .var:not(:hover) .var-value > .num:not(:focus-within):not(.changed) {
+      background: transparent; border-color: transparent;
+    }
+    .var:not(:hover) .var-value > .num:not(:focus-within) .grip { color: transparent; }
+    .var.changed .var-name { color: var(--sp-warn); }
+    /* A color's swatch leads the line; the field's own wrapper steps aside so its picker opens under the whole row. */
+    .var.is-color { grid-template-columns: 18px minmax(0, 1fr) 104px 28px; }
+    .var.is-color .var-value { display: contents; }
+    .var.is-color .var-value > .color { display: contents; }
+    .var.is-color .var-value > .color > .swatch { grid-column: 1; grid-row: 1; width: 18px; height: 18px; }
+    .var.is-color .var-name { grid-column: 2; grid-row: 1; }
+    .var.is-color .var-value > .color > input { grid-column: 3; grid-row: 1; min-width: 0; }
+    .var .var-value > .color > .popover { top: calc(100% + 2px); right: 6px; }
+    .var-uses {
+      justify-self: end; min-width: 22px; height: 18px; padding: 0 5px; border-radius: var(--sp-r-sm);
+      font: 500 var(--sp-fs-xs)/1 var(--sp-font); color: var(--sp-link); background: transparent; border-color: transparent;
+    }
+    .var-uses:hover, .var.open .var-uses { border-color: var(--sp-line-strong); }
     .var-uses.none { color: var(--sp-text-dim); }
-    .var-list { font-size: var(--sp-fs-sm); }
-    .var-list:not(:empty) { margin-top: 6px; padding: 4px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
+    .var-list { grid-column: 1 / -1; font-size: var(--sp-fs-sm); }
+    .var-list:not(:empty) { margin: 4px 0 6px; padding: 4px 8px; background: var(--sp-bg); border-radius: var(--sp-r-sm); }
     .var-def { color: var(--sp-text-dim); margin-bottom: 2px; }
     .var-use { padding: 1px 0; word-break: break-word; }
     .resolved { color: var(--sp-text-dim); font: var(--sp-fs-sm) var(--sp-mono); }
-    .var-new { margin: 0 0 10px; padding: 6px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
-    .var-new summary { color: var(--sp-link); text-transform: none; letter-spacing: 0; font-size: var(--sp-fs-md); }
-    .var-new[open] summary { margin-bottom: 6px; }
+    .var-new { margin: 0 0 var(--sp-2); padding: 6px 8px; background: var(--sp-surface); border-radius: var(--sp-r-sm); }
+    .var-new-title { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); margin-bottom: 4px; }
     .hint.bad { color: var(--sp-danger); }
     .with-var { display: flex; gap: 4px; align-items: flex-start; position: relative; }
     .with-var > :first-child { flex: 1; min-width: 0; }
@@ -289,9 +353,9 @@ function newVariableForm(vars: Variable[], deps: VariablesDeps): HTMLElement {
   const targets = variableTargets(deps.skip);
   const d = draft;
   draft = null;
-  const box = h("details", { class: "var-new" }) as HTMLDetailsElement;
-  box.open = !!d;
-  box.append(h("summary", {}, "+ New variable"));
+  const box = h("div", { class: "var-new" });
+  box.hidden = !d;
+  box.append(h("div", { class: "var-new-title" }, "New variable"));
   if (targets.length === 0) {
     box.append(h("div", { class: "empty" }, "No :root rule to put it in. Add one to a stylesheet first."));
     return box;
