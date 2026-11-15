@@ -1077,6 +1077,7 @@ function label(el: Element | null) {
 }
 
 function hover(el: Element | null) {
+  if (el && el !== hovered) shell?.setHovered?.(window);
   hovered = el;
   roleColor("--hov", el);
   place(hoverBox, el);
@@ -2482,6 +2483,9 @@ const swallow = (e: Event) => {
 };
 
 document.addEventListener("pointermove", (e) => picking && !resizing && hover(pickable(e.target)), true);
+// Leaving the page (to another frame, the canvas or the panel) gets no
+// pointermove here, so the hover would stay: drop it when the pointer goes.
+document.addEventListener("mouseout", (e) => !e.relatedTarget && hovered && hover(null), true);
 document.addEventListener("pointerdown", swallow, true);
 document.addEventListener("mousedown", swallow, true);
 document.addEventListener("pointerup", swallow, true);
@@ -2655,6 +2659,7 @@ if (shell) {
     setOpen,
     setPicking,
     deselect: () => select(null),
+    unhover: () => hovered && hover(null),
     restore: (list) => {
       if (editing) stopTextEdit(true);
       restore(list as Change[]);

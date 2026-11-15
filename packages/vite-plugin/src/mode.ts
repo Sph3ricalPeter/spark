@@ -24,6 +24,8 @@ export type ClientHooks = {
   setPicking(edit: boolean): void;
   /** Another frame became active: drop the selection here. */
   deselect(): void;
+  /** Another frame took the hover: drop the hover box here. */
+  unhover?(): void;
   /** Another frame changed the change list (an edit, undo, redo): show this one. */
   restore(changes: unknown[]): void;
   /** The Chats list: is the element this chat key names in this frame? */
@@ -47,6 +49,8 @@ export type ShellApi = {
   isActive(win: Window): boolean;
   /** This frame's selection came or went (the chat pins hide while another frame has one). */
   setSelected?(win: Window, has: boolean): void;
+  /** This frame hovers an element: the shell drops the hover in every other frame (one hover on the board). */
+  setHovered?(win: Window): void;
   /** How many changes are pending (the bar's Changes button shows it). */
   setChangeCount?(n: number): void;
   /** Is an element selected in a frame other than this one? */
