@@ -22,6 +22,7 @@ const COUNTER_ZOOM = `
     border: none; box-shadow: inset 0 0 0 calc(1px / var(--z, 1)) var(--sel, #4f8cff);
   }
   .tag { transform: scale(calc(1 / var(--z, 1))); transform-origin: 0 100%; }
+  .dims { transform: scale(calc(1 / var(--z, 1))) translateX(-50%); }
   .pin { transform: scale(calc(1 / var(--z, 1))); }
 `;
 
