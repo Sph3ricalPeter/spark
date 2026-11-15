@@ -41,6 +41,7 @@ import {
   breadth,
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
+import { iconLabel, iconMarkup, iconPreview, openIconPicker, sourceIcon, svgRoot } from "./icons.ts";
 import { closePopover, colorField, colorTokens, displayColor, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { words as caseTitle } from "./gallery.ts";
@@ -133,13 +134,14 @@ const FIELDS: { group: string; fields: Field[] }[] = [
 const SIDES = ["top", "right", "bottom", "left"] as const;
 
 /** What kind of thing an element is, for which properties come first. */
-type Kind = "text" | "button" | "input" | "media" | "stack" | "box";
-const KIND_LABEL: Record<Kind, string> = { text: "Text", button: "Button", input: "Field", media: "Image", stack: "Layout", box: "Box" };
+type Kind = "text" | "button" | "input" | "icon" | "media" | "stack" | "box";
+const KIND_LABEL: Record<Kind, string> = { text: "Text", button: "Button", input: "Field", icon: "Icon", media: "Image", stack: "Layout", box: "Box" };
 /** The properties people change most on each kind, first in the inspector and in the Ask popup. */
 const ESSENTIALS: Record<Kind, string[]> = {
   text: ["color", "font-size", "font-weight", "line-height", "text-align", "margin"],
   button: ["background-color", "color", "border-radius", "font-size", "font-weight", "padding"],
   input: ["background-color", "color", "border-color", "border-radius", "font-size", "padding"],
+  icon: ["width", "height", "color", "opacity"],
   media: ["width", "height", "border-radius", "opacity"],
   stack: ["gap", "flex-direction", "align-items", "justify-content", "padding", "background-color", "border-radius"],
   box: ["background-color", "border-radius", "width", "height", "padding", "display"],
@@ -160,6 +162,7 @@ const KIND_ICON: Record<Kind, IconName> = {
   text: "type",
   button: "rectangle-horizontal",
   input: "text-cursor-input",
+  icon: "smile",
   media: "image",
   stack: "rows-2",
   box: "square",
@@ -168,7 +171,8 @@ const INLINE = /^(B|I|EM|STRONG|SMALL|CODE|BR|SPAN|A|SUB|SUP|MARK|ABBR|KBD|S|U)$
 
 function kindOf(el: Element, cs: CSSStyleDeclaration): Kind {
   const tag = el.tagName;
-  if (/^(IMG|SVG|VIDEO|CANVAS|PICTURE|IFRAME)$/i.test(tag)) return "media";
+  if (tag.toLowerCase() === "svg") return "icon";
+  if (/^(IMG|VIDEO|CANVAS|PICTURE|IFRAME)$/.test(tag)) return "media";
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return "input";
   if (tag === "BUTTON" || el.getAttribute("role") === "button") return "button";
   if (/flex|grid/.test(cs.display)) return "stack";
@@ -723,6 +727,25 @@ const STYLE = `${THEME}
       position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%;
       border: 2px solid #fff; box-shadow: 0 0 0 1px #0008; pointer-events: none;
     }
+    .icon-row { position: relative; display: flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); }
+    .icon-row > .ico { width: 32px; height: 32px; border-radius: var(--sp-r-sm); background: var(--sp-field); border: 1px solid var(--sp-line-strong); color: var(--sp-text-strong); }
+    .icon-row > .ico.own { border-color: var(--sp-warn); }
+    .icon-row > .ico.up { border-color: var(--sp-component); }
+    .ico { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .icon-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .icon-name b { color: var(--sp-text-strong); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-name span { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-swap { flex: none; height: 24px; padding: 0 10px; }
+    .popover.icons { top: calc(100% + 4px); left: 0; right: 0; width: auto; display: flex; flex-direction: column; gap: 6px; }
+    .ico-tabs { display: flex; flex-wrap: wrap; gap: 2px; }
+    .ico-tab { height: 22px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: var(--sp-text-dim); font: 500 var(--sp-fs-sm)/1 var(--sp-font); border-radius: var(--sp-r-sm); cursor: pointer; }
+    .ico-tab:hover { color: var(--sp-text-strong); }
+    .ico-tab.on { border-color: var(--sp-line-strong); background: var(--sp-field); color: var(--sp-text-strong); }
+    .ico-search { height: 24px; }
+    .ico-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); gap: 2px; max-height: 232px; overflow: auto; }
+    .ico-cell { height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--sp-r-sm); background: transparent; color: var(--sp-text); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+    .ico-cell:hover { background: var(--sp-field); color: var(--sp-text-strong); }
+    .ico-cell.on { border-color: var(--sp-accent); color: var(--sp-text-strong); }
     .cp-bar { position: relative; height: 12px; border-radius: 6px; cursor: pointer; touch-action: none; }
     .cp-hue { background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
     .cp-alpha { background: repeating-conic-gradient(#808080 0 25%, #c8c8c8 0 50%) 0 0 / 8px 8px; }
@@ -955,9 +978,14 @@ function escapeStep(): boolean {
   return false;
 }
 
-/** The nearest element we know the source of; else the variant box it's in, else (on the page's own backdrop) the frame. */
+/**
+ * The nearest element we know the source of; else the variant box it's in, else (on the page's own backdrop) the frame.
+ * An icon is picked whole: its `<svg>`, not a path in it.
+ */
 function pickable(node: EventTarget | null): Element | null {
   if (!(node instanceof Element) || host.contains(node)) return null;
+  const svg = svgRoot(node);
+  if (svg?.hasAttribute("data-spark-src")) return svg;
   return node.closest("[data-spark-src]") ?? node.closest("[data-spark-case]") ?? (isBackdrop(node) ? document.documentElement : null);
 }
 
@@ -1040,6 +1068,12 @@ function rectOf(el: Element): DOMRect {
   if (el !== document.documentElement) return el.getBoundingClientRect();
   return new DOMRect(0, 0, el.clientWidth, el.clientHeight);
 }
+
+/**
+ * Inside a disabled control (dawg's Undo while there's nothing to undo): the
+ * browser sends it no click, so picking happens on pointerup instead.
+ */
+const inDisabled = (node: EventTarget | null) => node instanceof Element && !!node.closest("button:disabled, input:disabled, select:disabled, textarea:disabled, fieldset:disabled");
 
 function place(box: HTMLElement, el: Element | null) {
   if (!el || !el.isConnected) {
@@ -1410,10 +1444,13 @@ function elementInfo(el: Element) {
   };
 }
 
-/** Preview `prop: value` as an override on exactly this instance; `final` saves it and refreshes the panel. */
-function edit(el: Element, prop: string, value: string, final: boolean): boolean {
+/**
+ * Preview `prop: value` as an override on exactly this instance; `final` saves it and refreshes the panel.
+ * `prop` is a CSS property, or "icon" (with the new icon's markup in `extra.iconSvg`).
+ */
+function edit(el: Element, prop: string, value: string, final: boolean, extra: Pick<Change, "iconSvg"> = {}): boolean {
   value = value.trim();
-  if (value && !CSS.supports(prop, value)) return false;
+  if (prop !== "icon" && value && !CSS.supports(prop, value)) return false;
   const element = elementInfo(el);
   const path = instancePath(el);
   // Like a prefab: the edit goes to a step of the element's chain (its own
@@ -1430,12 +1467,14 @@ function edit(el: Element, prop: string, value: string, final: boolean): boolean
   mine = mine.filter((c) => breadth(c.instance) <= breadth(want));
   const existing = mine.filter((c) => sameStep(c.instance, want)).at(-1);
   if (existing) {
-    record({ ...existing, to: value || existing.from });
+    record({ ...existing, ...extra, to: value || existing.from });
   } else {
     // Starts from what's applied further out, if anything.
     const upstream = mine.filter((c) => breadth(c.instance) < breadth(want)).at(-1);
-    const from = upstream?.to ?? authored(el, matchedRules(el, skip), prop) ?? getComputedStyle(el).getPropertyValue(prop);
+    const from =
+      upstream?.to ?? (prop === "icon" ? sourceIcon(el) : (authored(el, matchedRules(el, skip), prop) ?? getComputedStyle(el).getPropertyValue(prop)));
     record({
+      ...extra,
       level: "instance",
       property: prop,
       from,
@@ -2543,6 +2582,7 @@ function render() {
   const kind = kindOf(el, cs);
   const essentials = ESSENTIALS[kind].map(fieldFor).filter((f): f is Field => !!f);
   body.append(h("h3", {}, KIND_LABEL[kind]));
+  if (kind === "icon") body.append(iconRow(el, overrides.filter((c) => c.property === "icon").at(-1), markOf));
   for (const f of essentials) body.append(fieldRow(f));
   // Edits in the folded part still show: their categories open on their own.
   const editedRest = FIELDS.flatMap((g) => g.fields).filter((f) => !essentials.includes(f) && (f.kind === "sides" ? SIDES.some((s) => overrides.some((c) => c.property === `${f.prop}-${s}`)) : overrides.some((c) => c.property === f.prop)));
@@ -2601,6 +2641,29 @@ function render() {
   );
 }
 
+/**
+ * An icon's row: which icon it is (library and name, or an inline SVG), and
+ * Swap, which opens the picker; the pick is an "icon" override like any edit.
+ */
+function iconRow(el: Element, c: Change | undefined, markOf: (c: Change | undefined) => Mark): HTMLElement {
+  const id = c?.to ?? sourceIcon(el);
+  const { name, from } = iconLabel(id, el.getAttribute("data-spark-src"));
+  const wrap = h("div", { class: "icon-row" });
+  const swap = h("button", { type: "button", class: "icon-swap", title: "Pick another icon" }, "Swap");
+  swap.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openIconPicker(wrap, id, (choice) => {
+      closePopover();
+      edit(el, "icon", choice.id, true, { iconSvg: choice.svg });
+    });
+  });
+  const mark = markOf(c);
+  const preview = iconPreview(c?.iconSvg ?? iconMarkup(el as SVGSVGElement), 20);
+  if (mark) preview.classList.add(mark === "up" ? "up" : "own");
+  wrap.append(preview, h("div", { class: "icon-name" }, h("b", {}, name), h("span", {}, from)), swap);
+  return wrap;
+}
+
 /** How a field relates to the step edits go to: set there or narrower ("own"), set on a wider step ("up"), or not edited. */
 type Mark = "own" | "up" | null;
 
@@ -2638,7 +2701,7 @@ function scopeSelect(c: Change): HTMLElement {
   const known = chain.some((s) => sameStep(c.instance, s));
   if (!known) sel.append(h("option", { value: "", selected: true }, stepLabel(c)));
   for (const s of chain) sel.append(h("option", { value: s.key, selected: known && sameStep(c.instance, s) }, s.key === "one" ? "Only this one" : `${s.label}: ${s.words}`));
-  const rules = el && !["text", "children-order", "removed"].includes(c.property) ? matchedRules(el, skip) : [];
+  const rules = el && !["text", "children-order", "removed", "icon"].includes(c.property) ? matchedRules(el, skip) : [];
   for (const [i, m] of [...rules.entries()].reverse()) sel.append(h("option", { value: `rule:${i}` }, `Move to CSS rule ${m.selector} · ${shortFile(m.file)}`));
   sel.addEventListener("change", () => {
     if (sel.value.startsWith("rule:")) {
@@ -2734,16 +2797,25 @@ document.addEventListener("pointermove", (e) => picking && !resizing && hover(pi
 document.addEventListener("mouseout", (e) => !e.relatedTarget && hovered && hover(null), true);
 document.addEventListener("pointerdown", swallow, true);
 document.addEventListener("mousedown", swallow, true);
-document.addEventListener("pointerup", swallow, true);
+/** A click picks: Shift+click adds to the selection (or takes out); a plain click starts over. */
+function pick(e: Event) {
+  if ((e as MouseEvent).shiftKey) toggleSelect(pickable(e.target));
+  else select(pickable(e.target));
+}
+document.addEventListener(
+  "pointerup",
+  (e) => {
+    if (swallow(e) && inDisabled(e.target)) pick(e);
+  },
+  true,
+);
 document.addEventListener("mouseup", swallow, true);
 document.addEventListener(
   "click",
   (e) => {
     if (editing && e.target instanceof Node && editing.contains(e.target)) return;
-    if (!swallow(e)) return;
-    // Shift+click adds to the selection (or takes out); a plain click starts over.
-    if ((e as MouseEvent).shiftKey) toggleSelect(pickable(e.target));
-    else select(pickable(e.target));
+    if (!swallow(e) || inDisabled(e.target)) return;
+    pick(e);
   },
   true,
 );

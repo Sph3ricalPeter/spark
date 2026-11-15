@@ -24,6 +24,11 @@ const HOW = `How to read a change:
   current children); reorder the JSX, or the list they're rendered from.
 - property "removed": the element is deleted from the design at that scope. Remove its JSX (or, for one item of
   a list or one instance, the data or prop that renders it, or a condition); don't just hide it with CSS.
+- property "icon": the \`<svg>\` icon is swapped for another. \`to\` names the new icon: \`library:Icon\` is that export of
+  the icon library (\`lucide-react:Redo2\`: import \`Redo2\` from "lucide-react" and render it in its place, keeping its
+  props, className and size); \`inline:<file:line:col>\` is the inline \`<svg>\` written there: draw the same icon (copy
+  its JSX, including a flip or turn on the svg itself, or reuse its component if the project has one). \`from\` names
+  the icon it replaces the same way. \`iconSvg\` is the new icon's markup as it looks, for reference.
 - \`from\` is the value before the edit, to help you find the spot. Line numbers may have shifted slightly.`;
 
 const RULES = `Rules:

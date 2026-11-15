@@ -23,6 +23,23 @@ body {
   padding: var(--gap-2) var(--gap-3);
   border-bottom: 1px solid var(--line);
 }
+.toolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-1);
+}
+.toolbar .btn:disabled {
+  opacity: 0.5;
+}
+.glyph {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .toolbar .title {
   font-weight: 600;
   margin-right: auto;

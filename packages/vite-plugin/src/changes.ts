@@ -43,8 +43,11 @@ export type Change = {
   level: Level;
   /** The CSS property, the token's name for a token change, "text" for an
    * element's text content, "children-order" for children dragged into a
-   * new order (see `children`), or "removed" for an element deleted from the
-   * design (`from` "", `to` "removed"). */
+   * new order (see `children`), "removed" for an element deleted from the
+   * design (`from` "", `to` "removed"), or "icon" for an `<svg>` icon swapped
+   * for another (see `iconSvg`). An icon is named `library:Icon` (an export of
+   * an icon library, `lucide-react:Redo2`) or `inline:<src>` (the inline
+   * `<svg>` written at that file:line:col). */
   property: string;
   /** The value before Spark touched it ("" when it wasn't set). */
   from: string;
@@ -85,6 +88,8 @@ export type Change = {
    * the list they come from) into that order.
    */
   children?: { order: number[]; labels: string[] };
+  /** "icon" only: the markup of the icon `to` names, as it looks (colors as black), for the preview and whoever applies it. */
+  iconSvg?: string;
   status: "pending" | "applied";
   at: string;
 };
@@ -181,6 +186,7 @@ export function record(c: Omit<Change, "id" | "at" | "status">): Change | null {
   if (existing) {
     existing.to = c.to;
     if (c.children) existing.children = c.children;
+    if (c.iconSvg !== undefined) existing.iconSvg = c.iconSvg;
     existing.at = new Date().toISOString();
     if (existing.to === existing.from) {
       revert(existing.id);
@@ -306,6 +312,15 @@ export function renderOverrides() {
     if (c.property === "children-order") {
       // The DOM stays as React made it; the flex or grid shows the new order.
       for (const [pos, i] of (c.children?.order ?? []).entries()) css += `[data-spark-o~="${c.id}"] > :nth-child(${i + 1}) { order: ${pos} !important; }\n`;
+      continue;
+    }
+    if (c.property === "icon") {
+      // The svg React made stays; its drawing is hidden and the new icon is
+      // painted in its box, in its color, as a mask.
+      if (!c.iconSvg) continue;
+      const url = `url("data:image/svg+xml,${encodeURIComponent(c.iconSvg)}")`;
+      css += `[data-spark-o~="${c.id}"] > * { visibility: hidden !important; }\n`;
+      css += `[data-spark-o~="${c.id}"] { background-color: currentColor !important; -webkit-mask: ${url} center / contain no-repeat !important; mask: ${url} center / contain no-repeat !important; }\n`;
       continue;
     }
     css += `[data-spark-o~="${c.id}"] { ${c.property}: ${c.to} !important; }\n`;

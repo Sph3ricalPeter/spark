@@ -4,3 +4,8 @@ declare module "*@spark/cases" {
   const files: string[];
   export default files;
 }
+declare module "*@spark/icon-libs" {
+  /** The icon libraries in the project's package.json. */
+  const libs: string[];
+  export default libs;
+}

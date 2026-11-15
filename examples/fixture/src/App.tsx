@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { Track } from "./ui/Track";
@@ -12,9 +13,22 @@ function Toolbar() {
   return (
     <header className="toolbar">
       <span className="title">Night Drive</span>
-      <Button small>Undo</Button>
-      <Button small>Redo</Button>
-      <Button variant="primary">Export</Button>
+      <Button small disabled title="Nothing to undo">
+        <svg className="glyph" viewBox="0 0 16 16">
+          <path d="M6 3 2.5 6.5 6 10M3 6.5h6.5a3.5 3.5 0 0 1 0 7H8" />
+        </svg>
+        Undo
+      </Button>
+      <Button small>
+        <svg className="glyph" viewBox="0 0 16 16" style={{ transform: "scaleX(-1)" }}>
+          <path d="M6 3 2.5 6.5 6 10M3 6.5h6.5a3.5 3.5 0 0 1 0 7H8" />
+        </svg>
+        Redo
+      </Button>
+      <Button variant="primary">
+        <Download size={14} />
+        Export
+      </Button>
     </header>
   );
 }

@@ -56,6 +56,12 @@ Zustand). Release and deploy are ported from dawg and described in
   explicit apply upstream; editing a case in a component frame edits the
   component's own variant (or base), which every instance gets; each override can be moved along the
   chain or to a CSS rule; tokens are always global;
+  `icons.ts` is icons: a click picks a whole `<svg>` (also inside a disabled
+  button, which gets no click), tag.ts marks icon-library components
+  (`data-spark-icon="lucide-react:Undo2"`), the inspector names the icon and
+  Swap opens a picker of the app's own inline icons and the project's icon
+  libraries (`/@spark/icons?lib=…`, rendered with the app's React); a swap is
+  an "icon" override previewed as a CSS mask;
   `reorder.ts` drags an element along its flex/grid parent (previewed
   with CSS `order`, recorded as a "children-order" override on the parent);
   `shell.ts` is the board: an infinite canvas (zoom, pan) of frames, each an

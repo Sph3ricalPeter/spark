@@ -10,11 +10,12 @@
 //   into `.spark/` in the project root: selection.json and changes.json, and
 //   chats.json: the Ask chats, each one Claude session about one element (chats.ts),
 //   and state.json: how the board and panels were left (state-file.ts, state.ts).
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
-import { tagJsx } from "./tag.ts";
+import { ICON_LIBRARY, tagJsx } from "./tag.ts";
 import type { Change, ChangeLog } from "./changes.ts";
 import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, type AskSelection } from "./prompt.ts";
 import { claude } from "./claude.ts";
@@ -39,6 +40,67 @@ const CASES_MODULE = [
   `export default Object.keys(import.meta.glob(["/**/*.spark.{tsx,jsx}", "!**/node_modules/**"]));`,
   `if (import.meta.hot) import.meta.hot.accept((m) => m && window.dispatchEvent(new CustomEvent("spark:cases", { detail: m.default })));`,
 ].join("\n");
+
+/** One icon library's icons for the icon picker (`?lib=lucide-react`). */
+const ICONS = "/@spark/icons";
+const ICONS_ID = "\0spark-icons:";
+/** The icon libraries the project depends on. */
+const ICON_LIBS = "/@spark/icon-libs";
+const ICON_LIBS_ID = "\0spark-icon-libs";
+
+/** The icon libraries in the nearest package.json's dependencies, at or above `root`. */
+function projectIconLibraries(root: string): string[] {
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    const file = path.join(dir, "package.json");
+    if (existsSync(file)) {
+      try {
+        const pkg = JSON.parse(readFileSync(file, "utf8"));
+        const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+        // Only flat libraries: a subpath one (react-icons/fa) is offered once an icon from it is used.
+        return deps.filter((d) => ICON_LIBRARY.test(d) && d !== "@mui/icons-material");
+      } catch {
+        return [];
+      }
+    }
+    if (path.dirname(dir) === dir) return [];
+  }
+}
+
+/**
+ * An icon library for the picker (client.ts): its icons' names, and their
+ * markup, rendered with the app's own React into a detached node. Aliases
+ * (lucide's `Undo2`, `Undo2Icon`, `LucideUndo2`) count once, by their shortest name.
+ */
+function iconsModule(lib: string) {
+  return [
+    `import * as lib from ${JSON.stringify(lib)};`,
+    `import { Component, createElement } from "react";`,
+    `import { createRoot } from "react-dom/client";`,
+    `const byIcon = new Map();`,
+    `for (const [k, v] of Object.entries(lib)) {`,
+    `  if (!/^[A-Z]/.test(k) || !v || !(typeof v === "function" || (typeof v === "object" && "$$typeof" in v))) continue;`,
+    `  const had = byIcon.get(v);`,
+    `  if (!had || k.length < had.length) byIcon.set(v, k);`,
+    `}`,
+    `export const names = [...byIcon.values()].sort();`,
+    // One export that isn't an icon (a provider, a base component) mustn't break the rest.
+    `class Guard extends Component { state = { failed: false }; static getDerivedStateFromError() { return { failed: true }; } render() { return this.state.failed ? null : this.props.children; } }`,
+    `export function render(list) {`,
+    `  return new Promise((resolve) => {`,
+    `    const box = document.createElement("div");`,
+    `    const root = createRoot(box);`,
+    `    const done = (n) => {`,
+    `      if (!n) return;`,
+    `      const out = {};`,
+    `      list.forEach((name, i) => { const svg = n.children[i]?.querySelector("svg"); if (svg) out[name] = svg.outerHTML; });`,
+    `      resolve(out);`,
+    `      setTimeout(() => root.unmount());`,
+    `    };`,
+    `    root.render(createElement("div", { ref: done }, list.map((name) => createElement("span", { key: name }, createElement(Guard, null, lib[name] ? createElement(lib[name]) : null)))));`,
+    `  });`,
+    `}`,
+  ].join("\n");
+}
 
 /** Side-effect stylesheet imports (`import "./styles.css"`): the app's global CSS. */
 const CSS_IMPORT = /^\s*import\s+["']([^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?)["']/gm;
@@ -100,8 +162,12 @@ export default function spark(): Plugin {
 
     config(config) {
       // The client file may live outside the app (a linked package).
+      // The icon picker imports the project's icon libraries: prebundle them up
+      // front, so opening it doesn't make Vite discover them and reload the page.
+      const icons = projectIconLibraries(path.resolve(config.root ?? process.cwd()));
       return {
         server: { fs: { allow: [searchForWorkspaceRoot(config.root ?? process.cwd()), here] } },
+        ...(icons.length ? { optimizeDeps: { include: icons } } : {}),
       };
     },
 
@@ -112,6 +178,11 @@ export default function spark(): Plugin {
     resolveId(id) {
       if (id in MODULES) return MODULES[id];
       if (id === CASES) return CASES_ID;
+      if (id === ICON_LIBS) return ICON_LIBS_ID;
+      if (id.startsWith(`${ICONS}?lib=`)) {
+        const lib = decodeURIComponent(id.slice(ICONS.length + 5));
+        return ICON_LIBRARY.test(lib) ? ICONS_ID + lib : null;
+      }
       if (id.startsWith(`${ENTRY}?src=`)) return ENTRY_ID + decodeURIComponent(id.slice(ENTRY.length + 5));
       if (id.startsWith(`${COMPONENTS}?entry=`)) return COMPONENTS_ID + decodeURIComponent(id.slice(COMPONENTS.length + 7));
       return null;
@@ -119,6 +190,8 @@ export default function spark(): Plugin {
 
     load(id) {
       if (id === CASES_ID) return CASES_MODULE;
+      if (id === ICON_LIBS_ID) return `export default ${JSON.stringify(projectIconLibraries(root))};`;
+      if (id.startsWith(ICONS_ID)) return iconsModule(id.slice(ICONS_ID.length));
       if (id.startsWith(ENTRY_ID)) return entryModule(id.slice(ENTRY_ID.length));
       if (id.startsWith(COMPONENTS_ID)) return componentsModule(root, id.slice(COMPONENTS_ID.length));
       return null;
