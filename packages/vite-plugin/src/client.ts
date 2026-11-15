@@ -470,6 +470,16 @@ const STYLE = `${THEME}
       font: 600 var(--sp-fs-sm)/1 var(--sp-font);
       background: var(--tag, var(--sp-accent)); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
     }
+    /* The selection's measurements, centered under it like Figma's size badge. */
+    .dims {
+      position: fixed; display: none; pointer-events: none; align-items: center; gap: 6px;
+      transform: translateX(-50%); transform-origin: 0 0;
+      font: 600 var(--sp-fs-sm)/1 var(--sp-font); font-variant-numeric: tabular-nums;
+      background: var(--sel, var(--sp-accent)); color: var(--sp-text-strong); padding: 3px 6px; border-radius: var(--sp-r-sm); white-space: nowrap;
+    }
+    .dims span { display: inline-flex; align-items: center; gap: 3px; }
+    .dims span + span { padding-left: 6px; border-left: 1px solid color-mix(in srgb, var(--sp-text-strong) 35%, transparent); }
+    .dims .icon { opacity: .8; }
     .panel {
       position: fixed; top: 0; right: 0; bottom: 0; width: ${PANEL_W}px;
       display: none; flex-direction: column; pointer-events: auto;
@@ -732,6 +742,8 @@ const selectBox = h("div", { class: "box selected" });
 const marginBox = h("div", { class: "bm margin" });
 const paddingBox = h("div", { class: "bm padding" });
 const tagLabel = h("div", { class: "tag" });
+/** The selection's size, radius and font size, under it (placeDims). */
+const dimsBadge = h("div", { class: "dims" });
 const DIRS = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
 type Dir = (typeof DIRS)[number];
 const handles = DIRS.map((dir) => h("div", { class: "handle", "data-dir": dir }));
@@ -807,7 +819,7 @@ const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "
 askBox.addEventListener("click", () => closePopover());
 /** Pins on the elements that have a chat with Claude (refreshPins/placePins). */
 const pinLayer = h("div", { class: "pins" });
-shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, tagLabel, pinLayer);
+shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, dimsBadge, tagLabel, pinLayer);
 // In the viewport shell the panel lives outside the zoomed frame (mode.ts).
 const panelHost = shell ? document.createElement("spark-panel") : host;
 const panelRoot = shell ? panelHost.attachShadow({ mode: "open" }) : shadow;
@@ -1031,7 +1043,72 @@ function placeHandles() {
     const y = dir.includes("n") ? r.top : dir.includes("s") ? r.bottom : r.top + r.height / 2;
     Object.assign(el.style, { display: "block", left: `${x}px`, top: `${y}px` });
   }
+  placeDims(r);
 }
+
+/** A CSS length as the badge shows it: whole pixels, or one decimal when it has one. */
+const px = (v: number) => String(Math.round(v * 10) / 10);
+
+/** True when the element shows text of its own (a text node of its own, or a field). */
+function hasOwnText(el: Element): boolean {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+  for (const n of el.childNodes) if (n.nodeType === Node.TEXT_NODE && n.textContent!.trim()) return true;
+  return false;
+}
+
+/** The border radius, if it has one: "6", "50%", or the four corners when they differ. */
+function radiusOf(cs: CSSStyleDeclaration): string | null {
+  const corners = [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius].map((v) => {
+    // "8px" or "50%"; an elliptical corner ("8px 4px") shows its first radius.
+    const first = v.trim().split(/\s+/)[0] ?? "0";
+    const n = parseFloat(first) || 0;
+    return { n, text: first.endsWith("%") ? `${px(n)}%` : px(n) };
+  });
+  if (corners.every((c) => c.n === 0)) return null;
+  return corners.every((c) => c.text === corners[0].text) ? corners[0].text : corners.map((c) => c.text).join(" ");
+}
+
+let dimsKey = "";
+/**
+ * The selection's measurements, centered under it like Figma's size badge:
+ * width × height, the border radius when it has one, and the font size when
+ * it shows text. On the board it keeps its screen size (divided by the zoom)
+ * and stays inside the frame: above the element when there's no room below,
+ * inside its bottom edge when there's room neither side.
+ */
+function placeDims(r: DOMRect | null) {
+  if (!r || !selected) {
+    dimsBadge.style.display = "none";
+    dimsKey = "";
+    return;
+  }
+  const cs = getComputedStyle(selected);
+  const radius = radiusOf(cs);
+  const font = hasOwnText(selected) ? px(parseFloat(cs.fontSize) || 0) : null;
+  const key = `${px(r.width)}|${px(r.height)}|${radius}|${font}`;
+  if (key !== dimsKey) {
+    dimsKey = key;
+    const parts: HTMLElement[] = [h("span", { title: "Width × height" }, `${px(r.width)} × ${px(r.height)}`)];
+    if (radius) parts.push(h("span", { title: "Border radius" }, lucide("corner", 10), radius));
+    if (font) parts.push(h("span", { title: "Font size" }, lucide("type", 10), font));
+    dimsBadge.replaceChildren(...parts);
+  }
+  dimsBadge.style.display = "inline-flex";
+  // On the board the overlay is zoomed with the frame; the badge isn't (frame.ts).
+  const z = shell?.zoom || 1;
+  const w = dimsBadge.offsetWidth / z;
+  const hgt = dimsBadge.offsetHeight / z;
+  const gap = 6 / z;
+  const vw = window.innerWidth - (open && !shell ? PANEL_W : 0);
+  const vh = window.innerHeight;
+  const top = r.bottom + gap + hgt <= vh ? r.bottom + gap : r.top - gap - hgt >= 0 ? r.top - gap - hgt : Math.max(0, r.bottom - gap - hgt);
+  const cx = Math.max(w / 2 + 2 / z, Math.min(r.left + r.width / 2, vw - w / 2 - 2 / z));
+  dimsBadge.style.left = `${cx}px`;
+  dimsBadge.style.top = `${top}px`;
+  dimsBelow = top >= r.bottom ? (gap + hgt) * z : 0;
+}
+/** How far (on screen) the badge reaches below the selection, for the Ask popup to keep clear of. */
+let dimsBelow = 0;
 
 // Selection colors say what an element is: blue for the page's own markup,
 // purple for the component a component frame shows (its definition), pink
@@ -1893,6 +1970,8 @@ function placeAsk() {
   }
   // Scrolled or panned out of sight: no popup.
   if (e.r <= room.l || e.l >= room.r || e.b <= room.t || e.t >= room.b || e.r <= e.l || e.b <= e.t) return hide();
+  // Keep clear of the measurements under the selection too.
+  if (dimsBadge.style.display !== "none") e.b += dimsBelow;
   // The popup names the selection, so its floating label goes (unless something else is hovered).
   if (!hovered || hovered === el) tagLabel.style.display = "none";
   askBox.style.display = "flex";
