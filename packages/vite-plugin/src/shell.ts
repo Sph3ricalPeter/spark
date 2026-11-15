@@ -955,6 +955,9 @@ const api: ShellApi = {
     if (has) selWin = win;
     else if (selWin === win) selWin = null;
   },
+  setHovered(win) {
+    for (const [w, hooks] of clients) if (w !== win) hooks.unhover?.();
+  },
   selectedElsewhere(win) {
     return !!selWin && selWin !== win && clients.has(selWin);
   },
