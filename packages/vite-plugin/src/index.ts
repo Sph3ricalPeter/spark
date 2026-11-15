@@ -262,14 +262,16 @@ export default function spark(): Plugin {
       // Ask Claude, from the popup on an element: the element's open chat (by its
       // `chat` key), one Claude session that later prompts resume (chats.ts).
       // With no element, a chat of its own.
-      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string }, client) => {
+      // `others`: more elements picked with Shift+click; the chat stays the first one's.
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string; others?: AskSelection[] }, client) => {
         if (ai.busy()) return busy(client)(null);
         const pending = (await loadLog()).changes.filter((c) => c.status === "pending");
         await ai
           .ask({
             topic: data.chat ? { element: data.chat, label: data.selection?.label } : { kind: "task", label: data.selection?.label || "Ask Claude" },
             request: data.request,
-            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(data.request, data.selection, pending),
+            also: data.others?.map((o) => o.label || o.comp || o.tag),
+            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(data.request, data.selection, pending, data.others),
             kind: "ask",
             ids: pending.map((c) => c.id),
           })
