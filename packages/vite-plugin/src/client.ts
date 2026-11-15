@@ -1751,7 +1751,8 @@ function askName(el: Element, path: PathEntry[]): { name: string; owner: string 
 
 /** What a chat calls an element: "Button in Primary", "h2 in Card". */
 function askLabel(el: Element, path: PathEntry[]): string {
-  const n = askName(el, path);
+  const t = targetOf(el);
+  const n = t ? targetName(t) : askName(el, path);
   return n.owner ? `${n.name} in ${n.owner}` : n.name;
 }
 

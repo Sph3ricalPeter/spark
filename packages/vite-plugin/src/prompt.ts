@@ -122,7 +122,10 @@ export function askPrompt(request: string, selection: AskSelection | null, pendi
       ? `The person has ${others.length + 1} elements selected in the running app, and the request is about all of them:
 ${JSON.stringify([selection, ...others], null, 2)}
 For each, \`src\` is the file:line:col of its JSX, \`comp\` the component it's written in, \`owners\` the components above it
-(innermost first) with the line that renders each.`
+(innermost first) with the line that renders each.${[selection, ...others].some((s) => s.target) ? `
+One with a \`target\` is not a single element but a whole frame on Spark's board (\`kind\` "frame": an app page at that
+viewport size, or a component frame showing every case in \`target.file\`) or one variant box of a component frame
+(\`kind\` "case": the case \`target.name\` exported from \`target.file\`); \`target.roots\` are the outermost elements it shows.` : ""}`
       : selected(selection);
   const first = pending.length
     ? `First, apply these pending visual edits from Spark (they're previewed in the app but not in the code yet), so
