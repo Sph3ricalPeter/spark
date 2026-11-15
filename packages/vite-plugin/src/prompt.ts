@@ -61,17 +61,62 @@ export type AskSelection = {
   comp: string | null;
   owners: { name: string; call: string | null; key: string | null }[];
   text?: string;
-  /** What the popup calls it ("h2 in Card"). */
+  /** What the popup calls it ("h2 in Card", "App frame", "Primary in Button"). */
   label?: string;
+  /** Not one element but a whole frame on Spark's board, or one variant box of a component frame. */
+  target?: AskTarget;
 };
 
-export function askPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
-  const sel = selection
-    ? `The person has this element selected in the running app:
-${JSON.stringify(selection, null, 2)}
+type Root = { src: string | null; comp: string | null };
+export type AskTarget =
+  | {
+      kind: "frame";
+      name: string;
+      /** "app": the app's page at one viewport size; "component": a component's cases (gallery). */
+      frame: "app" | "component";
+      size: { width: number; height: number };
+      url?: string;
+      /** Component frames: the case file, its component and its cases (exported function names). */
+      file?: string | null;
+      component?: string | null;
+      cases?: string[];
+      roots: Root[];
+    }
+  | { kind: "case"; name: string; file: string; component: string | null; roots: Root[] };
+
+/** How the prompt introduces what's selected. */
+function selected(selection: AskSelection): string {
+  const t = selection.target;
+  const json = JSON.stringify(selection, null, 2);
+  if (!t) {
+    return `The person has this element selected in the running app:
+${json}
 \`src\` is the file:line:col of its JSX, \`comp\` the component it's written in, \`owners\` the components above it
-(innermost first) with the line that renders each.`
-    : "Nothing is selected.";
+(innermost first) with the line that renders each.`;
+  }
+  const roots = "`target.roots` are the outermost elements it shows: the file:line:col of their JSX (`src`) and the component each is written in (`comp`).";
+  if (t.kind === "case") {
+    return `The person has one variant box selected in Spark's component frame for ${t.component ?? "a component"}, not a single element:
+${json}
+It's the case \`target.name\`, a function exported from \`target.file\` that renders the component with the props for this
+variant. ${roots} The request is about this variant of the component as a whole: change the component's code or styling
+for this variant (and the case's props in \`target.file\` if the request needs it), keeping its other variants as they are.`;
+  }
+  if (t.frame === "component") {
+    return `The person has a whole component frame selected on Spark's board, not a single element:
+${json}
+It shows every case of ${t.component ?? "a component"}: each is a function exported from \`target.file\` (\`target.cases\`) that
+renders the component with the props for one variant. ${roots} The request is about the component as a whole and all of its
+variants. To add a variant, support it in the component and add a case for it to \`target.file\`.`;
+  }
+  return `The person has a whole app frame selected on Spark's board, not a single element:
+${json}
+It's the app's page (\`target.url\`) shown in a ${t.size.width}×${t.size.height} viewport. ${roots} The request is about the
+whole screen as it looks at that size.`;
+}
+
+export function askPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
+  const sel = selection ? selected(selection) : "Nothing is selected.";
   const first = pending.length
     ? `First, apply these pending visual edits from Spark (they're previewed in the app but not in the code yet), so
 the code matches what the person sees before you change anything else:
@@ -100,7 +145,8 @@ End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdic
 
 /** A follow-up in an Ask chat: the session already has the rules and the earlier turns. */
 export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[]): string {
-  const sel = selection ? `\n\nThe selected element now (it may have moved since your last turn):\n${JSON.stringify(selection, null, 2)}` : "";
+  const what = selection?.target ? (selection.target.kind === "case" ? "variant" : "frame") : "element";
+  const sel = selection ? `\n\nThe selected ${what} now (it may have moved since your last turn):\n${JSON.stringify(selection, null, 2)}` : "";
   const first = pending.length
     ? `\n\nFirst apply these pending visual edits from Spark, as before:\n${JSON.stringify(pending, null, 2)}`
     : "";

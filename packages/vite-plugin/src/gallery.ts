@@ -78,8 +78,8 @@ const STYLE = `
 /** A component frame stacks its cases when one is wider than this. */
 const STACK_W = 360;
 
-/** "QuietLevel" → "Quiet level". */
-function words(name: string) {
+/** "QuietLevel" → "Quiet level": a case as the board names it. */
+export function words(name: string) {
   const s = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
@@ -242,7 +242,8 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
           cases.map(([name, Case]) =>
             h(
               "div",
-              { key: name, className: "spark-gallery-case" },
+              // The variant box: Spark selects it as a whole (client.ts targetOf), to Ask Claude about this case.
+              { key: name, className: "spark-gallery-case", "data-spark-case": name, "data-spark-case-file": path },
               h(CaseName, { key: "name", file: path, name }),
               h("div", { className: "spark-gallery-stage" }, h(Boundary, null, h(Wrapper, null, h(Case)))),
             ),

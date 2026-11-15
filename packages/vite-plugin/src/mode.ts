@@ -24,6 +24,8 @@ export type ClientHooks = {
   setPicking(edit: boolean): void;
   /** Another frame became active: drop the selection here. */
   deselect(): void;
+  /** The frame's title was clicked in edit mode: select the frame itself (to Ask Claude about all of it). */
+  selectFrame?(): void;
   /** Another frame changed the change list (an edit, undo, redo): show this one. */
   restore(changes: unknown[]): void;
   /** The Chats list: is the element this chat key names in this frame? */
@@ -47,6 +49,8 @@ export type ShellApi = {
   isActive(win: Window): boolean;
   /** This frame's selection came or went (the chat pins hide while another frame has one). */
   setSelected?(win: Window, has: boolean): void;
+  /** The frame's name on the board ("App 2", "Meter"), for what the popup and its chat call it. */
+  frameTitle?(win: Window): string;
   /** How many changes are pending (the bar's Changes button shows it). */
   setChangeCount?(n: number): void;
   /** Is an element selected in a frame other than this one? */

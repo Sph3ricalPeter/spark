@@ -15,6 +15,9 @@ import { shell } from "./mode.ts";
 const COUNTER_ZOOM = `
   .box.hover { outline: none; box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--hov, #4f8cff); }
   .box.selected { outline: none; box-shadow: 0 0 0 calc(2px / var(--z, 1)) var(--sel, #4f8cff); }
+  /* The frame itself: inside its edges, which clip anything outside. */
+  .box.inset.hover { box-shadow: inset 0 0 0 calc(1px / var(--z, 1)) var(--hov, #4f8cff); }
+  .box.inset.selected { box-shadow: inset 0 0 0 calc(2px / var(--z, 1)) var(--sel, #4f8cff); }
   .box.selected.editing { box-shadow: 0 0 0 calc(2px / var(--z, 1)) #d9a441; }
   .handle {
     width: calc(8px / var(--z, 1)); height: calc(8px / var(--z, 1));

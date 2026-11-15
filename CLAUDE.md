@@ -32,6 +32,11 @@ Zustand). Release and deploy are ported from dawg and described in
   app usable; edit mode (Tab or Alt+E; the View/Edit island in the canvas bar shows which) picks elements, Esc steps back out to view.
   Spark's own buttons and dropdowns never keep focus: Tab and Esc are
   always Spark's shortcuts except while typing in a text field.
+  Besides elements, edit mode selects the whole frame (click its title on
+  the board, an empty spot, or Arrow Up past the outermost element) and a
+  component frame's variant boxes (`data-spark-case` from `gallery.ts`):
+  no style fields, just Ask Claude with chats of their own
+  (`@frame:<frame id>`, `@case:<file>#<export>` keys, `target` in the prompt).
   Edit mode has selection handles to resize,
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches);

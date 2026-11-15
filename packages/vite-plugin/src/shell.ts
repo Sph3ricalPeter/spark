@@ -503,7 +503,7 @@ function syncComponents(files: string[]) {
   apply();
 }
 
-/** Drag a frame by its title. */
+/** Drag a frame by its title; a click on it (no drag) in edit mode selects the frame itself, to Ask Claude about it. */
 function moveFrame(f: Frame, e: PointerEvent) {
   if (e.button !== 0) return;
   e.preventDefault();
@@ -516,7 +516,10 @@ function moveFrame(f: Frame, e: PointerEvent) {
   const y0 = f.y;
   const cx = e.clientX;
   const cy = e.clientY;
+  let moved = false;
   const move = (ev: PointerEvent) => {
+    if (!moved && Math.hypot(ev.clientX - cx, ev.clientY - cy) < 3) return;
+    moved = true;
     const rx = x0 + (ev.clientX - cx) / z;
     const ry = y0 + (ev.clientY - cy) / z;
     const g = gridStep();
@@ -534,6 +537,8 @@ function moveFrame(f: Frame, e: PointerEvent) {
     t.removeEventListener("pointercancel", up);
     save();
     apply();
+    const win = f.iframe.contentWindow;
+    if (!moved && edit && win) clients.get(win)?.selectFrame?.();
   };
   t.addEventListener("pointermove", move as EventListener);
   t.addEventListener("pointerup", up);
@@ -944,6 +949,9 @@ const api: ShellApi = {
     else showPanels();
     hooks.setOpen(docked);
     hooks.setPicking(edit);
+  },
+  frameTitle(win) {
+    return frameOf(win)?.name.textContent ?? "";
   },
   setChangeCount(n) {
     side.setCount("Changes", n);
