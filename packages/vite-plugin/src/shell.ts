@@ -22,6 +22,7 @@
 import { installFont } from "./fonts.ts";
 import { THEME, icon } from "./theme.ts";
 import { h } from "./fields.ts";
+import { drag } from "./drag.ts";
 import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
@@ -573,7 +574,6 @@ function moveFrame(f: Frame, e: PointerEvent) {
   e.preventDefault();
   selectFrame(f);
   const t = e.currentTarget as HTMLElement;
-  t.setPointerCapture(e.pointerId);
   shellEl.classList.add("moving");
   // Where the frame would be without snapping; Ctrl snaps it to the visible grid.
   const x0 = f.x;
@@ -596,9 +596,6 @@ function moveFrame(f: Frame, e: PointerEvent) {
     shellEl.classList.remove("moving");
     f.x = Math.round(f.x);
     f.y = Math.round(f.y);
-    t.removeEventListener("pointermove", move as EventListener);
-    t.removeEventListener("pointerup", up);
-    t.removeEventListener("pointercancel", up);
     save();
     apply();
     // A click (no drag) selects the frame itself, to Ask Claude about all of it: from View mode too, which it leaves.
@@ -608,9 +605,7 @@ function moveFrame(f: Frame, e: PointerEvent) {
       hooks.selectFrame();
     }
   };
-  t.addEventListener("pointermove", move as EventListener);
-  t.addEventListener("pointerup", up);
-  t.addEventListener("pointercancel", up);
+  drag(t, e, move, up);
 }
 
 // ---------------------------------------------------------------------------
@@ -879,26 +874,21 @@ function setSpace(v: boolean) {
 
 function startPan(e: PointerEvent) {
   e.preventDefault();
-  canvas.setPointerCapture(e.pointerId);
   canvas.classList.add("panning");
   // clientX, not screenX: with Windows display scaling screenX can be in
   // device pixels, which overshoots.
   let x = e.clientX;
   let y = e.clientY;
-  const move = (ev: PointerEvent) => {
-    panBy(ev.clientX - x, ev.clientY - y);
-    x = ev.clientX;
-    y = ev.clientY;
-  };
-  const up = () => {
-    canvas.classList.remove("panning");
-    canvas.removeEventListener("pointermove", move as EventListener);
-    canvas.removeEventListener("pointerup", up);
-    canvas.removeEventListener("pointercancel", up);
-  };
-  canvas.addEventListener("pointermove", move as EventListener);
-  canvas.addEventListener("pointerup", up);
-  canvas.addEventListener("pointercancel", up);
+  drag(
+    canvas,
+    e,
+    (ev) => {
+      panBy(ev.clientX - x, ev.clientY - y);
+      x = ev.clientX;
+      y = ev.clientY;
+    },
+    () => canvas.classList.remove("panning"),
+  );
 }
 canvas.addEventListener("pointerdown", (e) => {
   const p = e as PointerEvent;

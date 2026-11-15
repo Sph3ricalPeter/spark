@@ -8,6 +8,7 @@
 //   stays on its elements; handles, outlines and the tag keep their on-screen
 //   size by dividing by the zoom. (The Ask popup lives in the shell instead,
 //   next to the panel, so it can sit outside the frame.)
+import { drag } from "./drag.ts";
 import { shell } from "./mode.ts";
 
 // Box shadows, not borders or outlines: those snap to whole pixels of the
@@ -66,7 +67,9 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
       if (e.code === "Space" && isOpen() && !typing(e)) {
         e.preventDefault();
         e.stopPropagation();
-        if (!spaceDown) s.space(true);
+        // Every time, not just the first: a keyup the board took (focus moved
+        // out of the frame) leaves spaceDown set but the board's Space off.
+        s.space(true);
         spaceDown = true;
       }
     },
@@ -90,8 +93,6 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
       if (e.button !== 1) return;
       e.preventDefault();
       e.stopPropagation();
-      const el = document.documentElement;
-      el.setPointerCapture(e.pointerId);
       // Keep the grabbed point of the app under the pointer. The frame moves
       // as it pans, so the pointer's position in the app drifts back to
       // where it was grabbed; screenX can't be used here because Chromium
@@ -99,17 +100,7 @@ export function frameGlue(overlay: HTMLElement, isOpen: () => boolean, toggle: (
       // can put it in device pixels), which overshoots.
       const x = e.clientX;
       const y = e.clientY;
-      const move = (ev: PointerEvent) => {
-        s.panBy((ev.clientX - x) * s.zoom, (ev.clientY - y) * s.zoom);
-      };
-      const up = () => {
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", up);
-        el.removeEventListener("pointercancel", up);
-      };
-      el.addEventListener("pointermove", move);
-      el.addEventListener("pointerup", up);
-      el.addEventListener("pointercancel", up);
+      drag(document.documentElement, e, (ev) => s.panBy((ev.clientX - x) * s.zoom, (ev.clientY - y) * s.zoom));
     },
     true,
   );
