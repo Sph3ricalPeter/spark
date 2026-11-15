@@ -279,9 +279,9 @@ export default function spark(): Plugin {
       server.ws.on("spark:chats-get", async (_d, client) => client.send("spark:chats", { chats: (await chats.load()).chats, running: ai.running() }));
       // "New chat": the element's open chat closes (it stays in the Chats list).
       server.ws.on("spark:chat-new", (data: { chat: string }) => chats.close(data.chat));
-      // The Chats list: open an earlier chat again, or delete one.
+      // The Chats list: open an earlier (or resolved) chat again, or resolve one (archive it; Claude can't be answering it).
       server.ws.on("spark:chat-open", (data: { id: string }) => chats.reopen(data.id));
-      server.ws.on("spark:chat-delete", (data: { id: string }) => (ai.running() === data.id ? undefined : chats.remove(data.id)));
+      server.ws.on("spark:chat-resolve", (data: { id: string }) => (ai.running() === data.id ? undefined : chats.resolve(data.id)));
       // A chat's element moved (Claude's edit shifted its lines): its chats follow it.
       server.ws.on("spark:chat-move", (data: { from: string; to: string }) => chats.move(data.from, data.to));
       // A component frame's case renamed in place (gallery.ts): rename its export.

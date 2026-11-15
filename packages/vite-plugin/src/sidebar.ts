@@ -1,6 +1,8 @@
 // The board's left sidebar (shell.ts): a panel of tabs. Chats: every chat
 // with Claude about an element (chats.ts), newest first, with its element,
-// state and model; clicking one opens it on its element. Changes: the
+// state and model; clicking one opens it on its element. "Resolve" archives a
+// chat into the Resolved view at the bottom of the list, where it can be read
+// and reopened (chats are never deleted). Changes: the
 // pending edits and Implement changes (the active frame's client renders it).
 //
 // Add a tab with `addTab(name, element, icon, title)`: it gets a button on the
@@ -54,12 +56,21 @@ export const SIDEBAR_STYLE = `
   .chat-row .first { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sp-text-dim); }
   .chat-row .meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); }
   .chat-row .model { padding: 1px 5px; border-radius: var(--sp-r-sm); background: var(--sp-field); color: var(--sp-text); }
-  .chat-row .del {
-    position: absolute; right: 8px; bottom: 7px; display: none; height: 18px; padding: 0 6px; border: none; border-radius: var(--sp-r-sm);
-    background: var(--sp-field); color: var(--sp-text-dim); font-size: var(--sp-fs-xs);
+  .chat-row .act {
+    margin: -2px 0 -2px auto; display: none; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border: none;
+    border-radius: var(--sp-r-sm); background: var(--sp-field); color: var(--sp-text-dim); font-size: var(--sp-fs-xs);
   }
-  .chat-row:hover .del { display: block; }
-  .chat-row .del:hover, .chat-row .del.sure { color: var(--sp-text-strong); background: var(--sp-danger); }
+  .chat-row:hover .act { display: inline-flex; flex: none; }
+  .chat-row:hover .meta .count { display: none; }
+  .chat-row .act:hover { color: var(--sp-text-strong); background: var(--sp-line-strong); }
+  .chat-row.resolved .st { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sp-line-strong); }
+  .chat-row.resolved .el { color: var(--sp-text); }
+  .chats-switch {
+    display: flex; align-items: center; justify-content: flex-start; gap: 6px; width: 100%; height: 32px; padding: 0 12px; border: none; border-bottom: 1px solid var(--sp-line);
+    border-radius: 0; background: none; color: var(--sp-text-dim); font: inherit; text-align: left; cursor: pointer;
+  }
+  .chats-switch:hover { background: var(--sp-surface); color: var(--sp-text-strong); }
+  .chats-switch .n { margin-left: auto; font: var(--sp-fs-xs) var(--sp-mono); }
   .chat-row .missing { margin-top: 6px; color: var(--sp-warn); font-size: var(--sp-fs-sm); }
   .chat-log { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; cursor: text; user-select: text; }
   .chat-log .u { align-self: flex-end; max-width: 92%; padding: 4px 8px; border-radius: 8px 8px 2px 8px; background: color-mix(in srgb, var(--sp-accent) 22%, var(--sp-field)); color: var(--sp-text-strong); white-space: pre-wrap; }
@@ -156,7 +167,7 @@ export function sidebar(onToggle: (open: boolean) => void) {
 // The Chats tab
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number };
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; kind?: "implement" | "task" };
+type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; resolved?: boolean; kind?: "implement" | "task" };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
@@ -183,16 +194,20 @@ export function chatsTab(deps: ChatsDeps) {
   const el = h("div", { class: "chats" });
   let chats: Chat[] = [];
   let running: string | null = null;
-  /** Chats whose element isn't on the board, shown inline instead. */
+  /** Chats whose element isn't on the board (and runs, and resolved chats), shown inline instead. */
   const expanded = new Set<string>();
-  let sure: string | null = null;
+  /** The Chats list, or the Resolved view (chats archived with "Resolve"). */
+  let view: "list" | "resolved" = "list";
 
   function render() {
     if (!chats.length) {
       el.replaceChildren(h("div", { class: "chats-empty" }, "No chats yet. Select an element in Edit mode and ask Claude about it in its popup."));
       return;
     }
-    const rows = [...chats].sort((a, b) => b.updated - a.updated).map((c) => {
+    const resolvedView = view === "resolved";
+    const shown = chats.filter((c) => !!c.resolved === resolvedView);
+    const resolvedCount = chats.filter((c) => c.resolved).length;
+    const rows = [...shown].sort((a, b) => b.updated - a.updated).map((c) => {
       const last = c.messages.at(-1);
       const first = c.messages.find((m) => m.role === "user");
       const busy = running === c.id;
@@ -206,30 +221,34 @@ export function chatsTab(deps: ChatsDeps) {
             : "Claude is answering"
         : last?.ok === false
           ? "Failed"
-          : run
-            ? last?.role === "claude"
-              ? "Done"
-              : "Stopped"
-            : c.closed
-              ? "Closed"
-              : "Open";
-      const cls = `chat-row${run ? " run" : ""}${c.closed && !run ? " closed" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
-      const del = h("button", { class: `del${sure === c.id ? " sure" : ""}`, title: "Delete this chat" }, sure === c.id ? "Delete?" : "Delete");
-      del.addEventListener("click", (e) => {
+          : c.resolved
+            ? "Resolved"
+            : run
+              ? last?.role === "claude"
+                ? "Done"
+                : "Stopped"
+              : c.closed
+                ? "Closed"
+                : "Open";
+      const cls = `chat-row${run && !c.resolved ? " run" : ""}${c.closed && !run && !c.resolved ? " closed" : ""}${c.resolved ? " resolved" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
+      // Resolve archives the chat (not while Claude is answering it); Reopen brings it back to the list.
+      const act = busy
+        ? null
+        : c.resolved
+          ? h("button", { class: "act", title: "Reopen this chat: back in the Chats list, and open on its element" }, icon("rotate-ccw", 11), h("span", {}, "Reopen"))
+          : h("button", { class: "act", title: "Resolve this chat: it moves to Resolved, where you can still read and reopen it" }, icon("check", 11), h("span", {}, "Resolve"));
+      act?.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (sure !== c.id) {
-          sure = c.id;
-          render();
-          setTimeout(() => {
-            if (sure === c.id) {
-              sure = null;
-              render();
-            }
-          }, 3000);
+        if (!c.resolved) {
+          expanded.delete(c.id);
+          deps.send("spark:chat-resolve", { id: c.id });
           return;
         }
-        sure = null;
-        deps.send("spark:chat-delete", { id: c.id });
+        deps.send("spark:chat-open", { id: c.id });
+        view = "list";
+        if (run || !deps.open(c)) expanded.add(c.id);
+        else expanded.delete(c.id);
+        render();
       });
       const row = h(
         "div",
@@ -242,12 +261,12 @@ export function chatsTab(deps: ChatsDeps) {
           { class: "meta" },
           h("span", {}, state),
           c.model ? h("span", { class: "model" }, modelName(c.model)) : null,
-          h("span", {}, `${c.messages.length} message${c.messages.length === 1 ? "" : "s"}`),
+          h("span", { class: "count" }, `${c.messages.length} message${c.messages.length === 1 ? "" : "s"}`),
+          act,
         ),
-        del,
       );
       if (expanded.has(c.id)) {
-        if (!run) row.append(h("div", { class: "missing" }, "This element isn't on the board right now."));
+        if (!run && !c.resolved) row.append(h("div", { class: "missing" }, "This element isn't on the board right now."));
         row.append(
           h(
             "div",
@@ -258,7 +277,8 @@ export function chatsTab(deps: ChatsDeps) {
       }
       row.addEventListener("click", (e) => {
         if ((e.target as HTMLElement).closest(".chat-log")) return;
-        if (run) {
+        // Runs and resolved chats are read here, in the list.
+        if (run || c.resolved) {
           if (expanded.has(c.id)) expanded.delete(c.id);
           else expanded.add(c.id);
           render();
@@ -272,7 +292,21 @@ export function chatsTab(deps: ChatsDeps) {
       });
       return row;
     });
-    el.replaceChildren(...rows);
+    const switchTo = (v: typeof view) => () => {
+      view = v;
+      render();
+      el.closest(".side-body")?.scrollTo({ top: 0 });
+    };
+    if (resolvedView) {
+      const back = h("button", { class: "chats-switch", title: "Back to the Chats list", click: switchTo("list") }, icon("chevron-left", 13), h("span", {}, "Resolved chats"));
+      el.replaceChildren(back, ...(rows.length ? rows : [h("div", { class: "chats-empty" }, "No resolved chats.")]));
+      return;
+    }
+    const empty = h("div", { class: "chats-empty" }, "No open chats. Resolved ones are in Resolved below.");
+    const toResolved = resolvedCount
+      ? h("button", { class: "chats-switch", title: "Chats you resolved: read or reopen them", click: switchTo("resolved") }, icon("archive", 13), "Resolved", h("span", { class: "n" }, String(resolvedCount)))
+      : null;
+    el.replaceChildren(...(rows.length ? rows : [empty]), ...(toResolved ? [toResolved] : []));
   }
   render();
   // Keep "2m ago" fresh.
@@ -282,11 +316,14 @@ export function chatsTab(deps: ChatsDeps) {
     update(list: Chat[], run: string | null) {
       chats = list;
       running = run;
+      // Nothing left to show in Resolved (the last one was reopened): back to the list.
+      if (view === "resolved" && !chats.some((c) => c.resolved)) view = "list";
       render();
     },
     /** Show a chat's transcript open in the list (a run with no element, as it starts). */
     reveal(id: string) {
-      if (!chats.some((c) => c.id === id && c.kind)) return false;
+      if (!chats.some((c) => c.id === id && c.kind && !c.resolved)) return false;
+      view = "list";
       expanded.add(id);
       render();
       el.querySelector(`[data-chat="${id}"]`)?.scrollIntoView({ block: "nearest" });
