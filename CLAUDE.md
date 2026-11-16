@@ -45,7 +45,7 @@ Zustand). Release and deploy are ported from dawg and described in
   `tag.ts` adds `data-spark-src` / `data-spark-comp` to DOM elements and
   `data-spark-call` to component call sites; `client.ts` is the overlay and
   docked panel (Shadow DOM, no React; Alt+S). View mode (default) leaves the
-  app usable; edit mode (Tab or Alt+E; the View/Edit switch in the board's bottom toolbar shows which) picks elements, Esc steps back out to view.
+  app usable; edit mode (Tab or Alt+E; the View/Edit switch in the board's bottom toolbar shows which) picks elements; Esc steps out (popover, selection) but never leaves edit mode, only Tab or Alt+E switch back to view.
   Spark's own buttons and dropdowns never keep focus: Tab and Esc are
   always Spark's shortcuts except while typing in a text field.
   Shift+click adds to the selection (the first pick leads: inspector,

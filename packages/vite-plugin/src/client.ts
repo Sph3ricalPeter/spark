@@ -7,8 +7,8 @@
 // alone. Edit mode (the Edit toggle, Tab, or Alt+E):
 // - hover highlights, click selects (the app doesn't see the click),
 //   Arrow Up selects the parent (up to the variant box and the frame itself);
-//   Esc steps out one level at a time
-//   (popover, text edit, selection), and from nothing selected back to view;
+//   Esc steps out one level at a time (popover, text edit, selection) but
+//   never leaves edit mode: only Tab (or Alt+E) switches back to view;
 // - the selection has handles: drag them to resize (Shift keeps the ratio
 //   on a corner, Alt drags slower; sizes stay whole pixels);
 // - double-click text to edit it in place; Enter or Esc keeps the edit.
@@ -807,7 +807,7 @@ const DIRS = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
 type Dir = (typeof DIRS)[number];
 const handles = DIRS.map((dir) => h("div", { class: "handle", "data-dir": dir }));
 // View: the app works as normal. Edit: hover highlights, clicks select (Tab or Alt+E).
-const viewBtn = h("button", { title: "Use the app normally (Esc out of everything)" }, "View");
+const viewBtn = h("button", { title: "Use the app normally (Tab or Alt+E)" }, "View");
 const editBtn = h("button", { title: "Select and edit elements (Tab or Alt+E)" }, "Edit");
 const modeToggle = h("span", { class: "seg" }, viewBtn, editBtn);
 const status = h("span", { class: "grow" });
@@ -1005,16 +1005,12 @@ function setPicking(v: boolean) {
 viewBtn.addEventListener("click", () => setPicking(false));
 editBtn.addEventListener("click", () => setPicking(true));
 
-/** One step out on Esc: popover, then selection, then edit mode. True when something closed. */
+/** One step out on Esc: popover, then selection. Never leaves edit mode (only Tab does). True when something closed. */
 function escapeStep(): boolean {
   blurApp();
   if (closePopover()) return true;
   if (selected) {
     select(null);
-    return true;
-  }
-  if (picking) {
-    setPicking(false);
     return true;
   }
   return false;
@@ -2537,7 +2533,7 @@ function render() {
         "div",
         { class: "empty" },
         picking
-          ? "Click an element to select it, Shift+click to add more for Claude. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc steps out: selection, then back to View."
+          ? "Click an element to select it, Shift+click to add more for Claude. Drag its handles to resize, double-click text to edit it, Arrow Up for the parent. Esc clears the selection, Tab goes back to View."
           : "View mode: use the app as normal. Switch to Edit (Tab) to select and change elements.",
       ),
     );
@@ -2972,8 +2968,10 @@ document.addEventListener(
     // Typing in the panel: its fields handle their own keys.
     if (!open || e.composedPath().includes(host) || e.composedPath().includes(panelHost)) return;
     if (e.key === "Escape") {
-      // In view mode Esc belongs to the app.
-      if (picking && escapeStep()) {
+      // In view mode Esc belongs to the app; in edit mode it's Spark's, even
+      // with nothing left to close (it doesn't go to the app or leave edit mode).
+      if (picking) {
+        escapeStep();
         e.preventDefault();
         e.stopPropagation();
       }
