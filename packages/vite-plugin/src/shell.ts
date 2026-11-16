@@ -1403,9 +1403,10 @@ function guardFrames() {
       for (const t of ["gesturestart", "gesturechange", "gestureend"]) w.addEventListener(t, (e) => e.preventDefault(), { passive: false, capture: true });
       w.addEventListener(
         "pointerdown",
-        () => {
+        (e) => {
           blurChrome();
-          selectFrame(f);
+          // The middle button only pans (frame.ts): it never selects.
+          if (e.button !== 1) selectFrame(f);
         },
         true,
       );

@@ -2925,7 +2925,8 @@ function pick(e: Event) {
 document.addEventListener(
   "pointerup",
   (e) => {
-    if (swallow(e) && inDisabled(e.target)) pick(e);
+    // Only the left button picks; the middle one pans (frame.ts).
+    if (swallow(e) && e.button === 0 && inDisabled(e.target)) pick(e);
   },
   true,
 );
