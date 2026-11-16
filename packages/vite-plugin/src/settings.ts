@@ -21,7 +21,7 @@
 //   text-scale  multiplier of every UI font size (0.85 to 1.4)
 //   zoom-speed  shell.ts: `{ wheel?: n, pinch?: n }`, multipliers of the mouse
 //               wheel's and the touchpad pinch's zoom (¼ to 4)
-//   zoom-glide  false: a wheel notch jumps instead of gliding
+//   zoom-glide  false: a wheel notch scrolls or zooms in one jump instead of gliding
 //   grid        false: no dot grid on the canvas
 // Values are JSON; shapes only grow.
 import { MONO_FONT, MONO_FONTS, UI_FONT, UI_FONTS, familyOf, type BundledFont } from "./fonts.ts";

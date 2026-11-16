@@ -252,7 +252,7 @@ export function buildSettingsPanel(gear: HTMLElement, onChange?: () => void) {
       h("h3", {}, "Canvas"),
       row("Wheel zoom", "How far one notch of a mouse wheel zooms (Ctrl+wheel). Double-click: 1×", speed("wheel")),
       row("Pinch zoom", "How far a touchpad pinch zooms; at 1× the board follows your fingers. Double-click: 1×", speed("pinch")),
-      row("Smooth zoom", "Wheel notches and Ctrl +/− glide to their zoom instead of jumping", h("label", { class: "check" }, toggle("zoom-glide"), "Glide")),
+      row("Smooth wheel", "Mouse wheel notches and Ctrl +/− glide when they scroll or zoom, instead of jumping", h("label", { class: "check" }, toggle("zoom-glide"), "Glide")),
       row("Dot grid", "The dots on the canvas", h("label", { class: "check" }, toggle("grid"), "Show")),
     ),
     h("div", { class: "sfoot" }, h("span", { class: "hint" }, "Saved for every project"), reset),

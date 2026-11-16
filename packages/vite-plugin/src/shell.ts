@@ -27,7 +27,9 @@
 // The canvas zooms and pans on its own: Ctrl+wheel or a pinch zooms at the
 // pointer, Ctrl +/- steps, Ctrl 0 is 100% on the selected frame; wheel over
 // the empty canvas pans (Shift for sideways), middle drag or Space drag pans
-// anywhere. The browser's own page zoom never kicks in, so the panel and the
+// anywhere. One camera loop (cameraTick) moves it, scaled by the frame's
+// time: a mouse wheel's notches glide, a touchpad's scroll and pinch follow
+// the fingers at once, at one rate per pixel whatever the input. The browser's own page zoom never kicks in, so the panel and the
 // bar stay put.
 import { installFont } from "./fonts.ts";
 import { THEME, icon } from "./theme.ts";
@@ -827,38 +829,60 @@ function setSize(f: Frame, nw: number, nh: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Zooming
+// Zooming and wheel scrolling
 //
-// Exact under the pointer: every change scales about the canvas point under
-// it (zoomAt), so the spot of the board there never moves, however the
-// changes are split up. Two kinds of input:
-// - A pinch (and any fine-grained Ctrl+wheel) follows the fingers 1:1:
-//   Chromium sends a touchpad pinch as Ctrl+wheel with deltaY =
-//   -100·ln(scale). Its deltas are summed and applied once per animation
-//   frame, no easing, so it never lags behind.
-// - A mouse wheel's notches and Ctrl +/- glide to their zoom instead of
-//   jumping: each frame closes a fixed share of the gap (in log space, so in
-//   and out feel alike), most of it within ~100 ms. A notch mid-glide adds
-//   to where the glide is going, so a fast spin loses nothing and always
-//   lands on the same zoom as the sum of its notches.
-// How far each one zooms is a setting, the same in every project (the
-// title bar's gear, settingsPopover): a multiplier for the wheel and one for
-// the pinch.
+// One camera loop (cameraTick), once per animation frame, for every wheel
+// and pinch. Its speed is the same however the input comes in: per wheel
+// pixel, never per event or per frame, and every easing step is scaled by
+// the time since the last frame, so a busy frame, a 144 Hz screen or a
+// fast spin never changes how far or how fast the board moves.
+// - Zoom is exact under the pointer: every change scales about the canvas
+//   point under it (zoomAt), so the spot of the board there never moves.
+// - A touchpad pinch (Chromium sends it as Ctrl+wheel with deltaY =
+//   -100·ln(scale), without the Ctrl key down) follows the fingers 1:1, no
+//   easing. Told apart from a real Ctrl+wheel by whether Ctrl is held
+//   (ctrlDown), not by the size of the deltas, which differ between mice.
+// - A mouse wheel (Ctrl+wheel zooms, a plain wheel scrolls) and Ctrl +/-
+//   glide: each frame closes the same share of what's left per millisecond
+//   (in log space for zoom, so in and out feel alike), most of it within
+//   ~100 ms. A notch mid-glide adds to what's left, so a fast spin loses
+//   nothing and lands where the sum of its notches says. Fine-grained input
+//   (a touchpad's two-finger scroll, a free-spinning wheel) is already
+//   smooth: it moves at once, at the same rate per pixel as the notches.
+// How far a wheel and a pinch zoom are settings (settings-panel.ts), and
+// "Smooth wheel" off makes notches jump instead of glide.
 
-/** A notch's zoom per wheel pixel: a 100 px notch is ×1.28. */
+/** Zoom per wheel pixel: a 100 px notch is ×1.28. */
 const NOTCH_RATE = 0.0025;
 /** The glide's time constant in ms: 63% of the way after it, 95% after three. */
 const GLIDE_MS = 30;
+/** Pixels per wheel line and page (deltaMode 1 and 2): three lines are one 100 px notch. */
+const LINE_PX = 100 / 3;
+const PAGE_PX = 600;
 
-/** Where a glide is going (0: not gliding). */
+/** Where a zoom glide is going (0: not gliding). */
 let glideTo = 0;
 /** The canvas point the zoom is anchored at. */
 let anchorX = 0;
 let anchorY = 0;
-/** Pinch deltas waiting for the next animation frame. */
-let pinch = 0;
-let zoomFrame = 0;
+/** Zoom input to apply at once on the next frame, as a log of the factor. */
+let zoomNow = 0;
+/** Scrolling still to glide, and to apply at once, in screen pixels. */
+let panLeftX = 0;
+let panLeftY = 0;
+let panNowX = 0;
+let panNowY = 0;
+let cameraFrame = 0;
 let lastTick = 0;
+
+/** The Ctrl key is held: a Ctrl+wheel without it is a touchpad pinch. Kept from every window on the board (guardFrames). */
+let ctrlDown = false;
+function trackCtrl(w: Window) {
+  w.addEventListener("keydown", (e) => e.key === "Control" && (ctrlDown = true), true);
+  w.addEventListener("keyup", (e) => e.key === "Control" && (ctrlDown = false), true);
+  w.addEventListener("blur", () => (ctrlDown = false));
+}
+trackCtrl(window);
 
 /** Zoom to `zz`, keeping the canvas point (cx, cy) still. */
 function zoomAt(zz: number, cx: number, cy: number) {
@@ -866,49 +890,67 @@ function zoomAt(zz: number, cx: number, cy: number) {
   px = cx - ((cx - px) * nz) / z;
   py = cy - ((cy - py) * nz) / z;
   z = nz;
-  applyCamera();
 }
 
-function zoomTick(now: number) {
-  zoomFrame = 0;
-  if (pinch) {
-    const d = pinch;
-    pinch = 0;
-    zoomAt(z * Math.exp(-d / 100), anchorX, anchorY);
-    return;
-  }
-  if (!glideTo) return;
+function cameraTick(now: number) {
+  cameraFrame = 0;
   const dt = lastTick ? Math.min(64, Math.max(1, now - lastTick)) : 16;
   lastTick = now;
-  const to = Math.log(glideTo);
-  const at = Math.log(z) + (to - Math.log(z)) * (1 - Math.exp(-dt / GLIDE_MS));
-  // Smooth zoom off (Settings): straight there.
-  const done = getSetting("zoom-glide") === false || Math.abs(to - at) < 0.001;
-  zoomAt(done ? glideTo : Math.exp(at), anchorX, anchorY);
-  if (done) glideTo = 0;
-  else zoomFrame = requestAnimationFrame(zoomTick);
+  const smooth = getSetting("zoom-glide") !== false;
+  const k = smooth ? 1 - Math.exp(-dt / GLIDE_MS) : 1;
+  // Scrolling: what came in at once, then a share of the glide.
+  let dx = panNowX;
+  let dy = panNowY;
+  panNowX = panNowY = 0;
+  if (panLeftX || panLeftY) {
+    const all = k === 1 || Math.hypot(panLeftX, panLeftY) < 0.5;
+    const sx = all ? panLeftX : panLeftX * k;
+    const sy = all ? panLeftY : panLeftY * k;
+    dx += sx;
+    dy += sy;
+    panLeftX -= sx;
+    panLeftY -= sy;
+  }
+  px += dx;
+  py += dy;
+  // Zoom: what came in at once (a pinch), then a share of the glide.
+  if (zoomNow) {
+    zoomAt(z * Math.exp(zoomNow), anchorX, anchorY);
+    if (glideTo) glideTo = clampZ(glideTo * Math.exp(zoomNow));
+    zoomNow = 0;
+  }
+  if (glideTo) {
+    const to = Math.log(glideTo);
+    const at = Math.log(z) + (to - Math.log(z)) * k;
+    const done = k === 1 || Math.abs(to - at) < 0.001;
+    zoomAt(done ? glideTo : Math.exp(at), anchorX, anchorY);
+    if (done) glideTo = 0;
+  }
+  applyCamera();
+  if (glideTo || panLeftX || panLeftY) cameraFrame = requestAnimationFrame(cameraTick);
+  else lastTick = 0;
 }
 
-function scheduleZoom() {
-  if (!zoomFrame) zoomFrame = requestAnimationFrame(zoomTick);
+function scheduleCamera() {
+  if (!cameraFrame) cameraFrame = requestAnimationFrame(cameraTick);
 }
 
 /** Glide to `factor` × where the zoom is going, anchored at the canvas point (cx, cy). */
 function glideBy(factor: number, cx: number, cy: number) {
-  pinch = 0;
-  if (!glideTo) lastTick = 0;
   glideTo = clampZ((glideTo || z) * factor);
   anchorX = cx;
   anchorY = cy;
-  scheduleZoom();
+  scheduleCamera();
 }
 
-/** A camera jump (fit, focus a frame) wins over a zoom still under way. */
+/** A camera jump (fit, focus a frame) wins over a zoom or scroll still under way. */
 function stopZoom() {
   glideTo = 0;
-  pinch = 0;
-  if (zoomFrame) cancelAnimationFrame(zoomFrame);
-  zoomFrame = 0;
+  zoomNow = 0;
+  panLeftX = panLeftY = panNowX = panNowY = 0;
+  if (cameraFrame) cancelAnimationFrame(cameraFrame);
+  cameraFrame = 0;
+  lastTick = 0;
 }
 
 function zoomStep(dir: 1 | -1) {
@@ -918,28 +960,57 @@ function zoomStep(dir: 1 | -1) {
   if (next) glideBy(next / from, cl + cw / 2, ch / 2);
 }
 
-function wheelDelta(e: WheelEvent) {
-  return e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+/** A wheel event's deltas in pixels, whatever its deltaMode. */
+function wheelPixels(e: { deltaX?: number; deltaY: number; deltaMode: number }) {
+  const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? PAGE_PX : 1;
+  return { dx: (e.deltaX ?? 0) * unit, dy: e.deltaY * unit };
+}
+
+/**
+ * A mouse wheel's notch (glides) rather than fine-grained input (moves at
+ * once): lines or pages, or a big whole step (100 px a notch, less with
+ * fewer lines per notch in Windows' settings, more with display scaling).
+ * Only how it moves depends on this, never how far.
+ */
+function isNotch(e: { deltaMode: number }, d: number) {
+  return e.deltaMode !== 0 || Math.abs(d) >= 60 || (Number.isInteger(d) && Math.abs(d) >= 20);
 }
 
 /** Ctrl+wheel or a pinch at the canvas point (cx, cy). */
-function zoomByWheel(e: { deltaY: number; deltaMode: number }, cx: number, cy: number) {
-  // Lines and pages (Firefox's wheel): three lines are one 100 px notch.
-  const d = e.deltaMode === 1 ? (e.deltaY * 100) / 3 : e.deltaMode === 2 ? e.deltaY * 300 : e.deltaY;
-  if (!d) return;
-  // A mouse wheel moves in whole notches of 100 px (fewer with fewer lines
-  // per notch in Windows' settings, more with display scaling); a pinch's
-  // deltas are small and fractional.
-  const notch = e.deltaMode !== 0 || Math.abs(d) >= 60 || (Number.isInteger(d) && Math.abs(d) >= 20);
-  if (notch) glideBy(Math.exp(-Math.max(-300, Math.min(300, d)) * NOTCH_RATE * zoomSpeed("wheel")), cx, cy);
-  else {
-    // A pinch takes over from a glide where it is.
-    glideTo = 0;
-    pinch += d * zoomSpeed("pinch");
-    anchorX = cx;
-    anchorY = cy;
-    scheduleZoom();
+function zoomByWheel(e: { deltaY: number; deltaMode: number; ctrlKey?: boolean }, cx: number, cy: number) {
+  const { dy } = wheelPixels(e);
+  if (!dy) return;
+  anchorX = cx;
+  anchorY = cy;
+  // A touchpad pinch: Ctrl+wheel with no Ctrl key down, in small steps (a
+  // mouse notch with Ctrl held while Spark wasn't focused stays a notch).
+  if (e.ctrlKey && !ctrlDown && e.deltaMode === 0 && Math.abs(dy) < 50) {
+    // With the fingers, at once.
+    zoomNow += (-dy / 100) * zoomSpeed("pinch");
+    scheduleCamera();
+    return;
   }
+  const amount = -Math.max(-300, Math.min(300, dy)) * NOTCH_RATE * zoomSpeed("wheel");
+  if (isNotch(e, dy)) glideBy(Math.exp(amount), cx, cy);
+  else {
+    zoomNow += amount;
+    scheduleCamera();
+  }
+}
+
+/** A plain wheel (Shift: sideways) or a touchpad's two-finger scroll over the canvas. */
+function scrollByWheel(e: WheelEvent) {
+  let { dx, dy } = wheelPixels(e);
+  // Shift+wheel scrolls sideways (a mouse sends it as deltaY).
+  if (e.shiftKey && !dx) [dx, dy] = [dy, 0];
+  if (isNotch(e, Math.abs(dx) > Math.abs(dy) ? dx : dy)) {
+    panLeftX -= dx;
+    panLeftY -= dy;
+  } else {
+    panNowX -= dx;
+    panNowY -= dy;
+  }
+  scheduleCamera();
 }
 
 function panBy(dx: number, dy: number) {
@@ -1182,8 +1253,7 @@ canvas.addEventListener(
     we.preventDefault();
     const r = canvas.getBoundingClientRect();
     if (we.ctrlKey || we.metaKey) zoomByWheel(we, we.clientX - r.left, we.clientY - r.top);
-    else if (we.shiftKey) panBy(-wheelDelta(we), 0);
-    else panBy(-we.deltaX, -wheelDelta(we));
+    else scrollByWheel(we);
   },
   { passive: false },
 );
@@ -1512,6 +1582,7 @@ function guardFrames() {
       blockNativeMenu(w);
       blockFileDrops(w);
       w[GUARD] = true;
+      trackCtrl(w);
       w.addEventListener(
         "wheel",
         (e) => {
