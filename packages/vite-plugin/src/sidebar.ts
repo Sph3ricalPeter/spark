@@ -144,7 +144,7 @@ export function sidebar() {
 // ---------------------------------------------------------------------------
 // The Chats tab
 
-type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[]; images?: string[] };
 type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; resolved?: boolean; kind?: "implement" | "task" };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
@@ -236,7 +236,7 @@ export function chatsTab(deps: ChatsDeps) {
         { class: cls, title: `${state}${c.sessionId ? ` · session ${c.sessionId}` : ""}`, role: "button", tabindex: "-1", "data-chat": c.id },
         h("span", { class: "st" }),
         h("div", { class: "top" }, h("span", { class: "el" }, c.label || "Element"), h("span", { class: "when" }, ago(c.updated))),
-        first ? h("div", { class: "first" }, first.text) : null,
+        first ? h("div", { class: "first" }, first.text || (first.images?.length ? "Image" : "")) : null,
         h(
           "div",
           { class: "meta" },

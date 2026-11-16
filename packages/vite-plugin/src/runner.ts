@@ -12,6 +12,10 @@
 //
 // Every run is a Claude session; "done" carries its id, and `resume` carries
 // on in an earlier one (the Ask popup's chat on an element).
+//
+// Images the person attached (pasted or dropped into the chat box) go with the
+// prompt as image blocks: the prompt is then one `--input-format stream-json`
+// user message instead of plain text.
 import { spawn, type ChildProcess } from "node:child_process";
 
 export type RunEvent =
@@ -52,12 +56,17 @@ export function parseVerdicts(text: string) {
   return { applied, skipped };
 }
 
-export function run(opts: { cwd: string; prompt: string; kind: "implement" | "ask"; ids: string[]; resume?: string; emit: (e: RunEvent) => void }) {
+/** An attached image: its media type ("image/png") and its bytes in base64. */
+export type RunImage = { type: string; data: string };
+
+export function run(opts: { cwd: string; prompt: string; images?: RunImage[]; kind: "implement" | "ask"; ids: string[]; resume?: string; emit: (e: RunEvent) => void }) {
   if (current) {
     opts.emit({ type: "error", text: "Claude is already running." });
     return;
   }
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"];
+  const images = opts.images ?? [];
+  if (images.length) args.push("--input-format", "stream-json");
   // A session id is a UUID; anything else never reaches the command line (it goes through a shell on Windows).
   if (opts.resume && /^[\w-]+$/.test(opts.resume)) args.push("--resume", opts.resume);
   // claude is claude.cmd on Windows, which needs a shell to start.
@@ -116,5 +125,15 @@ export function run(opts: { cwd: string; prompt: string; kind: "implement" | "as
       .trim();
     opts.emit({ type: "done", ok, applied, skipped, summary: ok ? summary : stderr.trim().slice(-500) || `claude exited with ${code}`, cost, sessionId, model });
   });
-  child.stdin.end(opts.prompt);
+  child.stdin.end(
+    images.length
+      ? JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: opts.prompt }, ...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.type, data: i.data } }))],
+          },
+        }) + "\n"
+      : opts.prompt,
+  );
 }

@@ -23,7 +23,8 @@
         "shadow": true,
         "theme": "Dark",
         "backgroundColor": "#0d0d0d",
-        "zoomHotkeysEnabled": false
+        "zoomHotkeysEnabled": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

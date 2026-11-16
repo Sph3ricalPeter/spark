@@ -17,6 +17,7 @@ import { h } from "./fields.ts";
 import { THEME, icon } from "./theme.ts";
 import { connectSettings } from "./settings.ts";
 import { launcherTitleBar } from "./titlebar.ts";
+import { blockFileDrops } from "./menu.ts";
 
 export type Recent = { folder: string; name: string; openedAt: string };
 
@@ -124,6 +125,8 @@ export async function startHome(backend: HomeBackend, launch?: string | null) {
     const field = !!t && (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "INPUT");
     if (!e.defaultPrevented && !field && !window.getSelection()?.toString()) e.preventDefault();
   });
+  // A file dropped on the window doesn't open in place of the start screen.
+  blockFileDrops(window);
   // Buttons never keep focus, as on the board.
   root.addEventListener("click", (e) => (e.composedPath()[0] as Element).closest?.("button")?.blur());
 

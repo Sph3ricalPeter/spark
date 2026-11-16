@@ -12,6 +12,7 @@
 //   and state.json: how the board and panels were left (state-file.ts, state.ts).
 // - Keeps Spark's own settings, the same for every project, in settings.json
 //   in Spark's config folder (settings.ts).
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -273,6 +274,43 @@ export default function spark(): Plugin {
         await mkdir(dir, { recursive: true });
         await writeFile(path.join(dir, name), JSON.stringify(data, null, 2) + "\n");
       };
+      // Images pasted or dropped into a chat (chats.ts `images`), kept with the project so the chat can show them again.
+      const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+      const IMAGE_TYPE: Record<string, string> = Object.fromEntries(Object.entries(IMAGE_EXT).map(([t, e]) => [e, t]));
+      const imagesDir = path.join(dir, "images");
+      /** Save the attached images (named by their content) for the chat, and keep them to send to Claude. */
+      async function saveImages(list: unknown): Promise<{ saved: string[]; send: { type: string; data: string }[] } | undefined> {
+        if (!Array.isArray(list)) return undefined;
+        const send = list
+          .filter((i): i is { type: string; data: string } => !!IMAGE_EXT[i?.type] && typeof i?.data === "string" && i.data.length > 0)
+          // Claude takes up to 20 images at once, each under 5 MB of base64.
+          .filter((i) => i.data.length < 5 * 1024 * 1024)
+          .slice(0, 20);
+        if (!send.length) return undefined;
+        await mkdir(imagesDir, { recursive: true });
+        const saved = await Promise.all(
+          send.map(async (i) => {
+            const buf = Buffer.from(i.data, "base64");
+            const name = `${createHash("sha1").update(buf).digest("hex").slice(0, 16)}.${IMAGE_EXT[i.type]}`;
+            await writeFile(path.join(imagesDir, name), buf);
+            return name;
+          }),
+        );
+        return { saved, send };
+      }
+      server.middlewares.use("/@spark/images", (req, res, next) => {
+        const name = path.basename((req.url ?? "").split("?")[0]);
+        const m = name.match(/^[0-9a-f]{16}\.(\w+)$/);
+        if (!m || !IMAGE_TYPE[m[1]]) return next();
+        readFile(path.join(imagesDir, name)).then(
+          (buf) => {
+            res.setHeader("Content-Type", IMAGE_TYPE[m[1]]);
+            res.setHeader("Cache-Control", "max-age=31536000, immutable");
+            res.end(buf);
+          },
+          () => next(),
+        );
+      });
       // The project's UI state (state.ts): every page reads it before it starts.
       const state = stateStore(dir);
       server.middlewares.use("/@spark/state", (req, res, next) => {
@@ -401,15 +439,20 @@ export default function spark(): Plugin {
       // `chat` key), one Claude session that later prompts resume (chats.ts).
       // With no element, a chat of its own.
       // `others`: more elements picked with Shift+click; the chat stays the first one's.
-      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string; others?: AskSelection[] }, client) => {
+      // `images`: pasted or dropped into the chat box ({ type, data: base64 }); Claude sees them with the request.
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string; others?: AskSelection[]; images?: unknown }, client) => {
         if (ai.busy()) return busy(client)(null);
         const pending = (await loadLog()).changes.filter((c) => c.status === "pending");
+        const images = await saveImages(data.images);
+        const request = data.request || (images ? "(See the attached image.)" : "");
+        if (!request) return;
         await ai
           .ask({
             topic: data.chat ? { element: data.chat, label: data.selection?.label } : { kind: "task", label: data.selection?.label || "Ask Claude" },
             request: data.request,
+            images,
             also: data.others?.map((o) => o.label || o.comp || o.tag),
-            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(data.request, data.selection, pending, data.others),
+            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(request, data.selection, pending, data.others, images?.saved),
             kind: "ask",
             ids: pending.map((c) => c.id),
           })

@@ -14,7 +14,7 @@
 //
 // One run at a time (runner.ts); `ask` returns null when Claude is busy, and
 // nothing is recorded.
-import { run, running, stop, type RunEvent } from "./runner.ts";
+import { run, running, stop, type RunEvent, type RunImage } from "./runner.ts";
 import type { chatStore, ChatKind } from "./chats.ts";
 
 type Chats = ReturnType<typeof chatStore>;
@@ -32,6 +32,8 @@ export type Job = {
   request: string;
   /** Other elements the request is about besides the chat's own (Shift+click), as the chat shows them. */
   also?: string[];
+  /** Images the person attached: Claude sees them with the prompt, and `saved` (their names in .spark/images) is what the chat shows. */
+  images?: { saved: string[]; send: RunImage[] };
   /** What Claude is told; `resumed` when it carries on the chat's earlier session. */
   prompt: (resumed: boolean) => string;
   kind: "implement" | "ask";
@@ -62,6 +64,7 @@ export function claude(opts: {
     run({
       cwd: opts.cwd,
       prompt: job.prompt(!!resume),
+      images: job.images?.send,
       kind: job.kind,
       ids: job.ids,
       resume,
@@ -104,7 +107,7 @@ export function claude(opts: {
       current = "";
       try {
         const t = job.topic;
-        const { id, sessionId } = "element" in t ? await chats.ask(t.element, t.label, job.request, job.also) : { id: await chats.begin(t.kind, t.label, job.request), sessionId: null };
+        const { id, sessionId } = "element" in t ? await chats.ask(t.element, t.label, job.request, job.also, job.images?.saved) : { id: await chats.begin(t.kind, t.label, job.request, job.images?.saved), sessionId: null };
         go(id, job, sessionId ?? undefined);
         return id;
       } catch (err) {

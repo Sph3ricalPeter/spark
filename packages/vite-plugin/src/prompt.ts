@@ -120,7 +120,14 @@ It's the app's page (\`target.url\`) shown in a ${t.size.width}×${t.size.height
 whole screen as it looks at that size.`;
 }
 
-export function askPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = []): string {
+/** The images attached to the request (index.ts saves them in .spark/images), said right after it. */
+function attachedNote(images: string[]): string {
+  if (!images.length) return "";
+  const one = images.length === 1;
+  return `\n\nThe person attached ${one ? "an image" : `${images.length} images`} (a screenshot, a reference or a sketch) to this message; ${one ? "it's" : "they're"} also saved in the project as ${images.map((n) => `.spark/images/${n}`).join(", ")}.`;
+}
+
+export function askPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = [], images: string[] = []): string {
   const sel = !selection
     ? "Nothing is selected."
     : others.length
@@ -145,7 +152,7 @@ Then do the request.`
     : "";
   return `You are working on this React app from Spark, a visual editor running on top of it. The person asked:
 
-"${request}"
+"${request}"${attachedNote(images)}
 
 ${sel}
 
@@ -159,7 +166,7 @@ End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdic
 }
 
 /** A follow-up in an Ask chat: the session already has the rules and the earlier turns. */
-export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = []): string {
+export function followupPrompt(request: string, selection: AskSelection | null, pending: Change[], others: AskSelection[] = [], images: string[] = []): string {
   const what = selection?.target ? (selection.target.kind === "case" ? "variant" : "frame") : "element";
   const sel = !selection
     ? ""
@@ -171,7 +178,7 @@ export function followupPrompt(request: string, selection: AskSelection | null, 
     : "";
   return `The person replied in Spark:
 
-"${request}"${sel}${first}
+"${request}"${attachedNote(images)}${sel}${first}
 
 Same rules as before. End with a one-sentence summary of what you did.${pending.length ? `\n\n${verdicts(pending.map((c) => c.id))}` : ""}`;
 }

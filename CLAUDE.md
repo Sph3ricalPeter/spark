@@ -100,7 +100,11 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); every chat opens in the
   column: an element's on its element, one with no element (an Implement changes run, a task such as
   Write sample data, which opens there as it starts) as it is (`ClientHooks.showChat`, until
-  something is selected or Close), and a reply carries on its session; chats are never
+  something is selected or Close), and a reply carries on its session; images pasted, dropped
+  or picked into the chat box go with the message (`spark:ask` `images`, saved as
+  `.spark/images/<hash>`, served at `/@spark/images/`, a chat message's `images`; runner.ts sends
+  them as stream-json image blocks; `dragDropEnabled: false` leaves file drops to the page, and
+  menu.ts `blockFileDrops` keeps a stray drop from opening the file); chats are never
   deleted: "Resolve" archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way; the inspector's
   "Changes here" section (`changesHere`) lists just the pending ones in the

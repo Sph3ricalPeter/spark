@@ -20,6 +20,8 @@ export type ChatMessage = {
   at: number;
   /** The other elements picked with the chat's own (Shift+click) when this was asked, by label ("h2 in Card"). */
   with?: string[];
+  /** Images the person attached (pasted or dropped), by file name in `.spark/images` (served at /@spark/images/<name>). */
+  images?: string[];
 };
 
 export type Chat = {
@@ -101,7 +103,7 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
   return {
     load,
     /** The element's open chat, made if there's none, with the person's message added (and the other elements it's about). */
-    ask: (key: string, label: string | undefined, text: string, also?: string[]) =>
+    ask: (key: string, label: string | undefined, text: string, also?: string[], images?: string[]) =>
       change((f) => {
         key = resolve(key);
         let c = openOn(f, key);
@@ -110,16 +112,16 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
           f.chats.push(c);
         }
         if (label) c.label = label;
-        c.messages.push({ role: "user", text, at: Date.now(), ...(also?.length ? { with: also } : {}) });
+        c.messages.push({ role: "user", text, at: Date.now(), ...(also?.length ? { with: also } : {}), ...(images?.length ? { images } : {}) });
         c.updated = Date.now();
         return { id: c.id, sessionId: c.sessionId };
       }),
     /** A chat of its own, with no element (one Implement changes run, one task), with what was asked. */
-    begin: (kind: ChatKind, label: string, text: string) =>
+    begin: (kind: ChatKind, label: string, text: string, images?: string[]) =>
       change((f) => {
         const id = newId();
         const now = Date.now();
-        f.chats.push({ id, key: `${kind}:${id}`, label, kind, sessionId: null, messages: [{ role: "user", text, at: now }], created: now, updated: now });
+        f.chats.push({ id, key: `${kind}:${id}`, label, kind, sessionId: null, messages: [{ role: "user", text, at: now, ...(images?.length ? { images } : {}) }], created: now, updated: now });
         return id;
       }),
     /** Change one chat by id. */

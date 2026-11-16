@@ -35,7 +35,7 @@ import { h } from "./fields.ts";
 import { drag } from "./drag.ts";
 import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
-import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
+import { blockFileDrops, blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { chatsTab, CHATS_STYLE, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
 import { componentsTab, COMPONENTS_STYLE, type BreakdownTarget, type PlanComponent } from "./components-tab.ts";
 import { systemTab, SYSTEM_STYLE } from "./system-tab.ts";
@@ -1510,6 +1510,7 @@ function guardFrames() {
       if (!w || w[GUARD]) continue;
       // No browser menu in a frame either, from its first moment (menu.ts).
       blockNativeMenu(w);
+      blockFileDrops(w);
       w[GUARD] = true;
       w.addEventListener(
         "wheel",
@@ -1560,6 +1561,7 @@ function guardFrames() {
 // Right-click menus (menu.ts). The browser's own menu never shows on the board.
 
 blockNativeMenu(window);
+blockFileDrops(window);
 
 /** What a frame's menu offers besides its client's (Ask Claude): the board's own commands for it. */
 function frameMenuOf(f: Frame): MenuEntry[] {

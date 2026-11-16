@@ -50,7 +50,7 @@ import { frameGlue } from "./frame.ts";
 import { words as caseTitle } from "./gallery.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
 import { shell, type Layer } from "./mode.ts";
-import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
+import { blockFileDrops, blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { installReorder } from "./reorder.ts";
 import { draftVariable, renderVariables, resolvedLine, varButton, VARIABLES_STYLE, type Variable, type VarKind, type VarTarget } from "./variables.ts";
 import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, renderPage } from "./page.ts";
@@ -430,6 +430,25 @@ const ASK_STYLE = `
     .msg.work { display: flex; align-items: center; gap: 8px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
     .msg.work .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sp-mono); }
     .msg.work button { flex: none; height: 20px; padding: 0 6px; font-size: var(--sp-fs-sm); }
+    /* Images attached to the next message (pasted, dropped or picked), and the ones a sent message carried. */
+    .ask-files { display: none; flex-wrap: wrap; gap: 6px; margin: 0 2px 6px; }
+    .ask.has-files .ask-files { display: flex; }
+    .ask-files .file { position: relative; width: 52px; height: 52px; }
+    .ask-files img, .msg .imgs img {
+      display: block; width: 100%; height: 100%; object-fit: cover; border-radius: var(--sp-r-md);
+      border: 1px solid var(--sp-line-strong); background: var(--sp-field);
+    }
+    .ask-files .rm {
+      position: absolute; top: -6px; right: -6px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0;
+      border: 1px solid var(--sp-line-strong); border-radius: 50%; background: var(--sp-surface); color: var(--sp-text-strong);
+    }
+    .ask-files .rm:hover { background: var(--sp-line-strong); }
+    .msg.user .imgs { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; white-space: normal; }
+    .msg.user.only-imgs .imgs { margin: 0; }
+    .msg.user .imgs a { display: block; width: 72px; height: 72px; cursor: zoom-in; }
+    .msg.user.only-imgs { padding: 3px; }
+    /* Dragging an image over the chat: it's dropped into the message. */
+    .ask.dropping .ask-main { border-color: var(--sp-accent); background: color-mix(in srgb, var(--sp-accent) 12%, var(--sp-bg)); }
     .ask-main {
       display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 5px;
       background: var(--sp-bg); border: 1px solid var(--sp-line); border-radius: var(--sp-r-lg);
@@ -490,6 +509,7 @@ const COLUMN_STYLE = `
     }
     .ask.column .ask-thread { display: flex; flex: 1; min-height: 0; max-height: none; margin: 0; padding: 12px 14px; gap: 10px; }
     .ask.column .ask-main { flex: none; margin: 0 10px 10px; height: 38px; }
+    .ask.column .ask-files { margin: 0 10px 8px; }
     .ask.column .chat-empty { margin: auto 0; padding: 0 8px; text-align: center; color: var(--sp-text-dim); }
     .ask.column .chat-empty b { color: var(--sp-text); font-weight: 600; }
     /* The Chats button: the column switches to the list of every chat and back. */
@@ -498,7 +518,7 @@ const COLUMN_STYLE = `
     .ask-top .chats-btn.on { background: var(--sp-line-strong); color: var(--sp-text-strong); }
     .ask-list { display: none; }
     .ask.column.listing .ask-list { display: block; flex: 1; min-height: 0; }
-    .ask.column.listing .ask-thread, .ask.column.listing .ask-main, .ask.column.listing .ask-top .new-chat { display: none; }
+    .ask.column.listing .ask-thread, .ask.column.listing .ask-main, .ask.column.listing .ask-files { display: none; }
 `;
 
 const STYLE = `${THEME}
@@ -862,7 +882,103 @@ askInput.addEventListener("keydown", (e) => {
   // Tab stays in the prompt: it neither moves focus to the buttons nor switches mode.
   else if (e.key === "Tab") e.preventDefault();
 });
-askInput.addEventListener("input", () => sendBtn.classList.toggle("ready", !!askInput.value.trim()));
+askInput.addEventListener("input", () => syncSend());
+/** The send button lights up once there's something to send: words, or an attached image. */
+const syncSend = () => sendBtn.classList.toggle("ready", !!askInput.value.trim() || attached.length > 0);
+
+/** Images attached to the next message: pasted (Ctrl+V), dropped on the chat, or picked. They go to Claude with it. */
+type Attached = { type: string; data: string; url: string };
+let attached: Attached[] = [];
+const askFiles = h("div", { class: "ask-files" });
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/** Longest side Claude gets: it scales bigger images down to about this anyway, and smaller ones send faster. */
+const IMAGE_MAX = 2000;
+
+const readAsDataUrl = (blob: Blob) =>
+  new Promise<string>((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result));
+    r.onerror = () => fail(r.error);
+    r.readAsDataURL(blob);
+  });
+
+/** A picked, pasted or dropped image, as Claude takes it: PNG, JPEG, GIF or WebP, at most IMAGE_MAX px and under 5 MB. */
+async function attachImage(file: Blob) {
+  if (!file.type.startsWith("image/")) return;
+  let url = await readAsDataUrl(file);
+  let type = file.type;
+  const img = new Image();
+  img.src = url;
+  try {
+    await img.decode();
+  } catch {
+    return;
+  }
+  const scale = Math.min(1, IMAGE_MAX / Math.max(img.naturalWidth, img.naturalHeight));
+  // Anything Claude can't read (BMP, SVG…), too big or too heavy is redrawn: a PNG, or a JPEG if that's still heavy.
+  if (!IMAGE_TYPES.includes(type) || scale < 1 || url.length > 3_500_000) {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
+    type = "image/png";
+    url = c.toDataURL(type);
+    if (url.length > 3_500_000) {
+      type = "image/jpeg";
+      url = c.toDataURL(type, 0.9);
+    }
+  }
+  attached.push({ type, data: url.slice(url.indexOf(",") + 1), url });
+  renderAttached();
+  askInput.focus();
+}
+
+function renderAttached() {
+  askFiles.replaceChildren(
+    ...attached.map((a, i) =>
+      h(
+        "div",
+        { class: "file" },
+        h("img", { src: a.url, alt: "Attached image" }),
+        h(
+          "button",
+          {
+            type: "button",
+            class: "rm",
+            title: "Remove",
+            click: (e: Event) => {
+              e.stopPropagation();
+              attached.splice(i, 1);
+              renderAttached();
+            },
+          },
+          lucide("x", 11),
+        ),
+      ),
+    ),
+  );
+  askBox.classList.toggle("has-files", attached.length > 0);
+  syncSend();
+}
+
+/** The images in a paste or a drop. */
+const imagesIn = (dt: DataTransfer | null): File[] =>
+  [...(dt?.items ?? [])].filter((it) => it.kind === "file" && it.type.startsWith("image/")).flatMap((it) => it.getAsFile() ?? []);
+
+askInput.addEventListener("paste", (e) => {
+  const files = imagesIn(e.clipboardData);
+  if (!files.length) return;
+  // An image copied from a browser also carries its HTML or URL as text: only the image goes in.
+  e.preventDefault();
+  for (const f of files) void attachImage(f);
+});
+const imagePicker = h("input", { type: "file", accept: "image/*", multiple: "" }) as HTMLInputElement;
+imagePicker.style.display = "none";
+imagePicker.addEventListener("change", () => {
+  for (const f of imagePicker.files ?? []) void attachImage(f);
+  imagePicker.value = "";
+});
+const attachBtn = h("button", { type: "button", class: "ib", title: "Attach an image (or paste one, or drop it here)", click: () => imagePicker.click() }, lucide("image"));
 const makeBtn = h(
   "button",
   {
@@ -901,8 +1017,33 @@ const chatsBtn = h(
 );
 const askList = h("div", { class: "ask-list" });
 const askTop = h("div", { class: "ask-top" }, askTitle, ...(shell ? [chatsBtn] : []), newChatBtn);
-const askBox = h("div", { class: "ask" }, askTop, askList, askThread, h("div", { class: "ask-main" }, askTag, askMore, askInput, makeBtn, sendBtn));
+const askBox = h(
+  "div",
+  { class: "ask" },
+  askTop,
+  askList,
+  askThread,
+  askFiles,
+  h("div", { class: "ask-main" }, askTag, askMore, askInput, attachBtn, imagePicker, makeBtn, sendBtn),
+);
 askBox.addEventListener("click", () => closePopover());
+// Drop images on the chat to attach them.
+const dragsFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+askBox.addEventListener("dragover", (e) => {
+  if (!dragsFiles(e) || listing) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  askBox.classList.add("dropping");
+});
+askBox.addEventListener("dragleave", (e) => {
+  if (!askBox.contains(e.relatedTarget as Node | null)) askBox.classList.remove("dropping");
+});
+askBox.addEventListener("drop", (e) => {
+  askBox.classList.remove("dropping");
+  if (!dragsFiles(e) || listing) return;
+  e.preventDefault();
+  for (const f of imagesIn(e.dataTransfer)) void attachImage(f);
+});
 /** Pins on the elements that have a chat with Claude (refreshPins/placePins). */
 const pinLayer = h("div", { class: "pins" });
 shadow.append(marginBox, paddingBox, hoverBox, selectBox, ...handles, dimsBadge, tagLabel, pinLayer);
@@ -1816,17 +1957,24 @@ function implement(ids?: string[]) {
   import.meta.hot?.send("spark:implement", ids ? { ids } : {});
 }
 
+/** The prompt is sent: it and its images are cleared. */
+function clearAsk() {
+  askInput.value = "";
+  attached = [];
+  renderAttached();
+  askInput.blur();
+}
+
 function sendAsk() {
   const request = askInput.value.trim();
-  if (!request || isRunning()) return;
+  if ((!request && !attached.length) || isRunning()) return;
+  const images = attached.length ? { images: attached.map(({ type, data }) => ({ type, data })) } : {};
   // A reply in a chat with no element: it carries on that chat's Claude session.
   const v = viewed();
   if (v) {
     if (v.closed) import.meta.hot?.send("spark:chat-open", { id: v.id });
-    import.meta.hot?.send("spark:ask", { request, selection: null, chat: v.key });
-    askInput.value = "";
-    sendBtn.classList.remove("ready");
-    askInput.blur();
+    import.meta.hot?.send("spark:ask", { request, selection: null, chat: v.key, ...images });
+    clearAsk();
     return;
   }
   const el = askElement();
@@ -1842,10 +1990,9 @@ function sendAsk() {
     selection: el ? about(el, askOn?.label) : null,
     chat: el ? askOn?.key : undefined,
     ...(el && others.length ? { others } : {}),
+    ...images,
   });
-  askInput.value = "";
-  sendBtn.classList.remove("ready");
-  askInput.blur();
+  clearAsk();
 }
 
 /** The selection's name for the popup: the component when it's an instance's root
@@ -2161,7 +2308,7 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   }
 }
 
-type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[]; images?: string[] };
 /** One chat with Claude about an element (chats.ts on the dev server). */
 type Chat = {
   id: string;
@@ -2219,14 +2366,28 @@ function renderChat() {
   const model = (answering && runModel) || chat?.model;
   askTitle.replaceChildren(...(listing ? ["All chats"] : ["Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : [])]));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
-  newChatBtn.toggleAttribute("disabled", answering && !viewing);
-  newChatBtn.textContent = viewing ? "Close" : "New chat";
+  newChatBtn.toggleAttribute("disabled", answering && !viewing && !listing);
+  newChatBtn.textContent = viewing && !listing ? "Close" : "New chat";
   newChatBtn.title = viewing ? "Back to the selection's chat; this one stays in Chats" : "Start over with a new Claude session; this chat stays in Chats";
   // Claude writes Markdown; the person's own words stay as typed.
   const nodes: HTMLElement[] = msgs.map((m) =>
     m.role === "claude"
       ? h("div", { class: `msg claude md${m.ok === false ? " bad" : ""}` }, markdown(m.text))
-      : h("div", { class: "msg user" }, m.text, ...(m.with?.length ? [h("div", { class: "with" }, `with ${m.with.join(", ")}`)] : [])),
+      : h(
+          "div",
+          { class: `msg user${m.images?.length && !m.text ? " only-imgs" : ""}` },
+          ...(m.images?.length
+            ? [
+                h(
+                  "div",
+                  { class: "imgs" },
+                  ...m.images.map((n) => h("a", { href: `/@spark/images/${n}`, target: "_blank", title: "Open the image" }, h("img", { src: `/@spark/images/${n}`, alt: "Attached image" }))),
+                ),
+              ]
+            : []),
+          m.text,
+          ...(m.with?.length ? [h("div", { class: "with" }, `with ${m.with.join(", ")}`)] : []),
+        ),
   );
   if (answering) {
     nodes.push(
@@ -2264,7 +2425,12 @@ function askHint(answering: boolean, replying: boolean) {
 }
 
 function resetChat() {
-  if (viewing) return stopViewing();
+  // From the list: back to the conversation, a new one.
+  if (listing) {
+    shell?.setChatsOpen?.(false);
+    if (viewing) stopViewing();
+    if (!askOn || (isRunning() && runChat === openChatOn(askOn.key)?.id)) return askInput.focus();
+  } else if (viewing) return stopViewing();
   if (!askOn) return;
   import.meta.hot?.send("spark:chat-new", { chat: askOn.key });
   askInput.focus();
@@ -3459,6 +3625,7 @@ document.head.append(dockStyle);
 installFont();
 // The browser's own menu never shows (the board guards its frames too; this covers an app outside it).
 blockNativeMenu(window);
+blockFileDrops(window);
 document.documentElement.append(host);
 if (shell) {
   // Space-drag pans only in edit mode: in view mode Space belongs to the app.

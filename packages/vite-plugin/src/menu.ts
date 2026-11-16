@@ -255,6 +255,29 @@ export function nativeMenuHelps(e: MouseEvent): boolean {
   return isTextEntry(e.composedPath()[0]) || onSelectedText(e);
 }
 
+const NO_DROPS = "__sparkNoFileDrops";
+
+/**
+ * A file dropped anywhere that isn't a drop zone (the chat box is one) would
+ * open in place of the page, since Spark's window leaves drops to the page
+ * (tauri.conf.json `dragDropEnabled: false`). Drop zones, Spark's or the
+ * app's, prevent the default themselves; everywhere else nothing happens.
+ */
+export function blockFileDrops(win: Window) {
+  const w = win as Window & { [NO_DROPS]?: boolean };
+  if (w[NO_DROPS]) return;
+  w[NO_DROPS] = true;
+  const files = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+  w.addEventListener("dragover", (e) => {
+    if (e.defaultPrevented || !files(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+  });
+  w.addEventListener("drop", (e) => {
+    if (!e.defaultPrevented && files(e)) e.preventDefault();
+  });
+}
+
 const BLOCKED = "__sparkNoNativeMenu";
 
 /** No browser context menu in `win`, except in text fields and on selected text. Once per window. */
