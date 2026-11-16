@@ -592,6 +592,22 @@ function addApp() {
   layers.refresh();
 }
 
+/** An app frame for each of these samples, after the others (the System tab's "Frame for each sample"). */
+function addSampleFrames(samples: string[]) {
+  for (const sample of samples) {
+    const apps = frames.filter((f) => f.kind === "app");
+    const from = apps[0];
+    let n = 2;
+    while (frames.some((f) => f.id === `app-${n}`)) n++;
+    const right = Math.max(...apps.map((f) => f.x + f.w));
+    const f = makeFrame("app", `app-${n}`, "", { x: right + GAP, y: from.y, w: from.w, h: from.h, preset: from.preset === "fill" ? "custom" : from.preset, sample });
+    frames.splice(apps.length, 0, f);
+  }
+  save();
+  apply();
+  layers.refresh();
+}
+
 /** The case files changed (one added or removed): frames follow. */
 function syncComponents(files: string[]) {
   const want = files.length ? files : [""];
@@ -1062,8 +1078,16 @@ zoomLabel.addEventListener("click", () => zoomKey("reset"));
 // frame's device, size and ratio; a component frame's file and layout.
 // Their own element and shadow root, so the client can mount it as is.
 
-/** Claude is writing sample data (the Data row's button): pressed once until the run ends. */
+/** Claude is writing sample data (the Data row's button, the System tab's Sample data step): pressed once until the run ends. */
 let samplesWriting = false;
+/** Claude writes sample data, or answers these calls nothing answers yet. */
+function writeSampleData(missing: string[]) {
+  if (samplesWriting) return;
+  samplesWriting = true;
+  import.meta.hot?.send("spark:samples-generate", { missing });
+  apply();
+  system.framesChanged();
+}
 const props = frameProperties();
 
 function frameProperties() {
@@ -1182,9 +1206,7 @@ function frameProperties() {
     sampleSel.blur();
   });
   writeSamples.addEventListener("click", () => {
-    if (samplesWriting) return;
-    samplesWriting = true;
-    import.meta.hot?.send("spark:samples-generate", { missing: shown?.missing ?? [] });
+    writeSampleData(shown?.missing ?? []);
     if (shown) this_.update(shown);
   });
   layoutSel.addEventListener("change", () => {
@@ -1452,12 +1474,14 @@ const api: ShellApi = {
     f.sampleOn = current;
     f.missing = [];
     apply();
+    system.framesChanged();
   },
   missing(win, commands) {
     const f = frameOf(win);
     if (f?.kind !== "app") return;
     f.missing = commands;
     apply();
+    system.framesChanged();
   },
   frameProps(win) {
     const f = frameOf(win);
@@ -1900,10 +1924,21 @@ const parts = componentsTab({
 });
 // The System tab: the design system wizard, its foundations first and Break down (parts) as its last step.
 const system = systemTab({
+  // One app frame scans, with what every other app frame renders (other samples, other sizes).
   scan: () => {
-    for (const f of frames) {
+    const apps = frames.filter((f) => f.kind === "app");
+    const docs = new Map<HTMLIFrameElement, Document>();
+    for (const f of apps) {
+      try {
+        if (f.iframe.contentDocument) docs.set(f.iframe, f.iframe.contentDocument);
+      } catch {
+        // Reloading.
+      }
+    }
+    for (const f of apps) {
       const win = f.iframe.contentWindow;
-      const s = f.kind === "app" && win ? clients.get(win)?.scanSystem?.() : null;
+      const others = [...docs].filter(([el]) => el !== f.iframe).map(([, d]) => d);
+      const s = win ? clients.get(win)?.scanSystem?.(others) : null;
       if (s) return s as SystemScan;
     }
     return null;
@@ -1912,6 +1947,22 @@ const system = systemTab({
   highlight: (places) => outline(places.length ? (win) => placedIn(win, places as Place[]) : null),
   components: parts.el,
   componentsProgress: () => parts.progress(),
+  data: () => ({
+    frames: frames
+      .filter((f) => f.kind === "app")
+      .map((f) => ({ id: f.id, name: f.name.textContent || f.id, samples: f.samples, sample: f.sampleOn ?? null, missing: f.missing ?? [] })),
+    writing: samplesWriting,
+  }),
+  setSample: (id, sample) => {
+    const f = frames.find((x) => x.id === id);
+    if (f) setSample(f, sample);
+  },
+  writeSamples: () => writeSampleData([...new Set(frames.flatMap((f) => (f.kind === "app" ? (f.missing ?? []) : [])))]),
+  everySample: () => {
+    const apps = frames.filter((f) => f.kind === "app");
+    const all = [...new Set(apps.flatMap((f) => f.samples ?? []))];
+    addSampleFrames(all.filter((s) => !apps.some((f) => (f.sampleOn ?? f.sample) === s)));
+  },
 });
 side.addTab("System", system.el, "component", "Design system: tokens for colors, type, spacing, radius and shadows, then components", () => system.shown());
 import.meta.hot?.on("spark:system-applied", () => system.applied());
@@ -1989,6 +2040,7 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
     if (samplesWriting) {
       samplesWriting = false;
       apply();
+      system.framesChanged();
     }
   }
   else return;

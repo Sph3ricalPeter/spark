@@ -146,10 +146,14 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   listed there (`noAnswer`, `ShellApi.missing`) with "Write sample data /
   Answer them with Claude" (`samplesPrompt`);
   The System tab (`system-tab.ts`) is the design system wizard: Overview (the
-  design system checklist: each foundation's token coverage and checks,
-  hover/focus/disabled states per kind of control, components done), then one
+  design system checklist: sample data, each foundation's token coverage and
+  checks, hover/focus/disabled states per kind of control, components done),
+  then Sample data (the scan only sees what's rendered, so: samples written,
+  every call answered, not only empty states, a frame per sample, with Write
+  sample data and "Frame for each sample"), then one
   step per foundation, colors, type, spacing, radius, shadows (`system.ts`
-  scans an app frame's CSSOM and inline styles through `ClientHooks.scanSystem`,
+  scans an app frame's CSSOM and the inline styles and controls of every app
+  frame through `ClientHooks.scanSystem(others)`,
   clusters the literal values into suggested tokens, existing ones first,
   near values merged and marked ≈ and unticked), Apply sends the ticked ones
   (`spark:system-apply`, `tokensPrompt` in breakdown.ts) for Claude to define

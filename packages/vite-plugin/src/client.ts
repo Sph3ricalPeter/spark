@@ -3911,7 +3911,7 @@ if (shell) {
     },
     hasSource: (src) => !!findSource(src),
     breakdownTarget: () => breakdownTarget(document.documentElement),
-    scanSystem: () => scanSystem(skip),
+    scanSystem: (others?: Document[]) => scanSystem(skip, others ?? []),
     selectSource: (src) => {
       const el = findSource(src);
       return el ? selectLayer(el) : null;

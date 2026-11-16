@@ -116,7 +116,7 @@ function declarations(text: string): [string, string][] {
 
 type Hit = { category: Category; prop: string; literal: string | null; token: string | null; place: Place };
 
-function readHits(skip: (n: Node) => boolean): Hit[] {
+function readHits(skip: (n: Node) => boolean, others: Document[]): Hit[] {
   const hits: Hit[] = [];
   const take = (prop: string, value: string, selector: string, file: string | null) => {
     if (prop.startsWith("--")) return;
@@ -130,11 +130,17 @@ function readHits(skip: (n: Node) => boolean): Hit[] {
     if (file && /node_modules|\/@spark\//.test(file)) return;
     for (const [prop, value] of declarations(rule.style.cssText)) take(prop, value, rule.selectorText, file);
   });
-  // Inline styles written in the JSX.
-  for (const el of Array.from(document.querySelectorAll("[data-spark-src][style]"))) {
-    if (skip(el)) continue;
-    const src = el.getAttribute("data-spark-src") ?? "";
-    for (const [prop, value] of declarations(el.getAttribute("style") ?? "")) take(prop, value, `<${el.tagName.toLowerCase()}> style at ${src}`, src.replace(/:\d+:\d+$/, ""));
+  // Inline styles written in the JSX: what's rendered, here and in the other app frames (other samples, other sizes).
+  const seen = new Set<string>();
+  for (const doc of [document, ...others]) {
+    for (const el of Array.from(doc.querySelectorAll("[data-spark-src][style]"))) {
+      if (doc === document && skip(el)) continue;
+      const src = el.getAttribute("data-spark-src") ?? "";
+      const style = el.getAttribute("style") ?? "";
+      if (seen.has(`${src}|${style}`)) continue;
+      seen.add(`${src}|${style}`);
+      for (const [prop, value] of declarations(style)) take(prop, value, `<${el.tagName.toLowerCase()}> style at ${src}`, src.replace(/:\d+:\d+$/, ""));
+    }
   }
   return hits;
 }
@@ -210,7 +216,13 @@ function tokenCategory(name: string, value: string, usedBy: string[]): Category 
 // ---------------------------------------------------------------------------
 // The scan
 
-export function scanSystem(skip: (n: Node) => boolean): SystemScan {
+/**
+ * Scan this page's styles. Rules come from every loaded stylesheet; what only
+ * shows when rendered (inline styles, the controls checked for states) also
+ * comes from `others`, the other app frames' documents (same origin), so frames
+ * on other samples count too.
+ */
+export function scanSystem(skip: (n: Node) => boolean, others: Document[] = []): SystemScan {
   const vars = collectVariables(skip).filter((v) => !(v.file && /node_modules|\/@spark\//.test(v.file)));
   const tokens: TokenInfo[] = [];
   for (const v of vars) {
@@ -227,7 +239,7 @@ export function scanSystem(skip: (n: Node) => boolean): SystemScan {
   }
   const home = [...homes.values()].sort((a, b) => b.n - a.n)[0] ?? null;
 
-  const hits = readHits(skip);
+  const hits = readHits(skip, others);
   const categories = {} as Record<Category, CategoryReport>;
   for (const category of CATEGORIES) {
     const mine = hits.filter((h) => h.category === category);
@@ -245,7 +257,7 @@ export function scanSystem(skip: (n: Node) => boolean): SystemScan {
     };
     categories[category].checks = checks(categories[category], mine);
   }
-  return { at: Date.now(), categories, states: stateReport(skip), home: home ? { file: home.file, selector: home.selector } : null };
+  return { at: Date.now(), categories, states: stateReport(skip, others), home: home ? { file: home.file, selector: home.selector } : null };
 }
 
 /** The literal values of one category, grouped into the tokens Spark suggests. */
@@ -439,7 +451,7 @@ function checks(r: CategoryReport, hits: Hit[]): Check[] {
 }
 
 /** Do the app's interactive elements have hover, focus and disabled styles? Counted per kind (tag and classes). */
-function stateReport(skip: (n: Node) => boolean): StateReport {
+function stateReport(skip: (n: Node) => boolean, others: Document[]): StateReport {
   const pseudo: Record<"hover" | "focus" | "disabled", string[]> = { hover: [], focus: [], disabled: [] };
   eachRule(skip, (rule, file) => {
     if (file && /node_modules|\/@spark\//.test(file)) return;
@@ -453,8 +465,9 @@ function stateReport(skip: (n: Node) => boolean): StateReport {
     }
   });
   const kinds = new Map<string, Element>();
-  for (const el of Array.from(document.querySelectorAll("button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=tab], [role=menuitem]"))) {
-    if (skip(el) || !el.hasAttribute("data-spark-src")) continue;
+  const controls = [document, ...others].flatMap((doc) => Array.from(doc.querySelectorAll("button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=tab], [role=menuitem]")));
+  for (const el of controls) {
+    if ((el.ownerDocument === document && skip(el)) || !el.hasAttribute("data-spark-src")) continue;
     const key = `${el.tagName.toLowerCase()}${Array.from(el.classList).sort().map((c) => `.${c}`).join("")}`;
     if (!kinds.has(key)) kinds.set(key, el);
   }
