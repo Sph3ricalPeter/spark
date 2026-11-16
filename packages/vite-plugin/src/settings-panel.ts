@@ -7,6 +7,7 @@
 // it's put in, with settingsStyle.
 import { h } from "./fields.ts";
 import { icon } from "./theme.ts";
+import { MONO_FONTS, UI_FONTS, familyOf } from "./fonts.ts";
 import { ACCENTS, THEMES, TEXT_SCALE, cleanFamily, getSetting, hasSettings, onSettings, resetSettings, setSetting, zoomSpeed, type ThemeName } from "./settings.ts";
 
 /** The panel's styles; `top` is the title bar's height. */
@@ -83,19 +84,11 @@ export function isSettingsKey(e: KeyboardEvent) {
   return (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "," || e.code === "Comma");
 }
 
-const UI_FONTS: [string, string][] = [
-  ["", "Inter (Spark's own)"],
-  ["system", "System (Segoe UI)"],
-  ["Segoe UI Variable Text", "Segoe UI Variable"],
-  ["Calibri", "Calibri"],
-  ["Verdana", "Verdana"],
-];
-const MONO_FONTS: [string, string][] = [
-  ["", "System (Consolas)"],
-  ["Cascadia Mono", "Cascadia Mono"],
-  ["Cascadia Code", "Cascadia Code"],
-  ["JetBrains Mono", "JetBrains Mono"],
-  ["Fira Code", "Fira Code"],
+/** The font choices: Spark's bundled fonts (fonts.ts), each shown in itself; [setting value, name, family]. */
+const UI_CHOICES: [string, string, string][] = UI_FONTS.map((f) => [f.id, f.id ? f.name : "Inter (default)", familyOf(f)]);
+const MONO_CHOICES: [string, string, string][] = [
+  ["", "System monospace (default)", "ui-monospace, Consolas, monospace"],
+  ...MONO_FONTS.map((f): [string, string, string] => [f.id, f.name, familyOf(f)]),
 ];
 
 /** The Settings panel; `gear` is the button that opens it (lit while it's open), `onChange` runs after any change. */
@@ -109,11 +102,11 @@ export function buildSettingsPanel(gear: HTMLElement, onChange?: () => void) {
   /** Spark's fields never keep focus once used: Tab, Space and Esc are Spark's. */
   const letGo = (input: HTMLElement) => input.addEventListener("change", () => input.blur());
 
-  // A dropdown of choices plus "Custom…" with a field for any installed family.
-  function fontPicker(key: "font" | "mono-font", choices: [string, string][]) {
+  // A dropdown of Spark's bundled fonts plus "Other installed font…" with a field for any family on this PC.
+  function fontPicker(key: "font" | "mono-font", choices: [string, string, string][]) {
     const sel = h("select", {}) as HTMLSelectElement;
-    for (const [v, n] of choices) sel.append(h("option", { value: v }, n));
-    sel.append(h("option", { value: "custom" }, "Custom…"));
+    for (const [v, n, family] of choices) sel.append(h("option", { value: v, style: `font-family: ${family.includes(",") ? family : `"${family}"`}` }, n));
+    sel.append(h("option", { value: "custom" }, "Other installed font…"));
     const custom = h("input", { class: "custom", placeholder: "Font family installed on this PC", spellcheck: "false" }) as HTMLInputElement;
     sel.addEventListener("change", () => {
       sel.blur();
@@ -237,8 +230,8 @@ export function buildSettingsPanel(gear: HTMLElement, onChange?: () => void) {
       h("h3", {}, "Appearance"),
       row("Theme", "Spark's colors", themes),
       row("Accent", "Buttons, focus and the selected frame", accents),
-      row("Font", "Spark's text (not your app's)", fontPicker("font", UI_FONTS)),
-      row("Code font", "Values, code and the zoom level", fontPicker("mono-font", MONO_FONTS)),
+      row("Font", "Spark's text (not your app's)", fontPicker("font", UI_CHOICES)),
+      row("Code font", "Values, code and the zoom level", fontPicker("mono-font", MONO_CHOICES)),
       row(
         "Text size",
         "Every size of Spark's text, together. Double-click: 100%",

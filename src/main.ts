@@ -7,13 +7,16 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { startHome, type Recent } from "../packages/vite-plugin/src/home.ts";
-import { installFont, type FontSubset } from "../packages/vite-plugin/src/fonts.ts";
-import latin from "../packages/vite-plugin/assets/fonts/inter-latin-wght-normal.woff2?url";
-import latinExt from "../packages/vite-plugin/assets/fonts/inter-latin-ext-wght-normal.woff2?url";
+import { installFont } from "../packages/vite-plugin/src/fonts.ts";
 
-// Spark's UI font, from the app's own files (the board gets it from the dev server).
-const FONTS: Record<FontSubset, string> = { latin, "latin-ext": latinExt };
-installFont(document, (subset) => FONTS[subset]);
+// Spark's fonts (fonts.ts), from the app's own files: Vite copies every one into the build (the board gets them from the dev server).
+const FONTS = Object.fromEntries(
+  Object.entries(import.meta.glob<string>("../packages/vite-plugin/assets/fonts/*.woff2", { query: "?url", import: "default", eager: true })).map(([p, url]) => [
+    p.split("/").pop()!,
+    url,
+  ]),
+);
+installFont(document, (file) => FONTS[file] ?? "");
 
 // The recent projects: this page's origin never changes, so localStorage keeps them.
 const STORE = "spark:recent-projects";
