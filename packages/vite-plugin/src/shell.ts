@@ -282,9 +282,11 @@ root.append(
     ${settingsStyle(BAR_H)}
     .zoom { min-width: 52px; text-align: center; font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); }
     .shell { position: absolute; inset: 0; }
-    /* The canvas is the whole window under the bar: the panels cover its edges, so resizing them never moves it. */
+    /* The canvas is the whole window under the bar: the panels cover its edges, so resizing them never moves it.
+       Clip, not hidden: a hidden box still scrolls when something in a frame takes focus or scrolls into view,
+       which shifts the board under the camera (zoom no longer at the pointer). Only the camera moves it. */
     .canvas {
-      position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: hidden;
+      position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: clip;
       background-color: var(--sp-canvas);
       background-image: radial-gradient(var(--sp-canvas-dot) 1px, transparent 1px);
       background-size: 16px 16px;
@@ -295,9 +297,11 @@ root.append(
     .frame { position: absolute; left: 0; top: 0; }
     /* The selected frame is on top of any it overlaps. */
     .frame.selected { z-index: 1; }
-    /* The frame's page, cut to the frame's size (a component frame's page is bigger: room for its overlays). */
+    /* The frame's page, cut to the frame's size (a component frame's page is bigger: room for its overlays).
+       Clip, never scroll: a focused popover out in that room would scroll a hidden box and shift the page
+       inside its frame, so zoom, selection outlines and menus would all land off by that much. */
     .frame .view {
-      position: relative; overflow: hidden; background: var(--sp-text-strong);
+      position: relative; overflow: clip; background: var(--sp-text-strong);
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--sp-line), 0 12px 40px #0008;
     }
     .frame iframe { display: block; border: 0; background: transparent; width: 100%; height: 100%; }
@@ -1163,6 +1167,21 @@ function scrollByWheel(e: WheelEvent) {
   scheduleCamera();
 }
 
+/**
+ * A point in a frame's page (its window's client coordinates) as a canvas
+ * point, in screen pixels from the canvas's corner, for the zoom's anchor.
+ * Measured from where the iframe is on screen, not worked out from the
+ * camera and the frame's position: anything else that offsets the page
+ * (a scrolled box around it, a border) would put the anchor off the pointer
+ * by that much times the zoom, far off screen when zoomed in.
+ */
+function frameToCanvas(f: Frame, x: number, y: number) {
+  const r = f.iframe.getBoundingClientRect();
+  const c = canvas.getBoundingClientRect();
+  const s = f.iframe.offsetWidth ? r.width / f.iframe.offsetWidth : z;
+  return { x: r.left - c.left + (f.iframe.clientLeft + x) * s, y: r.top - c.top + (f.iframe.clientTop + y) * s };
+}
+
 function panBy(dx: number, dy: number) {
   px += dx;
   py += dy;
@@ -1697,8 +1716,8 @@ const api: ShellApi = {
     return props.el;
   },
   wheelZoom(x, y, deltaY) {
-    const f = selected();
-    zoomByWheel({ deltaY, deltaMode: 0 }, px + (f.x + x) * z, py + (f.y + y) * z);
+    const at = frameToCanvas(selected(), x, y);
+    zoomByWheel({ deltaY, deltaMode: 0 }, at.x, at.y);
   },
   zoomKey,
   panBy,
@@ -1846,7 +1865,8 @@ function guardFrames() {
           if (!(e.ctrlKey || e.metaKey)) return;
           e.preventDefault();
           e.stopPropagation();
-          zoomByWheel(e, px + (f.x + e.clientX) * z, py + (f.y + e.clientY) * z);
+          const at = frameToCanvas(f, e.clientX, e.clientY);
+          zoomByWheel(e, at.x, at.y);
         },
         { passive: false, capture: true },
       );
