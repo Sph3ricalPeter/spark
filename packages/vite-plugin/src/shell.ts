@@ -1516,6 +1516,13 @@ function bringIntoView(f: Frame, box: { x: number; y: number; w: number; h: numb
     apply();
   }
 }
+/** Center a box in a frame (the frame's own coordinates) in the canvas, always: at the current zoom, zoomed out if it doesn't fit. */
+function centerBox(f: Frame, box: { x: number; y: number; w: number; h: number }) {
+  apply();
+  const zz = box.w > 0 && box.h > 0 ? Math.min(z, fitZoom(box.w, box.h)) : z;
+  centerOn(f.x + f.iframe.offsetLeft + box.x, f.y + f.iframe.offsetTop + box.y, box.w, box.h, zz);
+  apply();
+}
 // Layers: every frame, and the element tree in each (layers.ts), in step with the canvas selection.
 const layers = layersTab({
   frames: () =>
@@ -1541,11 +1548,7 @@ const layers = layersTab({
       if (!edit) switchMode(true);
       hooks.selectFrame();
     } else hooks?.deselect();
-    // Off screen: bring the frame's corner into view.
-    const { cl, cw, ch } = canvasSize();
-    const x = px + f.x * z;
-    const y = py + f.y * z;
-    if (x + f.w * z < cl || y + f.h * z < 0 || x > cl + cw || y > ch) bringIntoView(f, { x: 0, y: 0, w: Math.min(f.w, cw / z), h: Math.min(f.h, ch / z) });
+    // Selecting never moves the board; double-click (focusFrame) does.
     layers.refresh();
   },
   focusFrame: (id) => {
@@ -1562,8 +1565,18 @@ const layers = layersTab({
     if (!f || !hooks?.selectLayer) return;
     selectFrame(f);
     if (!edit) switchMode(true);
+    // Selecting never moves the board; double-click (focusLayer) does.
+    hooks.selectLayer(el);
+  },
+  focusLayer: (id, el) => {
+    const f = frames.find((x) => x.id === id);
+    const win = f?.iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    if (!f || !hooks?.selectLayer) return;
+    selectFrame(f);
+    if (!edit) switchMode(true);
     const box = hooks.selectLayer(el);
-    if (box) bringIntoView(f, box);
+    if (box) centerBox(f, box);
   },
   menuFrame: (id, x, y) => {
     const f = frames.find((v) => v.id === id);
@@ -1576,8 +1589,7 @@ const layers = layersTab({
     if (!f || !hooks?.contextMenu) return;
     selectFrame(f);
     if (!edit) switchMode(true);
-    const box = hooks.selectLayer?.(el);
-    if (box) bringIntoView(f, box);
+    hooks.selectLayer?.(el);
     hooks.contextMenu(el, x, y);
   },
   shown: () => side.shows("Layers"),

@@ -4,10 +4,12 @@
 // name. A frame's client says what its tree is (mode.ts `Layer`, client.ts);
 // this only draws it and keeps it in step with the canvas:
 //
-// - clicking a layer selects its element on the canvas (in Edit mode), and
+// - clicking a layer selects its element on the canvas (in Edit mode) without
+//   moving the board, double-clicking also centers the board on it, and
 //   selecting one on the canvas opens the tree down to it and marks its row;
 // - hovering a row outlines its element, and hovering an element marks its row;
 // - clicking a frame's row selects the frame, double-clicking zooms to it;
+// - clicking a row's arrow opens or folds one level, Alt+click its whole subtree;
 // - right-clicking a row selects it and opens its menu (menu.ts), as on the canvas.
 //
 // Which rows are open is remembered with the project (state.ts, "layers"): by
@@ -36,8 +38,10 @@ export type LayersDeps = {
   pickFrame(id: string): void;
   /** A frame's row was double-clicked: zoom to it. */
   focusFrame(id: string): void;
-  /** A layer was clicked: select its element in that frame. */
+  /** A layer was clicked: select its element in that frame (the board doesn't move). */
   pickLayer(id: string, el: Element): void;
+  /** A layer was double-clicked: select its element and center the board on it. */
+  focusLayer(id: string, el: Element): void;
   /** Right-click on a frame's row: its menu at (x, y). */
   menuFrame?(id: string, x: number, y: number): void;
   /** Right-click on a layer's row: select its element and show its menu at (x, y). */
@@ -79,6 +83,19 @@ export const LAYERS_STYLE = `
 
 const INDENT = 14;
 const MAX_REMEMBERED = 400;
+/** Alt+click opens at most this many rows at once (a huge page would freeze the tab). */
+const MAX_DEEP_OPEN = 300;
+
+/** A layer's row key under its parent's: where it's written, and which of its same-written siblings it is. */
+function childKeys(key: string, list: Layer[]) {
+  const seen = new Map<string, number>();
+  return list.map((l) => {
+    const id = l.role === "case" ? `case:${l.name}` : (l.el.getAttribute("data-spark-src") ?? l.name);
+    const n = seen.get(id) ?? 0;
+    seen.set(id, n + 1);
+    return `${key}>${id}#${n}`;
+  });
+}
 
 /** The Layers tab's content. Call `refresh` when the frames or a tree changed. */
 export function layersTab(deps: LayersDeps) {
@@ -116,11 +133,38 @@ export function layersTab(deps: LayersDeps) {
     });
   }
 
-  function twisty(isOpen: boolean, toggle: () => void) {
-    const t = h("span", { class: `tw${isOpen ? " open" : ""}`, title: isOpen ? "Fold" : "Unfold" }, icon("chevron-right", 12));
+  /** Open every row with children under `of` (null: the frame's top level), keyed under `key`. */
+  function openDeep(f: LayerFrame, of: Element | null, key: string) {
+    const stack: [Element | null, string][] = [[of, key]];
+    let n = 0;
+    while (stack.length && n < MAX_DEEP_OPEN) {
+      const [at, k] = stack.pop()!;
+      let list: Layer[];
+      try {
+        list = f.hooks?.layers?.(at) ?? [];
+      } catch {
+        return;
+      }
+      const keys = childKeys(k, list);
+      list.forEach((l, i) => {
+        if (!l.hasKids) return;
+        open.add(keys[i]);
+        n++;
+        stack.push([l.el, keys[i]]);
+      });
+    }
+  }
+
+  /** Fold every row under `key` too, so opening it again opens one level. */
+  function foldDeep(key: string) {
+    for (const k of open) if (k.startsWith(`${key}>`)) open.delete(k);
+  }
+
+  function twisty(isOpen: boolean, toggle: (deep: boolean) => void) {
+    const t = h("span", { class: `tw${isOpen ? " open" : ""}`, title: `${isOpen ? "Fold" : "Unfold"} (Alt: all the way down)` }, icon("chevron-right", 12));
     t.addEventListener("click", (e) => {
       e.stopPropagation();
-      toggle();
+      toggle(e.altKey);
     });
     // Clicking the arrow twice folds and unfolds, never zooms.
     t.addEventListener("dblclick", (e) => e.stopPropagation());
@@ -137,9 +181,11 @@ export function layersTab(deps: LayersDeps) {
         title: `${f.name}: click to select, double-click to zoom to it`,
         style: "padding-left: 6px",
       },
-      twisty(isOpen, () => {
+      twisty(isOpen, (deep) => {
         if (isOpen) folded.add(f.id);
         else folded.delete(f.id);
+        if (deep && isOpen) foldDeep(f.id);
+        if (deep && !isOpen) openDeep(f, null, f.id);
         remember();
         draw();
       }),
@@ -170,9 +216,11 @@ export function layersTab(deps: LayersDeps) {
         ...(l.hasKids ? { "aria-expanded": String(isOpen) } : {}),
       },
       l.hasKids
-        ? twisty(isOpen, () => {
+        ? twisty(isOpen, (deep) => {
             if (isOpen) open.delete(key);
             else open.add(key);
+            if (deep && isOpen) foldDeep(key);
+            if (deep && !isOpen) openDeep(f, l.el, key);
             remember();
             draw();
           })
@@ -185,6 +233,7 @@ export function layersTab(deps: LayersDeps) {
     row.addEventListener("click", () => {
       deps.pickLayer(f.id, l.el);
     });
+    row.addEventListener("dblclick", () => deps.focusLayer(f.id, l.el));
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       deps.menuLayer?.(f.id, l.el, e.clientX, e.clientY);
@@ -208,12 +257,9 @@ export function layersTab(deps: LayersDeps) {
       return;
     }
     // Siblings written at the same place (a list's items) are told apart by their order.
-    const seen = new Map<string, number>();
-    for (const l of list) {
-      const id = l.role === "case" ? `case:${l.name}` : (l.el.getAttribute("data-spark-src") ?? l.name);
-      const n = seen.get(id) ?? 0;
-      seen.set(id, n + 1);
-      const k = `${key}>${id}#${n}`;
+    const keys = childKeys(key, list);
+    for (const [i, l] of list.entries()) {
+      const k = keys[i];
       if (reveal.has(l.el) && !open.has(k)) {
         open.add(k);
         remember();
