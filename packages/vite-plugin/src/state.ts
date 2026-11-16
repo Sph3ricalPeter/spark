@@ -15,10 +15,11 @@
 //              dragged to, `{ sidebar?: px, panel?: px, chat?: px }`
 //   chats-open shell.ts: the chat column shows the list of chats, not a conversation
 //   layers     layers.ts: the Layers tree's unfolded rows and folded frames
+//   system     system-tab.ts: the System tab's step, `{ step }`
 // A new key is added to this list and to LEGACY if it had a localStorage one.
 // Values are JSON; the file is read by people too, so shapes only grow.
 
-export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "panel-widths" | "layers" | "chats-open";
+export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "panel-widths" | "layers" | "chats-open" | "system";
 
 const ENDPOINT = "/@spark/state";
 

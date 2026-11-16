@@ -288,5 +288,7 @@ export function componentsTab(deps: ComponentsDeps) {
     },
     /** How many are ticked to build (the tab's count). */
     todo: () => list.filter((c) => c.status === "planned").length,
+    /** How far the components are: built or already one, of all recorded but skipped. */
+    progress: () => ({ done: list.filter((c) => c.status === "built" || c.status === "exists").length, all: list.filter((c) => c.status !== "skipped").length }),
   };
 }

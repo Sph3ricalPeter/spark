@@ -38,6 +38,8 @@ import type { ClientHooks, ShellApi } from "./mode.ts";
 import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
 import { chatsTab, CHATS_STYLE, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
 import { componentsTab, COMPONENTS_STYLE, type BreakdownTarget, type PlanComponent } from "./components-tab.ts";
+import { systemTab, SYSTEM_STYLE } from "./system-tab.ts";
+import type { Place, SystemScan } from "./system.ts";
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
 import { name as projectName } from "/@spark/project";
@@ -198,6 +200,7 @@ root.append(
     ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
     ${COMPONENTS_STYLE}
+    ${SYSTEM_STYLE}
     /* Break down: the elements a Components row stands for, outlined on the board. */
     .bd-hl { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 50; }
     .bd-hl > div { position: absolute; box-sizing: border-box; border: calc(2px / var(--z, 1)) solid var(--sp-component); background: color-mix(in srgb, var(--sp-component) 14%, transparent); border-radius: 2px; }
@@ -1403,7 +1406,8 @@ const api: ShellApi = {
   },
   breakdown(target) {
     parts.setTarget(target as BreakdownTarget);
-    side.showTab("Components");
+    system.go("components");
+    side.showTab("System");
   },
   hasSource(src, from) {
     return !!sourceFrame(src, from);
@@ -1713,11 +1717,29 @@ function coveredIn(win: Window, covers: string[]): Element[] {
   return out;
 }
 function highlightCovers(covers: string[]) {
+  outline(covers.length ? (win) => coveredIn(win, covers) : null);
+}
+/** The elements styled at these places: a rule's selector, or an element's inline style ("<div> style at src"). */
+function placedIn(win: Window, places: { selector: string }[]): Element[] {
+  const out = new Set<Element>();
+  for (const p of places) {
+    const inline = p.selector.match(/ style at (.+)$/);
+    try {
+      const sel = inline ? `[data-spark-src="${CSS.escape(inline[1])}"]` : p.selector;
+      for (const el of win.document.querySelectorAll(sel)) out.add(el);
+    } catch {
+      // Not a selector querySelectorAll takes (::before, :hover stripped elsewhere), or reloading.
+    }
+  }
+  return [...out];
+}
+/** Outline what `find` finds in every frame on the board's cover layer; null clears. */
+function outline(find: ((win: Window) => Element[]) | null) {
   const boxes: HTMLElement[] = [];
-  for (const f of covers.length ? frames : []) {
+  for (const f of find ? frames : []) {
     const win = f.iframe.contentWindow;
-    if (!win) continue;
-    for (const el of coveredIn(win, covers).slice(0, 60)) {
+    if (!win || !find) continue;
+    for (const el of find(win).slice(0, 60)) {
       const r = el.getBoundingClientRect();
       if (!r.width && !r.height) continue;
       // Clipped to the frame: what scrolled out of it isn't drawn outside it.
@@ -1759,14 +1781,37 @@ const parts = componentsTab({
     return null;
   },
 });
-side.addTab("Components", parts.el, "component", "Break down into components: plan them with Claude, then build");
+// The System tab: the design system wizard, its foundations first and Break down (parts) as its last step.
+const system = systemTab({
+  scan: () => {
+    for (const f of frames) {
+      const win = f.iframe.contentWindow;
+      const s = f.kind === "app" && win ? clients.get(win)?.scanSystem?.() : null;
+      if (s) return s as SystemScan;
+    }
+    return null;
+  },
+  send: (event, data) => import.meta.hot?.send(event, data),
+  highlight: (places) => outline(places.length ? (win) => placedIn(win, places as Place[]) : null),
+  components: parts.el,
+  componentsProgress: () => parts.progress(),
+});
+side.addTab("System", system.el, "component", "Design system: tokens for colors, type, spacing, radius and shadows, then components", () => system.shown());
+import.meta.hot?.on("spark:system-applied", () => system.applied());
 let buildingArea: string | null = null;
-const showBusy = () => parts.setBusy(runningChat !== null || buildingArea !== null, buildingArea);
+const showBusy = () => {
+  const busy = runningChat !== null || buildingArea !== null;
+  parts.setBusy(busy, buildingArea);
+  system.setBusy(busy);
+};
 import.meta.hot?.on("spark:components", (d: { manifest?: { components?: PlanComponent[] }; why?: string }) => {
   parts.update(d.manifest?.components ?? []);
-  side.setCount("Components", parts.todo());
+  side.setCount("System", parts.todo());
   // A plan just came in (its chat had the tab while Claude worked): the plan is what to look at now.
-  if (d.why === "plan") side.showTab("Components");
+  if (d.why === "plan") {
+    system.go("components");
+    side.showTab("System");
+  }
 });
 import.meta.hot?.on("spark:components-building", (d: { area?: string | null }) => {
   buildingArea = d.area ?? null;

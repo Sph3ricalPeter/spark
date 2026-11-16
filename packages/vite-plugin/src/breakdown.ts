@@ -397,3 +397,49 @@ or
 SKIPPED <id>: <one-line reason>
 for these ids: ${o.todo.map((c) => c.id).join(", ")}.`;
 }
+
+// ---------------------------------------------------------------------------
+// Design system foundations: the System tab's token steps (system-tab.ts)
+
+export type TokenItem = {
+  id: string;
+  /** The token to use ("--color-bg"). */
+  name: string;
+  /** Make it (define it with `value`); false: it exists already. */
+  create: boolean;
+  value: string;
+  /** The literal values it replaces, as written. */
+  values: string[];
+  /** Where they're written: a rule (selector in file) or an element's inline style. */
+  places: { selector: string; file: string | null; prop: string; value: string }[];
+};
+
+export function tokensPrompt(o: { step: string; home: { file: string | null; selector: string } | null; items: TokenItem[] }) {
+  const where = o.home
+    ? `Define new tokens in the \`${o.home.selector}\` rule of \`${o.home.file}\`, next to the related ones, where this project keeps its tokens.`
+    : "This project has no tokens yet: define them in a `:root` rule where it keeps its global CSS (a tokens.css imported by the entry, or the top of the main stylesheet).";
+  return `You are setting up the design system of this React app for Spark, a visual design tool running on top of it.
+The person reviewed Spark's scan of the app's ${o.step.toLowerCase()} and chose these tokens (CSS custom properties). Apply them.
+
+${where}
+
+For each item:
+1. If \`create\` is true, define \`name\` with \`value\`. If it exists already, don't redefine it.
+2. Replace every literal in \`values\` at the listed \`places\` (CSS declarations by selector and file, or inline styles in
+   JSX) with \`var(<name>)\`. Only that part of the value changes: \`padding: 8px 12px\` with 8px becomes
+   \`padding: var(--space-2) 12px\`. A value that differs a little from the token's (the person merged near values)
+   takes the token anyway: that's the point.
+3. Leave other values, rules and files alone. Don't rename classes or reformat.
+
+- Follow the project's conventions (read its CLAUDE.md if there is one).
+- Don't run builds, tests or dev servers; the dev server is already running and hot-reloads your edits.
+
+Items (JSON):
+${JSON.stringify(o.items, null, 2)}
+
+End with a one-sentence summary, then one line per item, exactly:
+APPLIED <id>
+or
+SKIPPED <id>: <one-line reason>
+for these ids: ${o.items.map((i) => i.id).join(", ")}.`;
+}

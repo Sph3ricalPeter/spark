@@ -95,7 +95,7 @@ Zustand). Release and deploy are ported from dawg and described in
   the frame or nothing is selected. Its left sidebar (`sidebar.ts`) has the
   Layers (`layers.ts`: every frame and its element tree, Figma style, in
   step with the canvas selection both ways; the client names the tree
-  through `ClientHooks.layers`), Components (Break down, below) and Changes tabs (a tab strip at its top). The
+  through `ClientHooks.layers`), System (the design system wizard, below) and Changes tabs (a tab strip at its top). The
   Chats list (`chatsTab`, in its own shadow root) is in the chat column instead, behind its
   Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); every chat opens in the
   column: an element's on its element, one with no element (an Implement changes run, a task such as
@@ -132,8 +132,17 @@ Zustand). Release and deploy are ported from dawg and described in
   `?spark-sample=`, saved in the board state), and calls nothing answers are
   listed there (`noAnswer`, `ShellApi.missing`) with "Write sample data /
   Answer them with Claude" (`samplesPrompt`);
+  The System tab (`system-tab.ts`) is the design system wizard: Overview (the
+  design system checklist: each foundation's token coverage and checks,
+  hover/focus/disabled states per kind of control, components done), then one
+  step per foundation, colors, type, spacing, radius, shadows (`system.ts`
+  scans an app frame's CSSOM and inline styles through `ClientHooks.scanSystem`,
+  clusters the literal values into suggested tokens, existing ones first,
+  near values merged and marked ≈ and unticked), Apply sends the ticked ones
+  (`spark:system-apply`, `tokensPrompt` in breakdown.ts) for Claude to define
+  and use; every step rescans, so it's rerunnable. Its last step is Components:
   Break down into components (a frame's, variant's or element's menu, or the
-  Ask box's component button) opens the board's Components tab
+  Ask box's component button) opens it
   (`components-tab.ts`): pick a depth (regions, + parts, + primitives), Plan
   (Claude writes `.spark/components.plan.json`, merged into the versioned
   `.spark/components.json`, the project's record of its components:

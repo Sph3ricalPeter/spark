@@ -21,7 +21,7 @@ import { askPrompt, followupPrompt, galleryPrompt, implementPrompt, samplesPromp
 import { claude } from "./claude.ts";
 import { chatStore } from "./chats.ts";
 import { stateStore } from "./state-file.ts";
-import { buildAreas, buildPrompt, manifestStore, planPrompt, rulesFor, type BreakdownTarget, type Depth } from "./breakdown.ts";
+import { buildAreas, buildPrompt, manifestStore, planPrompt, rulesFor, tokensPrompt, type BreakdownTarget, type Depth, type TokenItem } from "./breakdown.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MODULES: Record<string, string> = {
@@ -527,6 +527,32 @@ export default function spark(): Plugin {
         if (!areas.length) return;
         building = areas;
         await buildNext();
+      });
+      // The System tab's token steps: Claude defines the chosen tokens and uses them in place of the literals.
+      server.ws.on("spark:system-apply", async (d: { step?: string; home?: { file: string | null; selector: string } | null; items?: TokenItem[] }, client) => {
+        if (ai.busy() || building) return busy(client)(null);
+        const items = (Array.isArray(d?.items) ? d.items : [])
+          .filter((i) => i && typeof i.id === "string" && typeof i.name === "string" && /^--[\w-]+$/.test(i.name))
+          .map((i) => ({ ...i, values: Array.isArray(i.values) ? i.values.slice(0, 20) : [], places: Array.isArray(i.places) ? i.places.slice(0, 60) : [] }));
+        if (!items.length) return;
+        const step = typeof d.step === "string" ? d.step.slice(0, 40) : "Tokens";
+        const made = items.filter((i) => i.create).length;
+        await ai
+          .ask({
+            topic: { kind: "task", label: `Design system: ${step}` },
+            request: `Use ${items.length} ${step.toLowerCase()} token${items.length === 1 ? "" : "s"}${made ? ` (${made} new)` : ""}: ${items.map((i) => i.name).join(", ")}.`,
+            prompt: () => tokensPrompt({ step, home: d.home ?? null, items }),
+            kind: "ask",
+            ids: [],
+            reply: (e) => {
+              const ok = e.applied.filter((x) => items.some((i) => i.id === x)).length;
+              const skipped = e.skipped.filter((x) => items.some((i) => i.id === x.id));
+              const name = (id: string) => items.find((i) => i.id === id)?.name ?? id;
+              return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped.map((x) => `- Skipped ${name(x.id)}: ${x.why}`).join("\n"), `_${ok} applied · ${skipped.length} skipped${e.cost !== undefined ? ` · $${e.cost.toFixed(2)}` : ""}_`].filter(Boolean).join("\n\n");
+            },
+            then: () => server.ws.send("spark:system-applied", {}),
+          })
+          .then(busy(client));
       });
       server.ws.on("spark:stop", () => {
         // Stopping a build stops the areas after it too.

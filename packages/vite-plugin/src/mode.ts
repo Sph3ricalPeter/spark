@@ -80,6 +80,8 @@ export type ClientHooks = {
   selectSource?(src: string): { x: number; y: number; w: number; h: number } | null;
   /** The whole frame as a Break down target (components-tab.ts BreakdownTarget). */
   breakdownTarget?(): unknown;
+  /** Scan the app's styles for the System tab (system.ts SystemScan). */
+  scanSystem?(): unknown;
 };
 
 /**

@@ -20,6 +20,7 @@
 // the dev server saves to .spark/changes.json.
 import { installFont } from "./fonts.ts";
 import { getState, setState } from "./state.ts";
+import { scanSystem } from "./system.ts";
 import { icon as lucide, THEME, type IconName } from "./theme.ts";
 import {
   allChanges,
@@ -3672,6 +3673,7 @@ if (shell) {
     },
     hasSource: (src) => !!findSource(src),
     breakdownTarget: () => breakdownTarget(document.documentElement),
+    scanSystem: () => scanSystem(skip),
     selectSource: (src) => {
       const el = findSource(src);
       return el ? selectLayer(el) : null;
