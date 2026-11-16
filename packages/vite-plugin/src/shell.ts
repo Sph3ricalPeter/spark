@@ -727,12 +727,7 @@ function apply() {
   }
   layout();
   const sel = selected();
-  stage.style.transform = `translate(${px}px, ${py}px) scale(${z})`;
-  // The dot grid is on the board, so it pans and zooms with the frames.
-  const g = gridStep() * z;
-  canvas.style.backgroundSize = `${g}px ${g}px`;
-  canvas.style.backgroundPosition = `${px - g / 2}px ${py - g / 2}px`;
-  stage.style.setProperty("--z", String(z));
+  applyCamera();
   for (const f of frames) {
     f.el.style.transform = `translate(${f.x}px, ${f.y}px)`;
     f.iframe.style.width = `${f.w}px`;
@@ -751,17 +746,32 @@ function apply() {
     layers.refresh();
   }
   showPanels();
-  zoomLabel.textContent = `${Math.round(z * 100)}%`;
-  if (started && JSON.stringify({ z, x: Math.round(px), y: Math.round(py) }) !== savedCamera) save(CAMERA_SAVE_DELAY);
   const app = selectedApp();
   presetSel.disabled = !app;
   presetSel.value = app?.preset ?? "custom";
   props.update(sel);
 }
 
+/**
+ * Only the camera moved (zooming, panning): nothing about the frames
+ * changes, so this skips the rest of apply() and is cheap enough to run
+ * every animation frame.
+ */
+function applyCamera() {
+  stage.style.transform = `translate(${px}px, ${py}px) scale(${z})`;
+  // The dot grid is on the board, so it pans and zooms with the frames.
+  const g = gridStep() * z;
+  canvas.style.backgroundSize = `${g}px ${g}px`;
+  canvas.style.backgroundPosition = `${px - g / 2}px ${py - g / 2}px`;
+  stage.style.setProperty("--z", String(z));
+  zoomLabel.textContent = `${Math.round(z * 100)}%`;
+  if (started && JSON.stringify({ z, x: Math.round(px), y: Math.round(py) }) !== savedCamera) save(CAMERA_SAVE_DELAY);
+}
+
 /** Center the box (world coordinates) at zoom `zz`. */
 function centerOn(x: number, y: number, w: number, hh: number, zz: number) {
   const { cl, cw, ch } = canvasSize();
+  stopZoom();
   z = clampZ(zz);
   px = Math.round(cl + (cw - w * z) / 2 - x * z);
   py = Math.round((ch - hh * z) / 2 - y * z);
@@ -776,6 +786,7 @@ function fitZoom(w: number, hh: number) {
 function focusFrame(f: Frame, zz?: number) {
   apply();
   if (f.kind === "app" && f.preset === "fill") {
+    stopZoom();
     z = 1;
     px = canvasSize().cl - f.x;
     py = -f.y;
@@ -816,34 +827,122 @@ function setSize(f: Frame, nw: number, nh: number) {
   apply();
 }
 
+// ---------------------------------------------------------------------------
+// Zooming
+//
+// Exact under the pointer: every change scales about the canvas point under
+// it (zoomAt), so the spot of the board there never moves, however the
+// changes are split up. Two kinds of input:
+// - A pinch (and any fine-grained Ctrl+wheel) follows the fingers 1:1:
+//   Chromium sends a touchpad pinch as Ctrl+wheel with deltaY =
+//   -100·ln(scale). Its deltas are summed and applied once per animation
+//   frame, no easing, so it never lags behind.
+// - A mouse wheel's notches and Ctrl +/- glide to their zoom instead of
+//   jumping: each frame closes a fixed share of the gap (in log space, so in
+//   and out feel alike), most of it within ~100 ms. A notch mid-glide adds
+//   to where the glide is going, so a fast spin loses nothing and always
+//   lands on the same zoom as the sum of its notches.
+
+/** A notch's zoom per wheel pixel: a 100 px notch is ×1.28. */
+const NOTCH_RATE = 0.0025;
+/** The glide's time constant in ms: 63% of the way after it, 95% after three. */
+const GLIDE_MS = 30;
+
+/** Where a glide is going (0: not gliding). */
+let glideTo = 0;
+/** The canvas point the zoom is anchored at. */
+let anchorX = 0;
+let anchorY = 0;
+/** Pinch deltas waiting for the next animation frame. */
+let pinch = 0;
+let zoomFrame = 0;
+let lastTick = 0;
+
 /** Zoom to `zz`, keeping the canvas point (cx, cy) still. */
 function zoomAt(zz: number, cx: number, cy: number) {
   const nz = clampZ(zz);
   px = cx - ((cx - px) * nz) / z;
   py = cy - ((cy - py) * nz) / z;
   z = nz;
-  apply();
+  applyCamera();
+}
+
+function zoomTick(now: number) {
+  zoomFrame = 0;
+  if (pinch) {
+    const d = pinch;
+    pinch = 0;
+    zoomAt(z * Math.exp(-d / 100), anchorX, anchorY);
+    return;
+  }
+  if (!glideTo) return;
+  const dt = lastTick ? Math.min(64, Math.max(1, now - lastTick)) : 16;
+  lastTick = now;
+  const to = Math.log(glideTo);
+  const at = Math.log(z) + (to - Math.log(z)) * (1 - Math.exp(-dt / GLIDE_MS));
+  const done = Math.abs(to - at) < 0.001;
+  zoomAt(done ? glideTo : Math.exp(at), anchorX, anchorY);
+  if (done) glideTo = 0;
+  else zoomFrame = requestAnimationFrame(zoomTick);
+}
+
+function scheduleZoom() {
+  if (!zoomFrame) zoomFrame = requestAnimationFrame(zoomTick);
+}
+
+/** Glide to `factor` × where the zoom is going, anchored at the canvas point (cx, cy). */
+function glideBy(factor: number, cx: number, cy: number) {
+  pinch = 0;
+  if (!glideTo) lastTick = 0;
+  glideTo = clampZ((glideTo || z) * factor);
+  anchorX = cx;
+  anchorY = cy;
+  scheduleZoom();
+}
+
+/** A camera jump (fit, focus a frame) wins over a zoom still under way. */
+function stopZoom() {
+  glideTo = 0;
+  pinch = 0;
+  if (zoomFrame) cancelAnimationFrame(zoomFrame);
+  zoomFrame = 0;
 }
 
 function zoomStep(dir: 1 | -1) {
   const { cl, cw, ch } = canvasSize();
-  const next = dir > 0 ? STEPS.find((s) => s > z + 0.001) : [...STEPS].reverse().find((s) => s < z - 0.001);
-  zoomAt(next ?? z, cl + cw / 2, ch / 2);
+  const from = glideTo || z;
+  const next = dir > 0 ? STEPS.find((s) => s > from + 0.001) : [...STEPS].reverse().find((s) => s < from - 0.001);
+  if (next) glideBy(next / from, cl + cw / 2, ch / 2);
 }
 
 function wheelDelta(e: WheelEvent) {
   return e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
 }
 
-function zoomByWheel(deltaY: number, cx: number, cy: number) {
-  // Pinches send small deltas, mouse wheels ~100 a notch.
-  zoomAt(z * Math.exp(-Math.max(-100, Math.min(100, deltaY)) * 0.0025), cx, cy);
+/** Ctrl+wheel or a pinch at the canvas point (cx, cy). */
+function zoomByWheel(e: { deltaY: number; deltaMode: number }, cx: number, cy: number) {
+  // Lines and pages (Firefox's wheel): three lines are one 100 px notch.
+  const d = e.deltaMode === 1 ? (e.deltaY * 100) / 3 : e.deltaMode === 2 ? e.deltaY * 300 : e.deltaY;
+  if (!d) return;
+  // A mouse wheel moves in whole notches of 100 px (fewer with fewer lines
+  // per notch in Windows' settings, more with display scaling); a pinch's
+  // deltas are small and fractional.
+  const notch = e.deltaMode !== 0 || Math.abs(d) >= 60 || (Number.isInteger(d) && Math.abs(d) >= 20);
+  if (notch) glideBy(Math.exp(-Math.max(-300, Math.min(300, d)) * NOTCH_RATE), cx, cy);
+  else {
+    // A pinch takes over from a glide where it is.
+    glideTo = 0;
+    pinch += d;
+    anchorX = cx;
+    anchorY = cy;
+    scheduleZoom();
+  }
 }
 
 function panBy(dx: number, dy: number) {
   px += dx;
   py += dy;
-  apply();
+  applyCamera();
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,7 +1151,7 @@ canvas.addEventListener(
     const we = e as WheelEvent;
     we.preventDefault();
     const r = canvas.getBoundingClientRect();
-    if (we.ctrlKey || we.metaKey) zoomByWheel(wheelDelta(we), we.clientX - r.left, we.clientY - r.top);
+    if (we.ctrlKey || we.metaKey) zoomByWheel(we, we.clientX - r.left, we.clientY - r.top);
     else if (we.shiftKey) panBy(-wheelDelta(we), 0);
     else panBy(-we.deltaX, -wheelDelta(we));
   },
@@ -1268,7 +1367,7 @@ const api: ShellApi = {
   },
   wheelZoom(x, y, deltaY) {
     const f = selected();
-    zoomByWheel(deltaY, px + (f.x + x) * z, py + (f.y + y) * z);
+    zoomByWheel({ deltaY, deltaMode: 0 }, px + (f.x + x) * z, py + (f.y + y) * z);
   },
   zoomKey,
   panBy,
@@ -1385,7 +1484,7 @@ function guardFrames() {
           if (!(e.ctrlKey || e.metaKey)) return;
           e.preventDefault();
           e.stopPropagation();
-          zoomByWheel(wheelDelta(e), px + (f.x + e.clientX) * z, py + (f.y + e.clientY) * z);
+          zoomByWheel(e, px + (f.x + e.clientX) * z, py + (f.y + e.clientY) * z);
         },
         { passive: false, capture: true },
       );
