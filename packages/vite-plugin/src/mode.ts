@@ -225,6 +225,16 @@ export function boardOnly(cmd: string, args: unknown): boolean {
 }
 
 /**
+ * Events on Spark's window the app in a frame never hears. While any page
+ * listens for `tauri://close-requested`, Tauri keeps the window open and
+ * waits for that page to close it (`onCloseRequested` then calls destroy).
+ * The app in a frame may not destroy Spark's window, and a frame that
+ * reloaded never answers at all, so a listening app (dawg saves on close)
+ * left Spark unclosable. The app gets a listener that never fires.
+ */
+const DEAF_EVENTS = new Set(["tauri://close-requested"]);
+
+/**
  * Tauri injects its IPC into the top window only: Spark's window with the project open,
  * which runs the shell. Lend it to the frame, so the app's Tauri calls work
  * there, the system Open and Save dialogs above all.
@@ -246,14 +256,30 @@ export function borrowTauri() {
   const parent = window.parent as unknown as Record<string, unknown>;
   const host = parent.__TAURI_INTERNALS__ as TauriInternals | undefined;
   if (!host || "__TAURI_INTERNALS__" in window) return;
-  // Callbacks this page registers live in the parent; drop them with the page.
+  // Callbacks and event listeners this page registers live in the parent and
+  // in Spark; drop them with the page.
   const callbacks = new Set<number>();
+  const listeners = new Map<number, string>();
+  let deafIds = 0;
   const internals = Object.create(host as object, {
     invoke: {
       value: (cmd: string, args?: unknown, options?: unknown) => {
         const fake = window.__sparkTauriFakes?.[cmd];
         if (fake) return Promise.resolve().then(() => fake(args));
         if (boardOnly(cmd, args)) return Promise.reject(new Error(`Spark's window belongs to Spark: "${cmd}" isn't available to the app inside it.`));
+        const a = (args ?? {}) as { event?: unknown; eventId?: unknown };
+        if (cmd === "plugin:event|listen" && typeof a.event === "string") {
+          if (DEAF_EVENTS.has(a.event)) return Promise.resolve(--deafIds);
+          const event = a.event;
+          return host.invoke(cmd, args, options).then((id) => {
+            if (typeof id === "number") listeners.set(id, event);
+            return id;
+          });
+        }
+        if (cmd === "plugin:event|unlisten" && typeof a.eventId === "number") {
+          if (a.eventId < 0) return Promise.resolve();
+          listeners.delete(a.eventId);
+        }
         if (cmd.startsWith("plugin:")) return host.invoke(cmd, args, options);
         noAnswer(cmd);
         return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, has no answer here. Give the frame sample data (its inspector, or spark.setup.tsx's samples).`));
@@ -275,6 +301,8 @@ export function borrowTauri() {
     if (key.startsWith("__TAURI") && !(key in self)) self[key] = parent[key];
   }
   window.addEventListener("pagehide", () => {
+    for (const [eventId, event] of listeners) void host.invoke("plugin:event|unlisten", { event, eventId }).catch(() => {});
+    listeners.clear();
     for (const id of callbacks) host.unregisterCallback?.(id);
     callbacks.clear();
   });

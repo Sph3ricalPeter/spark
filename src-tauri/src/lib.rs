@@ -67,6 +67,17 @@ pub fn run() {
         )
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        // Closing Spark's window always closes it. Tauri holds a window open
+        // while a page listens for `tauri://close-requested`; Spark's own
+        // pages never do, but the app in the board's frames could (borrowTauri
+        // keeps them from it), and a stuck window could only be killed.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if window.label() == project::MAIN {
+                    let _ = window.destroy();
+                }
+            }
+        })
         .manage(project::Projects::default())
         .manage(update::Pending::default())
         .setup(|app| {
