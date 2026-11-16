@@ -20,6 +20,7 @@
 // the dev server saves to .spark/changes.json.
 import { installFont } from "./fonts.ts";
 import { getState, setState } from "./state.ts";
+import "./settings.ts";
 import { scanSystem } from "./system.ts";
 import { icon as lucide, THEME, type IconName } from "./theme.ts";
 import {
@@ -56,7 +57,6 @@ import { INHERITED, PAGE_STYLE, inheritedFrom, isPageSelector, pageRules, render
 import type { RuleRef } from "./css.ts";
 
 const PANEL_W = 340;
-const ACCENT = "#4f8cff";
 
 // ---------------------------------------------------------------------------
 // What a selection knows
@@ -675,7 +675,7 @@ const STYLE = `${THEME}
     .change .what { flex: 1; min-width: 0; }
     .change .lvl { font-size: var(--sp-fs-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--sp-warn); }
     .change .where { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); word-break: break-word; margin-bottom: 4px; }
-    .change.here { background: ${ACCENT}14; margin: 0 -12px; padding: 5px 12px; }
+    .change.here { background: color-mix(in srgb, var(--sp-accent) 8%, transparent); margin: 0 -12px; padding: 5px 12px; }
     .change code { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
     .change button { padding: 0 6px; }
     .here-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-2); }

@@ -45,6 +45,8 @@ import caseFiles from "/@spark/cases";
 import { name as projectName } from "/@spark/project";
 import { BAR_H, inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
 import { getState, setState } from "./state.ts";
+import { getSetting, zoomSpeed } from "./settings.ts";
+import { isSettingsKey, buildSettingsPanel, settingsStyle } from "./settings-panel.ts";
 import { SAMPLE_PARAM } from "./sample.ts";
 
 /** The inspector's and the chat's default widths; dragging their left edges changes them (grip.ts). */
@@ -239,6 +241,7 @@ root.append(
     .toolbar .tb { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; }
     .toolbar select { width: 150px; min-width: 0; flex: 0 1 auto; }
     .toolbar .sep { width: 1px; height: 20px; background: var(--sp-line-strong); flex: none; margin: 0 4px; }
+    ${settingsStyle(BAR_H)}
     .zoom { min-width: 52px; text-align: center; font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); }
     .shell { position: absolute; inset: 0; }
     /* The canvas is the whole window under the bar: the panels cover its edges, so resizing them never moves it. */
@@ -348,6 +351,7 @@ const zoomOut = h("button", { title: "Zoom out (Ctrl −)" }, icon("minus", 14))
 const zoomLabel = h("button", { class: "zoom", title: "The selected frame at actual size (Ctrl 0). Ctrl+wheel or pinch zooms at the pointer" });
 const zoomIn = h("button", { title: "Zoom in (Ctrl +)" }, icon("plus", 14));
 const fitBtn = h("button", { title: "Zoom to fit every frame (Shift 1)" }, "Fit");
+const settingsBtn = h("button", { class: "gear", title: "Settings (Ctrl+,)" }, icon("settings", 14));
 
 const islandView = h("button", { title: "Use the selected frame normally (Tab)" }, "View");
 const islandEdit = h("button", { title: "Select and edit elements (Tab)" }, "Edit");
@@ -358,7 +362,7 @@ islandEdit.addEventListener("click", () => switchMode(true));
 // The left panel: Layers, Chats and Changes (sidebar.ts), always shown.
 const side = sidebar();
 // The title bar: in Spark's window titleBar adds the home button, the project's name and the window buttons.
-const bar = h("div", { class: "bar" }, h("span", { class: "grow" }));
+const bar = h("div", { class: "bar" }, h("span", { class: "grow" }), settingsBtn);
 const toolbar = h(
   "div",
   { class: "toolbar" },
@@ -837,6 +841,9 @@ function setSize(f: Frame, nw: number, nh: number) {
 //   and out feel alike), most of it within ~100 ms. A notch mid-glide adds
 //   to where the glide is going, so a fast spin loses nothing and always
 //   lands on the same zoom as the sum of its notches.
+// How far each one zooms is a setting, the same in every project (the
+// title bar's gear, settingsPopover): a multiplier for the wheel and one for
+// the pinch.
 
 /** A notch's zoom per wheel pixel: a 100 px notch is ×1.28. */
 const NOTCH_RATE = 0.0025;
@@ -875,7 +882,8 @@ function zoomTick(now: number) {
   lastTick = now;
   const to = Math.log(glideTo);
   const at = Math.log(z) + (to - Math.log(z)) * (1 - Math.exp(-dt / GLIDE_MS));
-  const done = Math.abs(to - at) < 0.001;
+  // Smooth zoom off (Settings): straight there.
+  const done = getSetting("zoom-glide") === false || Math.abs(to - at) < 0.001;
   zoomAt(done ? glideTo : Math.exp(at), anchorX, anchorY);
   if (done) glideTo = 0;
   else zoomFrame = requestAnimationFrame(zoomTick);
@@ -923,11 +931,11 @@ function zoomByWheel(e: { deltaY: number; deltaMode: number }, cx: number, cy: n
   // per notch in Windows' settings, more with display scaling); a pinch's
   // deltas are small and fractional.
   const notch = e.deltaMode !== 0 || Math.abs(d) >= 60 || (Number.isInteger(d) && Math.abs(d) >= 20);
-  if (notch) glideBy(Math.exp(-Math.max(-300, Math.min(300, d)) * NOTCH_RATE), cx, cy);
+  if (notch) glideBy(Math.exp(-Math.max(-300, Math.min(300, d)) * NOTCH_RATE * zoomSpeed("wheel")), cx, cy);
   else {
     // A pinch takes over from a glide where it is.
     glideTo = 0;
-    pinch += d;
+    pinch += d * zoomSpeed("pinch");
     anchorX = cx;
     anchorY = cy;
     scheduleZoom();
@@ -939,6 +947,35 @@ function panBy(dx: number, dy: number) {
   py += dy;
   applyCamera();
 }
+
+// ---------------------------------------------------------------------------
+// Settings: a panel under the title bar's gear (or Ctrl+,). Spark's own
+// settings, the same in every project (settings.ts): looks (theme, accent,
+// fonts, text size) and the canvas (zoom speeds, glide, grid). Every change
+// shows at once, and the panel leaves the canvas usable, so a zoom speed can
+// be tried while it's set; Esc, the gear or a press on the board closes it.
+
+const settingsPanel = buildSettingsPanel(settingsBtn, () => apply());
+root.append(settingsPanel.el);
+
+
+settingsBtn.addEventListener("click", () => settingsPanel.toggle());
+// A press on the board closes it (in a frame too: guardFrames); the bar and the other panels don't.
+canvas.addEventListener("pointerdown", () => settingsPanel.close(), true);
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (isSettingsKey(e)) {
+      e.preventDefault();
+      settingsPanel.toggle();
+    } else if (e.key === "Escape" && settingsPanel.open) {
+      e.preventDefault();
+      e.stopPropagation();
+      settingsPanel.close();
+    }
+  },
+  true,
+);
 
 // ---------------------------------------------------------------------------
 // Bar
@@ -1487,6 +1524,12 @@ function guardFrames() {
       w.addEventListener(
         "keydown",
         (e) => {
+          if (isSettingsKey(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            settingsPanel.toggle();
+            return;
+          }
           const k = zoomKeyOf(e);
           if (!k) return;
           e.preventDefault();
@@ -1500,6 +1543,7 @@ function guardFrames() {
         "pointerdown",
         (e) => {
           blurChrome();
+          settingsPanel.close();
           // The middle button only pans (frame.ts): it never selects.
           if (e.button !== 1) selectFrame(f);
         },

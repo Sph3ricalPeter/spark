@@ -12,6 +12,9 @@ const RANGES = {
 /** The font stack for Spark's UI text (monospace stays monospace). */
 export const UI_FONT = `"Spark Inter", ui-sans-serif, system-ui, sans-serif`;
 
+/** The monospace stack for values and code. */
+export const MONO_FONT = "ui-monospace, SFMono-Regular, Consolas, monospace";
+
 export type FontSubset = keyof typeof RANGES;
 
 /** Register the font in a document. @font-face doesn't work inside a shadow root, so it goes in the head.

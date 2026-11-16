@@ -15,7 +15,9 @@
 // borrowTauri (mode.ts) keeps them from the app in the frames.
 // The home event's name is in project.rs too (HOME_EVENT).
 import { h } from "./fields.ts";
-import { THEME } from "./theme.ts";
+import { THEME, icon } from "./theme.ts";
+import { connectSettings } from "./settings.ts";
+import { buildSettingsPanel, isSettingsKey, settingsStyle } from "./settings-panel.ts";
 
 type Internals = {
   invoke(cmd: string, args?: unknown): Promise<unknown>;
@@ -146,11 +148,47 @@ export function launcherTitleBar(): HTMLElement {
   const host = document.createElement("spark-titlebar");
   host.style.cssText = `display: block; position: relative; flex: none; height: ${BAR_H}px;`;
   const root = host.attachShadow({ mode: "open" });
-  const bar = h("div", { class: "bar" }, h("span", { class: "grow" }));
+  // Settings, as on the board: the gear, Ctrl+,, Esc or a press elsewhere closes them.
+  const gear = h("button", { class: "gear", title: "Settings (Ctrl+,)" }, icon("settings", 14));
+  const bar = h("div", { class: "bar" }, h("span", { class: "grow" }), gear);
   const shell = h("div", { class: inSpark ? "titled" : "" }, bar);
   if (inSpark) shell.append(titleBar(bar, null));
   else bar.prepend(h("span", { class: "project" }, "spark"));
-  root.append(h("style", {}, `${THEME}\n:host { all: initial; }\n* { box-sizing: border-box; }\n.grow { flex: 1; min-width: 8px; }\n${TITLE_BAR_STYLE}`), shell);
+  const settings = buildSettingsPanel(gear);
+  root.append(
+    h("style", {}, `${THEME}\n:host { all: initial; }\n* { box-sizing: border-box; }\n.grow { flex: 1; min-width: 8px; }\n${TITLE_BAR_STYLE}\n${settingsStyle(BAR_H)}`),
+    shell,
+    settings.el,
+  );
+  gear.addEventListener("click", () => settings.toggle());
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (isSettingsKey(e)) {
+        e.preventDefault();
+        settings.toggle();
+      } else if (e.key === "Escape" && settings.open) {
+        e.preventDefault();
+        e.stopPropagation();
+        settings.close();
+      }
+    },
+    true,
+  );
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      const path = e.composedPath();
+      if (settings.open && !path.includes(settings.el) && !path.includes(gear)) settings.close();
+    },
+    true,
+  );
+  // No dev server behind the launcher: Spark keeps the settings (settings.rs).
+  if (tauri)
+    void connectSettings({
+      load: () => tauri.invoke("settings_read") as Promise<Record<string, unknown>>,
+      save: (key, value) => void tauri.invoke("settings_write", { key, value }).catch(() => {}),
+    });
   // Its buttons never keep focus, as on the board.
   root.addEventListener("click", (e) => (e.composedPath()[0] as Element).closest?.("button")?.blur());
   return host;

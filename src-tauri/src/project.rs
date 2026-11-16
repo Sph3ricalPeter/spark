@@ -277,7 +277,10 @@ fn start(app: &AppHandle, folder: &Path, report: &dyn Fn(&str)) -> Result<(Child
 
     report("Starting the dev server…");
     let port = free_port()?;
+    // Spark's own settings (the plugin's settings.ts), the same for every project.
+    let settings = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let mut child = command("node", false)
+        .env("SPARK_SETTINGS_DIR", &settings)
         .arg(&vite)
         .arg("--config")
         .arg(&config)
