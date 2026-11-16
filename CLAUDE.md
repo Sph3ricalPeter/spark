@@ -176,7 +176,11 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   included: Plan, Build, Implement changes, Write sample data) plus inlined
   Lucide icons; style Spark's UI with those, not literals; home (`home.ts`)
   uses the same;
-  `index.ts` injects the client and saves `.spark/selection.json` and
+  `index.ts` turns Vite's full reloads into `spark:full-reload` (wrapping
+  `server.ws.send`) and `/@spark/reload`, first on every page, reloads only
+  the frames, never the shell: an edit to main.tsx or index.html, or a new
+  prebundled dependency, never reloads Spark's window; `.spark/` is out of
+  the watcher. It injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Remembered UI (the board's frames, sizes,
   positions and camera, the panel, sidebar and inspector sections) lives in
