@@ -64,6 +64,15 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: swatinem/rust-cache@v2
+      # tauri-build checks every bundled resource exists, and the plugin's
+      # TypeScript comes from node_modules (tauri.conf.json resources).
+      - uses: actions/setup-node@v6
+        if: needs.detect.outputs.tauri == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - if: needs.detect.outputs.tauri == 'true'
+        run: npm ci
       - name: Install Tauri system dependencies
         if: needs.detect.outputs.tauri == 'true'
         run: |
