@@ -448,54 +448,58 @@ export default function spark(): Plugin {
             server.ws.send("spark:log", log);
           }),
       });
-      /** Claude is busy with another chat: the one who asked hears so (nothing was recorded). */
-      const busy = (client: { send: (event: string, payload?: unknown) => void }) => (id: string | null) => {
-        if (id === null) client.send("spark:busy", { chat: ai.running() });
-      };
 
-      server.ws.on("spark:implement", async (data: { ids?: string[] }, client) => {
+      server.ws.on("spark:implement", async (data: { ids?: string[] }) => {
         const log = await loadLog();
         const pending = log.changes.filter((c) => c.status === "pending" && (!data?.ids || data.ids.includes(c.id)));
         if (pending.length === 0) return;
         // The run is a chat in the Chats list: the changes asked for, then Claude's result.
         const what = new Map(pending.map((c) => [c.id, changeLine(c)]));
-        await ai
-          .ask({
-            topic: { kind: "implement", label: "Implement changes" },
-            request: implementRequest(pending),
-            prompt: () => implementPrompt(pending),
-            kind: "implement",
-            ids: pending.map((c) => c.id),
-            reply: (e) => {
-              const bits = [`${e.applied.length} applied · ${e.skipped.length} skipped`, ...(e.cost !== undefined ? [`$${e.cost.toFixed(2)}`] : [])];
-              const skipped = e.skipped.map((x) => `- Skipped ${what.get(x.id) ?? x.id}: ${x.why}`).join("\n");
-              return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped, `_${bits.join(" · ")}_`].filter(Boolean).join("\n\n");
-            },
-          })
-          .then(busy(client));
+        await ai.ask({
+          topic: { kind: "implement", label: "Implement changes" },
+          request: implementRequest(pending),
+          prompt: () => implementPrompt(pending),
+          kind: "implement",
+          ids: pending.map((c) => c.id),
+          // It may have waited behind another run: only what's still pending (and edited since, as it is now).
+          prepare: async () => {
+            const now = (await loadLog()).changes.filter((c) => c.status === "pending" && what.has(c.id));
+            if (!now.length) return "Nothing left to implement: these changes were applied or reverted while this waited.";
+            return { prompt: () => implementPrompt(now), ids: now.map((c) => c.id) };
+          },
+          reply: (e) => {
+            const bits = [`${e.applied.length} applied · ${e.skipped.length} skipped`, ...(e.cost !== undefined ? [`$${e.cost.toFixed(2)}`] : [])];
+            const skipped = e.skipped.map((x) => `- Skipped ${what.get(x.id) ?? x.id}: ${x.why}`).join("\n");
+            return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped, `_${bits.join(" · ")}_`].filter(Boolean).join("\n\n");
+          },
+        });
       });
       // Ask Claude, from the popup on an element: the element's open chat (by its
       // `chat` key), one Claude session that later prompts resume (chats.ts).
       // With no element, a chat of its own.
       // `others`: more elements picked with Shift+click; the chat stays the first one's.
       // `images`: pasted or dropped into the chat box ({ type, data: base64 }); Claude sees them with the request.
-      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string; others?: AskSelection[]; images?: unknown }, client) => {
-        if (ai.busy()) return busy(client)(null);
-        const pending = (await loadLog()).changes.filter((c) => c.status === "pending");
+      // While Claude works on something else, the message waits its turn in its chat (claude.ts).
+      server.ws.on("spark:ask", async (data: { request: string; selection: AskSelection | null; chat?: string; others?: AskSelection[]; images?: unknown }) => {
+        const pendingNow = async () => (await loadLog()).changes.filter((c) => c.status === "pending");
+        const pending = await pendingNow();
         const images = await saveImages(data.images);
         const request = data.request || (images ? "(See the attached image.)" : "");
         if (!request) return;
-        await ai
-          .ask({
-            topic: data.chat ? { element: data.chat, label: data.selection?.label } : { kind: "task", label: data.selection?.label || "Ask Claude" },
-            request: data.request,
-            images,
-            also: data.others?.map((o) => o.label || o.comp || o.tag),
-            prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(request, data.selection, pending, data.others, images?.saved),
-            kind: "ask",
-            ids: pending.map((c) => c.id),
-          })
-          .then(busy(client));
+        await ai.ask({
+          topic: data.chat ? { element: data.chat, label: data.selection?.label } : { kind: "task", label: data.selection?.label || "Ask Claude" },
+          request: data.request,
+          images,
+          also: data.others?.map((o) => o.label || o.comp || o.tag),
+          prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(request, data.selection, pending, data.others, images?.saved),
+          kind: "ask",
+          ids: pending.map((c) => c.id),
+          // The pending changes as they are when its turn comes (a run before it may have applied some).
+          prepare: async () => {
+            const now = await pendingNow();
+            return { prompt: (resumed) => (resumed ? followupPrompt : askPrompt)(request, data.selection, now, data.others, images?.saved), ids: now.map((c) => c.id) };
+          },
+        });
       });
       // The board's Chats list asks for the list when it loads.
       server.ws.on("spark:chats-get", async (_d, client) => client.send("spark:chats", { chats: (await chats.load()).chats, running: ai.running() }));
@@ -503,7 +507,13 @@ export default function spark(): Plugin {
       server.ws.on("spark:chat-new", (data: { chat: string }) => chats.close(data.chat));
       // The Chats list: open an earlier (or resolved) chat again, or resolve one (archive it; Claude can't be answering it).
       server.ws.on("spark:chat-open", (data: { id: string }) => chats.reopen(data.id));
-      server.ws.on("spark:chat-resolve", (data: { id: string }) => (ai.running() === data.id ? undefined : chats.resolve(data.id)));
+      server.ws.on("spark:chat-resolve", async (data: { id: string }) => {
+        if (ai.running() === data.id) return;
+        await ai.cancel(data.id);
+        await chats.resolve(data.id);
+      });
+      // A message waiting its turn is taken back (the chat says so).
+      server.ws.on("spark:chat-cancel", (data: { id: string }) => void ai.cancel(data.id));
       // A chat's element moved (Claude's edit shifted its lines): its chats follow it.
       server.ws.on("spark:chat-move", (data: { from: string; to: string }) => chats.move(data.from, data.to));
       // A component frame's case renamed in place (gallery.ts): rename its export.
@@ -520,33 +530,31 @@ export default function spark(): Plugin {
       });
       // The empty Components view: Claude writes the *.spark.tsx files, in a chat of its own.
       server.ws.on("spark:gallery-generate", (_d, client) =>
-        ai
-          .ask({
-            topic: { kind: "task", label: "Components" },
-            request: "Write the Components view's case files (*.spark.tsx) for this project's components.",
-            prompt: () => galleryPrompt(),
-            kind: "ask",
-            ids: [],
-          })
-          .then(busy(client)),
+        ai.ask({
+          topic: { kind: "task", label: "Components" },
+          request: "Write the Components view's case files (*.spark.tsx) for this project's components.",
+          prompt: () => galleryPrompt(),
+          kind: "ask",
+          ids: [],
+        }).then((id) => client.send("spark:asked", { what: "gallery", id })),
       );
       // An app frame's "Write sample data with Claude": spark.setup.tsx's samples (sample.ts), in a chat of its own.
       server.ws.on("spark:samples-generate", (d: { missing?: unknown }, client) =>
-        ai
-          .ask({
-            topic: { kind: "task", label: "Sample data" },
-            request: "Write sample data for the app's backend calls, so the board's frames can show its screens.",
-            prompt: () => samplesPrompt(Array.isArray(d?.missing) ? d.missing.filter((m): m is string => typeof m === "string").slice(0, 50) : []),
-            kind: "ask",
-            ids: [],
-          })
-          .then(busy(client)),
+        ai.ask({
+          topic: { kind: "task", label: "Sample data" },
+          request: "Write sample data for the app's backend calls, so the board's frames can show its screens.",
+          prompt: () => samplesPrompt(Array.isArray(d?.missing) ? d.missing.filter((m): m is string => typeof m === "string").slice(0, 50) : []),
+          kind: "ask",
+          ids: [],
+        }).then((id) => client.send("spark:asked", { what: "samples", id })),
       );
       // Break down into components (breakdown.ts): a plan Claude writes, reviewed in the board's
       // Components tab, then built one area at a time. .spark/components.json is the record.
       const parts = manifestStore(dir, (m, why) => server.ws.send("spark:components", { manifest: m, why }));
       /** The areas still to build in this Build run, the one building first; null when none is running. */
       let building: string[] | null = null;
+      /** The chat of the area being built (or waiting its turn to). */
+      let buildChat: string | null = null;
       const buildState = () => ({ area: building?.[0] ?? null, left: building?.length ?? 0 });
       const sendBuilding = () => server.ws.send("spark:components-building", buildState());
       server.ws.on("spark:components-get", async (_d, client) => {
@@ -554,8 +562,7 @@ export default function spark(): Plugin {
         client.send("spark:components-building", buildState());
       });
       server.ws.on("spark:components-edit", (d: { edits?: Parameters<typeof parts.edit>[0] }) => (Array.isArray(d?.edits) ? parts.edit(d.edits) : undefined));
-      server.ws.on("spark:breakdown-plan", async (d: { target?: BreakdownTarget; depth?: Depth; wholeApp?: boolean }, client) => {
-        if (ai.busy()) return busy(client)(null);
+      server.ws.on("spark:breakdown-plan", async (d: { target?: BreakdownTarget; depth?: Depth; wholeApp?: boolean }) => {
         const t = d?.target;
         if (!t || typeof t.label !== "string") return;
         const target: BreakdownTarget = {
@@ -568,23 +575,25 @@ export default function spark(): Plugin {
         };
         const depth: Depth = d.depth === "regions" || d.depth === "primitives" ? d.depth : "parts";
         const words = { regions: "regions only", parts: "regions and parts", primitives: "down to primitives" }[depth];
-        const [rules, manifest] = await Promise.all([rulesFor(root), parts.load()]);
-        await parts.dropPlan();
-        await ai
-          .ask({
-            topic: { kind: "task", label: `Break down ${target.label}` },
-            request: `Plan how to break down ${target.label} into components, ${words}${d.wholeApp ? ", with primitives from the whole app" : ""}.`,
-            prompt: () => planPrompt({ rules, target, depth, wholeApp: !!d.wholeApp, manifest, planFile: ".spark/components.plan.json" }),
-            kind: "ask",
-            ids: [],
-            reply: async (e) => {
-              const r = await parts.takePlan();
-              const summary = e.summary || (e.ok ? "" : "Claude stopped.");
-              if (!r) return `${summary}\n\n_No plan came back, so nothing changed._`.trim();
-              return `${summary}\n\n_Planned ${r.planned} component${r.planned === 1 ? "" : "s"} (${r.added} new). Review them in the Components tab, then Build._`.trim();
-            },
-          })
-          .then(busy(client));
+        await ai.ask({
+          topic: { kind: "task", label: `Break down ${target.label}` },
+          request: `Plan how to break down ${target.label} into components, ${words}${d.wholeApp ? ", with primitives from the whole app" : ""}.`,
+          prompt: () => "",
+          kind: "ask",
+          ids: [],
+          // When its turn comes: the record as it is then, and no plan file left over from an earlier run.
+          prepare: async () => {
+            const [rules, manifest] = await Promise.all([rulesFor(root), parts.load()]);
+            await parts.dropPlan();
+            return { prompt: () => planPrompt({ rules, target, depth, wholeApp: !!d.wholeApp, manifest, planFile: ".spark/components.plan.json" }) };
+          },
+          reply: async (e) => {
+            const r = await parts.takePlan();
+            const summary = e.summary || (e.ok ? "" : "Claude stopped.");
+            if (!r) return `${summary}\n\n_No plan came back, so nothing changed._`.trim();
+            return `${summary}\n\n_Planned ${r.planned} component${r.planned === 1 ? "" : "s"} (${r.added} new). Review them in the Components tab, then Build._`.trim();
+          },
+        });
       });
       /** Build the next area in the queue, each its own chat; the queue stops at the first that fails or is stopped. */
       const buildNext = async (): Promise<void> => {
@@ -601,7 +610,7 @@ export default function spark(): Plugin {
         }
         const rules = await rulesFor(root);
         const ids = todo.map((c) => c.id);
-        const chat = await ai.ask({
+        buildChat = await ai.ask({
           topic: { kind: "task", label: `Build ${area}` },
           request: `Build ${todo.length} component${todo.length === 1 ? "" : "s"} in ${area}: ${todo.map((c) => c.name).join(", ")}.`,
           prompt: () => buildPrompt({ rules, area, todo, manifest: m }),
@@ -622,45 +631,51 @@ export default function spark(): Plugin {
             void buildNext();
           },
         });
-        if (chat === null) building = null;
         sendBuilding();
       };
-      server.ws.on("spark:breakdown-build", async (d: { areas?: string[] }, client) => {
-        if (ai.busy() || building) return busy(client)(null);
+      server.ws.on("spark:breakdown-build", async (d: { areas?: string[] }) => {
         const areas = buildAreas(await parts.load()).filter((a) => !Array.isArray(d?.areas) || d.areas.includes(a));
         if (!areas.length) return;
+        // A build going already: the new areas join the end of it.
+        if (building) {
+          for (const a of areas) if (!building.includes(a)) building.push(a);
+          return sendBuilding();
+        }
         building = areas;
         await buildNext();
       });
       // The System tab's token steps: Claude defines the chosen tokens and uses them in place of the literals.
-      server.ws.on("spark:system-apply", async (d: { step?: string; home?: { file: string | null; selector: string } | null; items?: TokenItem[] }, client) => {
-        if (ai.busy() || building) return busy(client)(null);
+      server.ws.on("spark:system-apply", async (d: { step?: string; home?: { file: string | null; selector: string } | null; items?: TokenItem[] }) => {
         const items = (Array.isArray(d?.items) ? d.items : [])
           .filter((i) => i && typeof i.id === "string" && typeof i.name === "string" && /^--[\w-]+$/.test(i.name))
           .map((i) => ({ ...i, values: Array.isArray(i.values) ? i.values.slice(0, 20) : [], places: Array.isArray(i.places) ? i.places.slice(0, 60) : [] }));
         if (!items.length) return;
         const step = typeof d.step === "string" ? d.step.slice(0, 40) : "Tokens";
         const made = items.filter((i) => i.create).length;
-        await ai
-          .ask({
-            topic: { kind: "task", label: `Design system: ${step}` },
-            request: `Use ${items.length} ${step.toLowerCase()} token${items.length === 1 ? "" : "s"}${made ? ` (${made} new)` : ""}: ${items.map((i) => i.name).join(", ")}.`,
-            prompt: () => tokensPrompt({ step, home: d.home ?? null, items }),
-            kind: "ask",
-            ids: [],
-            reply: (e) => {
-              const ok = e.applied.filter((x) => items.some((i) => i.id === x)).length;
-              const skipped = e.skipped.filter((x) => items.some((i) => i.id === x.id));
-              const name = (id: string) => items.find((i) => i.id === id)?.name ?? id;
-              return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped.map((x) => `- Skipped ${name(x.id)}: ${x.why}`).join("\n"), `_${ok} applied · ${skipped.length} skipped${e.cost !== undefined ? ` · $${e.cost.toFixed(2)}` : ""}_`].filter(Boolean).join("\n\n");
-            },
-            then: () => server.ws.send("spark:system-applied", {}),
-          })
-          .then(busy(client));
+        await ai.ask({
+          topic: { kind: "task", label: `Design system: ${step}` },
+          request: `Use ${items.length} ${step.toLowerCase()} token${items.length === 1 ? "" : "s"}${made ? ` (${made} new)` : ""}: ${items.map((i) => i.name).join(", ")}.`,
+          prompt: () => tokensPrompt({ step, home: d.home ?? null, items }),
+          kind: "ask",
+          ids: [],
+          reply: (e) => {
+            const ok = e.applied.filter((x) => items.some((i) => i.id === x)).length;
+            const skipped = e.skipped.filter((x) => items.some((i) => i.id === x.id));
+            const name = (id: string) => items.find((i) => i.id === id)?.name ?? id;
+            return [e.summary || (e.ok ? "Done." : "Claude stopped."), skipped.map((x) => `- Skipped ${name(x.id)}: ${x.why}`).join("\n"), `_${ok} applied · ${skipped.length} skipped${e.cost !== undefined ? ` · $${e.cost.toFixed(2)}` : ""}_`].filter(Boolean).join("\n\n");
+          },
+          then: () => server.ws.send("spark:system-applied", {}),
+        });
       });
-      server.ws.on("spark:stop", () => {
+      // Stop: the run going, or with `build` (the Components tab) the build, also while its area waits its turn.
+      server.ws.on("spark:stop", async (d: { build?: boolean }) => {
+        const area = buildChat;
         // Stopping a build stops the areas after it too.
-        building = null;
+        if (d?.build || (area && ai.running() === area)) building = null;
+        if (d?.build && area && ai.running() !== area) {
+          await ai.cancel(area);
+          return sendBuilding();
+        }
         ai.stop();
       });
       server.ws.on("spark:run-state", (_d, client) => client.send("spark:run-state", { running: ai.busy(), chat: ai.running() }));

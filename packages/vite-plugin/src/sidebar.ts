@@ -56,6 +56,7 @@ export const CHATS_STYLE = `
   .chat-row.closed .st { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sp-line-strong); }
   .chat-row.run .st { background: var(--sp-component); }
   .chat-row.bad .st { background: var(--sp-danger); }
+  .chat-row.queued .st { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sp-accent); }
   .chat-row.busy .st {
     left: 9px; top: 12px; width: 12px; height: 12px; background: none; border: 2px solid var(--sp-line-strong); border-top-color: var(--sp-accent);
     animation: side-spin .8s linear infinite;
@@ -145,7 +146,7 @@ export function sidebar() {
 // The Chats tab
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[]; images?: string[] };
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; resolved?: boolean; kind?: "implement" | "task" };
+type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean; resolved?: boolean; kind?: "implement" | "task"; queued?: boolean };
 
 /** "claude-sonnet-5-5" as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
@@ -197,7 +198,9 @@ export function chatsTab(deps: ChatsDeps) {
           : c.kind === "task"
             ? "Claude is working"
             : "Claude is answering"
-        : last?.ok === false
+        : c.queued
+          ? "Queued"
+          : last?.ok === false
           ? "Failed"
           : c.resolved
             ? "Resolved"
@@ -208,14 +211,17 @@ export function chatsTab(deps: ChatsDeps) {
               : c.closed
                 ? "Closed"
                 : "Open";
-      const cls = `chat-row${run && !c.resolved ? " run" : ""}${c.closed && !run && !c.resolved ? " closed" : ""}${c.resolved ? " resolved" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
+      const cls = `chat-row${c.queued ? " queued" : ""}${run && !c.resolved ? " run" : ""}${c.closed && !run && !c.resolved ? " closed" : ""}${c.resolved ? " resolved" : ""}${busy ? " busy" : ""}${!busy && last?.ok === false ? " bad" : ""}`;
       // Resolve archives the chat (not while Claude is answering it); Reopen brings it back to the list.
       const act = busy
         ? null
-        : c.resolved
+        : c.queued && !c.resolved
+          ? h("button", { class: "act", title: "Take the waiting message back; it starts when Claude is free otherwise" }, icon("x", 11), h("span", {}, "Cancel"))
+          : c.resolved
           ? h("button", { class: "act", title: "Reopen this chat: back in the Chats list, and open on its element" }, icon("rotate-ccw", 11), h("span", {}, "Reopen"))
           : h("button", { class: "act", title: "Resolve this chat: it moves to Resolved, where you can still read and reopen it" }, icon("check", 11), h("span", {}, "Resolve"));
       const resolveOrReopen = () => {
+        if (c.queued && !c.resolved) return deps.send("spark:chat-cancel", { id: c.id });
         if (!c.resolved) {
           expanded.delete(c.id);
           deps.send("spark:chat-resolve", { id: c.id });
@@ -281,7 +287,7 @@ export function chatsTab(deps: ChatsDeps) {
         const transcript = c.messages.map((m) => `${m.role === "user" ? "You" : "Claude"}: ${m.text}`).join("\n\n");
         openMenu(e.clientX, e.clientY, [
           { label: c.resolved ? (expanded.has(c.id) ? "Hide conversation" : "Show conversation") : run ? "Open" : "Open on its element", run: openRow },
-          !busy && { label: c.resolved ? "Reopen" : "Resolve", run: resolveOrReopen },
+          !busy && { label: c.queued && !c.resolved ? "Cancel the waiting message" : c.resolved ? "Reopen" : "Resolve", run: resolveOrReopen },
           "-",
           { label: "Copy conversation", disabled: !c.messages.length, run: () => void navigator.clipboard?.writeText(transcript).catch(() => {}) },
         ]);

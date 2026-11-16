@@ -452,6 +452,9 @@ const ASK_STYLE = `
     .msg.work { display: flex; align-items: center; gap: 8px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
     .msg.work .line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sp-mono); }
     .msg.work button { flex: none; height: 20px; padding: 0 6px; font-size: var(--sp-fs-sm); }
+    .msg.work.queued .icon { flex: none; }
+    .msg.user.queued { opacity: .6; }
+    .msg.work.queued .line { font-family: inherit; }
     /* Images attached to the next message (pasted, dropped or picked), and the ones a sent message carried. */
     .ask-files { display: none; flex-wrap: wrap; gap: 6px; margin: 0 2px 6px; }
     .ask.has-files .ask-files { display: flex; }
@@ -2089,7 +2092,7 @@ const isRunning = () => !!run && !run.done && !run.error;
 
 /** Have Claude apply the pending changes, or only those with these ids. */
 function implement(ids?: string[]) {
-  if (isRunning()) return;
+  // While Claude works, this waits its turn (claude.ts queues it).
   import.meta.hot?.send("spark:implement", ids ? { ids } : {});
 }
 
@@ -2103,7 +2106,8 @@ function clearAsk() {
 
 function sendAsk() {
   const request = askInput.value.trim();
-  if ((!request && !attached.length) || isRunning()) return;
+  // While Claude works on something, the message waits its turn in its chat (claude.ts queues it).
+  if (!request && !attached.length) return;
   const images = attached.length ? { images: attached.map(({ type, data }) => ({ type, data })) } : {};
   // A reply in a chat with no element: it carries on that chat's Claude session.
   const v = viewed();
@@ -2444,7 +2448,7 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
   }
 }
 
-type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[]; images?: string[] };
+type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[]; images?: string[]; queued?: boolean };
 /** One chat with Claude about an element (chats.ts on the dev server). */
 type Chat = {
   id: string;
@@ -2459,6 +2463,8 @@ type Chat = {
   resolved?: boolean;
   /** A chat with no element (an Implement changes run, a task such as "Write sample data with Claude"). */
   kind?: "implement" | "task";
+  /** Its latest message waits for Claude, busy with another run (claude.ts queues them). */
+  queued?: boolean;
 };
 
 /** The chat column shows every chat (the board's list) instead of the selection's conversation. */
@@ -2513,7 +2519,7 @@ function renderChat() {
       ? h("div", { class: `msg claude md${m.ok === false ? " bad" : ""}` }, markdown(m.text))
       : h(
           "div",
-          { class: `msg user${m.images?.length && !m.text ? " only-imgs" : ""}` },
+          { class: `msg user${m.images?.length && !m.text ? " only-imgs" : ""}${m.queued ? " queued" : ""}`, ...(m.queued ? { title: "Queued: Claude gets to this when it's free" } : {}) },
           ...(m.images?.length
             ? [
                 h(
@@ -2538,6 +2544,19 @@ function renderChat() {
       ),
     );
   }
+  // A message waiting its turn: Claude is on another run (or this chat's earlier message) and gets to it next.
+  if (chat?.queued) {
+    const ahead = runChat === chat.id ? "after this answer" : "when Claude finishes what it's on";
+    nodes.push(
+      h(
+        "div",
+        { class: "msg work queued", title: "Claude runs one thing at a time, so edits to the code never collide; this waits its turn" },
+        lucide("clock", 12),
+        h("span", { class: "line grow" }, `Queued: starts ${ahead}`),
+        h("button", { type: "button", title: "Take the waiting message back", click: () => import.meta.hot?.send("spark:chat-cancel", { id: chat.id }) }, "Cancel"),
+      ),
+    );
+  }
   // The chat column is always there: with nothing said yet it says what it's for.
   if (shell && !nodes.length) {
     nodes.push(
@@ -2554,12 +2573,13 @@ function renderChat() {
   askThread.replaceChildren(...nodes);
   if (stick || answering) askThread.scrollTop = askThread.scrollHeight;
   askHint(answering, msgs.length > 0);
-  sendBtn.toggleAttribute("disabled", isRunning());
 }
 
 /** The prompt's placeholder: what Claude is doing, or what you'd ask about (this or, with Shift+click picks, these). */
 function askHint(answering: boolean, replying: boolean) {
-  askInput.placeholder = isRunning() ? (answering ? "Claude is answering…" : "Claude is busy…") : replying ? "Reply…" : also.length ? "Ask Claude to change these…" : "Ask Claude to change this…";
+  // While Claude works, a message still goes: it waits its turn (claude.ts).
+  const ask = also.length ? "Ask Claude to change these" : "Ask Claude to change this";
+  askInput.placeholder = isRunning() ? `${answering || replying ? "Reply" : ask}… (queued)` : replying ? "Reply…" : `${ask}…`;
 }
 
 function resolveChat() {
@@ -3311,10 +3331,9 @@ function renderChanges() {
     { class: "sp-btn primary", title: "Have Claude apply these changes to the code", click: () => implement() },
     "Implement changes",
   ) as HTMLButtonElement;
-  implementBtn.disabled = pending.length === 0 || isRunning();
+  implementBtn.disabled = pending.length === 0;
   footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
   shell?.setChangeCount?.(pending.length);
-  if (scopedImplement) scopedImplement.disabled = isRunning();
   // A run going: what Claude is doing now, and Stop. Its transcript and result are in the Chats list.
   if (run?.kind === "implement" && isRunning()) {
     implementBtn.replaceChildren("Stop");
@@ -3401,9 +3420,6 @@ function changesWithin(scope: Element): Change[] {
   });
 }
 
-/** Its Implement button, kept in step with Claude's runs by renderChanges. */
-let scopedImplement: HTMLButtonElement | null = null;
-
 /**
  * The inspector's "Changes here": the pending changes in the selection's
  * subtree (it and everything inside it), as in the Changes tab, and
@@ -3411,7 +3427,6 @@ let scopedImplement: HTMLButtonElement | null = null;
  */
 function changesHere(scope: Element): HTMLElement {
   const list = newestFirst(changesWithin(scope));
-  scopedImplement = null;
   return section("changes", "Changes here", String(list.length), () => {
     if (list.length === 0) return [h("div", { class: "empty" }, "No pending changes on this or anything inside it.")];
     const btn = h(
@@ -3419,8 +3434,6 @@ function changesHere(scope: Element): HTMLElement {
       { class: "on", title: "Have Claude apply only these changes to the code", click: () => implement(list.map((c) => c.id)) },
       list.length === 1 ? "Implement this change" : `Implement these ${list.length}`,
     ) as HTMLButtonElement;
-    btn.disabled = isRunning();
-    scopedImplement = btn;
     const on = new Set(scope === selected ? overridesOn(scope).map((c) => c.id) : []);
     return [...list.map((c) => changeRow(c, on.has(c.id))), h("div", { class: "here-actions" }, btn)];
   });

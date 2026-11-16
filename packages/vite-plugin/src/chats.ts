@@ -22,6 +22,8 @@ export type ChatMessage = {
   with?: string[];
   /** Images the person attached (pasted or dropped), by file name in `.spark/images` (served at /@spark/images/<name>). */
   images?: string[];
+  /** A message of the person's that waits its turn (claude.ts): it moves below the reply it waited for when it starts. */
+  queued?: boolean;
 };
 
 export type Chat = {
@@ -45,6 +47,8 @@ export type Chat = {
   /** A chat with no element (key `<kind>:<id>`): "implement" is an Implement changes run, "task" any other run
    * (the Components view's "Write them with Claude", an Ask with nothing selected). Absent: an element's chat. */
   kind?: ChatKind;
+  /** Its latest message waits for Claude, busy with another run (claude.ts queues them, in order). */
+  queued?: boolean;
 };
 
 export type ChatKind = "implement" | "task";
@@ -112,9 +116,11 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
           f.chats.push(c);
         }
         if (label) c.label = label;
-        c.messages.push({ role: "user", text, at: Date.now(), ...(also?.length ? { with: also } : {}), ...(images?.length ? { images } : {}) });
+        // Two messages in the same millisecond still get their own `at`: claude.ts finds a queued one by it.
+        const at = Math.max(Date.now(), (c.messages.at(-1)?.at ?? 0) + 1);
+        c.messages.push({ role: "user", text, at, ...(also?.length ? { with: also } : {}), ...(images?.length ? { images } : {}) });
         c.updated = Date.now();
-        return { id: c.id, sessionId: c.sessionId };
+        return { id: c.id, sessionId: c.sessionId, at };
       }),
     /** A chat of its own, with no element (one Implement changes run, one task), with what was asked. */
     begin: (kind: ChatKind, label: string, text: string, images?: string[]) =>
@@ -122,7 +128,7 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
         const id = newId();
         const now = Date.now();
         f.chats.push({ id, key: `${kind}:${id}`, label, kind, sessionId: null, messages: [{ role: "user", text, at: now, ...(images?.length ? { images } : {}) }], created: now, updated: now });
-        return id;
+        return { id, at: now };
       }),
     /** Change one chat by id. */
     update: (id: string, fn: (c: Chat) => void) =>
@@ -155,6 +161,16 @@ export function chatStore(dir: string, broadcast: (file: ChatFile) => void) {
         if (!c) return;
         c.closed = true;
         c.resolved = true;
+      }),
+    /** The dev server started: nothing is queued anymore, so messages left waiting say so. */
+    dropQueued: (text: string) =>
+      change((f) => {
+        for (const c of f.chats) {
+          if (!c.queued) continue;
+          delete c.queued;
+          for (const m of c.messages) delete m.queued;
+          c.messages.push({ role: "claude", text, ok: false, at: Date.now() });
+        }
       }),
     /** An element's key changed (Claude's edit moved its lines): its chats follow. */
     move: (from: string, to: string) =>

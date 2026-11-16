@@ -137,7 +137,10 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   with Claude", anything new) goes through its `ask` and is a chat in the
   Chats list (`chats.ts`, `.spark/chats.json`), an element's chat or one of
   its own (`kind` "implement" / "task"); never call `runner.ts` (the local
-  `claude -p`) directly. Prompts are in `prompt.ts` (Claude ends
+  `claude -p`) directly. One run at a time, so edits never collide, but
+  nothing is turned away: a request while Claude works goes into its chat
+  marked `queued` (Cancel takes it back) and runs in order; its `prepare`
+  reads what changed meanwhile (pending changes) just before it starts. Prompts are in `prompt.ts` (Claude ends
   with `APPLIED <id>` / `SKIPPED <id>: why` lines);
   `gallery.ts` renders a component frame (`?spark=components&file=…`;
   the board lists the files through `/@spark/cases`): a `*.spark.tsx` next to a component exports one

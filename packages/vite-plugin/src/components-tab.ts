@@ -142,7 +142,7 @@ export function componentsTab(deps: ComponentsDeps) {
       deps.send("spark:breakdown-plan", { target, depth, wholeApp: depth === "primitives" && wide });
     });
     const stop = busy ? h("button", { class: "sp-btn", title: "Stop Claude (and the areas still to build)" }, "Stop") : null;
-    stop?.addEventListener("click", () => deps.send("spark:stop", {}));
+    stop?.addEventListener("click", () => deps.send("spark:stop", { build: true }));
     return h(
       "div",
       { class: "bd-head" },

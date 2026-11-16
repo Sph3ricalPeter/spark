@@ -1212,8 +1212,22 @@ zoomLabel.addEventListener("click", () => zoomKey("reset"));
 // frame's device, size and ratio; a component frame's file and layout.
 // Their own element and shadow root, so the client can mount it as is.
 
-/** Claude is writing sample data (the Data row's button, the System tab's Sample data step): pressed once until the run ends. */
+/** Claude is writing sample data (the Data row's button, the System tab's Sample data step): pressed once until its chat has Claude's reply. */
 let samplesWriting = false;
+/** That run's chat, once the server says which (it may wait its turn behind another run). */
+let samplesChat: string | null = null;
+import.meta.hot?.on("spark:asked", (d: { what: string; id: string }) => {
+  if (d.what === "samples") samplesChat = d.id;
+});
+/** The sample data run's chat has Claude's reply (or a failure, or was cancelled): the button can be pressed again. */
+function samplesSettled() {
+  const c = samplesWriting && samplesChat ? chatData.find((x) => x.id === samplesChat) : undefined;
+  if (!c || c.queued || c.messages?.at(-1)?.role !== "claude") return;
+  samplesWriting = false;
+  samplesChat = null;
+  apply();
+  system.framesChanged();
+}
 /** Claude writes sample data, or answers these calls nothing answers yet. */
 function writeSampleData(missing: string[]) {
   if (samplesWriting) return;
@@ -1949,7 +1963,7 @@ canvas.addEventListener("contextmenu", (e) => {
 // ---------------------------------------------------------------------------
 // Chats: every chat with Claude about an element, from the dev server (chats.ts)
 
-type ChatRef = { id: string; key: string; kind?: string };
+type ChatRef = { id: string; key: string; kind?: string; queued?: boolean; messages?: { role: string }[] };
 /** Open a chat in the chat column: on its element (the frame that has it becomes the selected one, in Edit
  * mode), or, for a chat with no element (an Implement changes run, a task), in the selected frame's column. */
 function openChat(chat: ChatRef): boolean {
@@ -2256,17 +2270,11 @@ import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | nu
   chatData = d.chats;
   if (d.running !== undefined) runningChat = d.running;
   showChats();
+  samplesSettled();
 });
 import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   if (e.type === "start") runningChat = e.chat ?? null;
-  else if (e.type === "done" || e.type === "error") {
-    runningChat = null;
-    if (samplesWriting) {
-      samplesWriting = false;
-      apply();
-      system.framesChanged();
-    }
-  }
+  else if (e.type === "done" || e.type === "error") runningChat = null;
   else return;
   showChats();
   // A task ("Write sample data with Claude", the Components view's "Write them with Claude", Break down) has no
@@ -2275,12 +2283,6 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   if (started?.kind === "task") openChat(started);
 });
 import.meta.hot?.send("spark:chats-get", {});
-// Claude was busy with another chat: "Write sample data" can be pressed again.
-import.meta.hot?.on("spark:busy", () => {
-  if (!samplesWriting) return;
-  samplesWriting = false;
-  apply();
-});
 
 // ---------------------------------------------------------------------------
 // Start

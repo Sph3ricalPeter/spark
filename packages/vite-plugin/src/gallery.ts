@@ -502,15 +502,23 @@ function Empty({ h }: { h: typeof ReactNS.createElement }) {
 }
 
 const WRITE = "Write them with Claude";
-/** The run ended (its reply is in its chat) or Claude was busy: the button can be pressed again. */
-function resetWrite(text = WRITE) {
+/** The button's chat (the server says which once it's asked), followed until Claude's reply is in. */
+let writeChat: string | null = null;
+function showWrite(text: string, disabled: boolean) {
   for (const b of document.querySelectorAll<HTMLButtonElement>(".spark-gallery-write")) {
-    if (!b.disabled) continue;
-    b.disabled = false;
+    b.disabled = disabled;
     b.textContent = text;
   }
 }
-import.meta.hot?.on("spark:run", (e: { type: string }) => {
-  if (e.type === "done" || e.type === "error") resetWrite();
+import.meta.hot?.on("spark:asked", (d: { what: string; id: string }) => {
+  if (d.what === "gallery") writeChat = d.id;
 });
-import.meta.hot?.on("spark:busy", () => resetWrite(`Claude is busy in another chat. ${WRITE}`));
+// Queued behind another run, writing, or done (its reply, a failure or a cancel is in the chat): the button says which.
+import.meta.hot?.on("spark:chats", (d: { chats: { id: string; queued?: boolean; messages: { role: string }[] }[] }) => {
+  const c = writeChat ? d.chats.find((x) => x.id === writeChat) : undefined;
+  if (!c) return;
+  if (c.queued) return showWrite("Queued: Claude writes them next…", true);
+  if (c.messages.at(-1)?.role === "user") return showWrite("Claude is writing them…", true);
+  writeChat = null;
+  showWrite(WRITE, false);
+});
