@@ -7,6 +7,7 @@
 // between its min and max and leaves the canvas some room, is remembered per
 // project (state.ts, "panel-widths"), and goes back to its default on a
 // double-click of the edge.
+import { drag } from "./drag.ts";
 import { h } from "./fields.ts";
 import { getState, setState } from "./state.ts";
 
@@ -52,7 +53,8 @@ export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dr
   let saved = edge.def;
   const v = getState<Widths>("panel-widths")?.[edge.name];
   if (typeof v === "number" && Number.isFinite(v) && v > 0) saved = v;
-  let width = edge.def;
+  // Start from the saved width, so the other panels fit around it from the first `show`.
+  let width = Math.round(Math.max(edge.min, Math.min(edge.max, saved)));
   const clamp = (w: number) => Math.round(Math.max(edge.min, Math.min(edge.max, room(), w)));
   const grip = h("div", { class: "grip", title: "Drag to resize, double-click for the default width" });
 
@@ -62,44 +64,46 @@ export function edgeGrip(target: HTMLElement, edge: Edge, room: () => number, dr
     target.style.setProperty(edge.prop, `${width}px`);
     resized?.();
   }
-  function store() {
-    setState("panel-widths", { ...getState<Widths>("panel-widths"), [edge.name]: saved });
+  /** Remember the width; `delay` gathers a drag's many changes into one save. */
+  function store(delay = 0) {
+    setState("panel-widths", { ...getState<Widths>("panel-widths"), [edge.name]: saved }, delay);
   }
 
   grip.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
     grip.classList.add("dragging");
     dragging(true);
     const x0 = e.clientX;
     const w0 = width;
     let frame = 0;
     let next = w0;
-    const move = (ev: PointerEvent) => {
-      next = clamp(w0 + (ev.clientX - x0) * edge.dir);
-      // At most once a frame: the board re-lays out its frames on every change.
-      if (!frame)
-        frame = requestAnimationFrame(() => {
-          frame = 0;
-          saved = next;
-          show();
-        });
-    };
-    const up = () => {
-      cancelAnimationFrame(frame);
-      saved = next;
-      show();
-      store();
-      grip.classList.remove("dragging");
-      dragging(false);
-      grip.removeEventListener("pointermove", move);
-      grip.removeEventListener("pointerup", up);
-      grip.removeEventListener("pointercancel", up);
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", up);
-    grip.addEventListener("pointercancel", up);
+    // drag.ts ends the drag however the release goes (in Spark's window a
+    // pointerup can miss the grip), and the width is saved while dragging
+    // too, so a lost release never loses it.
+    drag(
+      grip,
+      e,
+      (ev) => {
+        next = clamp(w0 + (ev.clientX - x0) * edge.dir);
+        // At most once a frame: the board re-lays out its frames on every change.
+        if (!frame)
+          frame = requestAnimationFrame(() => {
+            frame = 0;
+            saved = next;
+            show();
+            store(300);
+          });
+      },
+      () => {
+        cancelAnimationFrame(frame);
+        saved = next;
+        show();
+        store();
+        grip.classList.remove("dragging");
+        dragging(false);
+      },
+    );
   });
   grip.addEventListener("dblclick", () => {
     saved = edge.def;
