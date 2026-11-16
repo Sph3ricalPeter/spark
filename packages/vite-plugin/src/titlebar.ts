@@ -1,4 +1,6 @@
-// The window's title bar, when the board is open in Spark's own window.
+// The window's title bar: the board's, with a project open, and the
+// launcher's (src/components/TitleBar.tsx mounts `launcherTitleBar`), so
+// both look and work the same.
 //
 // Spark's window has no native frame (decorations off, like dawg), so the
 // board's bar is the title bar, and only that: the spark button goes home (back to the
@@ -13,6 +15,7 @@
 // borrowTauri (mode.ts) keeps them from the app in the frames.
 // The home event's name is in project.rs too (HOME_EVENT).
 import { h } from "./fields.ts";
+import { THEME } from "./theme.ts";
 
 type Internals = {
   invoke(cmd: string, args?: unknown): Promise<unknown>;
@@ -30,21 +33,30 @@ export const inSpark = !!tauri && window === window.top;
 
 /** Room the window buttons take at the bar's right end. */
 export const WINCTL_W = 3 * 46;
+/** The bar's height. */
+export const BAR_H = 36;
 
 const label = () => tauri?.metadata?.currentWindow?.label ?? "main";
 const win = (cmd: string) => void tauri?.invoke(`plugin:window|${cmd}`, { label: label() }).catch(() => {});
 
 export const TITLE_BAR_STYLE = `
   /* Just the title bar: the board's controls are in its toolbar and panels (shell.ts). */
+  .bar {
+    position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 3;
+    display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    background: var(--sp-bg); color: var(--sp-text); border-bottom: 1px solid var(--sp-line);
+    font: var(--sp-fs-md)/1 var(--sp-font); user-select: none; overflow: hidden;
+  }
+  .bar button { font: inherit; height: 26px; border: 1px solid transparent; border-radius: var(--sp-r-sm); cursor: pointer; }
   .titled .bar { right: ${WINCTL_W}px; }
   .home {
-    display: inline-flex; align-items: center; justify-content: center; border-color: transparent; background: transparent;
-    color: #ffd23f; padding: 0; width: 28px; margin-left: -4px;
+    display: inline-flex; align-items: center; justify-content: center; flex: none; border-color: transparent; background: transparent;
+    color: var(--sp-brand); padding: 0; width: 28px; height: 26px; margin-left: -4px; border-radius: var(--sp-r-sm);
   }
-  .home:hover { background: var(--sp-field); }
+  button.home:hover { background: var(--sp-field); }
   .home svg { width: 15px; height: 15px; fill: currentColor; }
   .project {
-    flex: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 600; color: var(--sp-text-strong); padding-right: 4px;
   }
   /* Updates: a quiet version tag, or "Restart to update" once one is downloaded (like the launcher's). */
@@ -68,7 +80,7 @@ export const TITLE_BAR_STYLE = `
     display: grid; place-items: center; color: var(--sp-text-dim);
   }
   .winctl button:hover { background: var(--sp-field); color: var(--sp-text-strong); }
-  .winctl button.close:hover { background: #c42b1c; color: #fff; }
+  .winctl button.close:hover { background: var(--sp-win-close); color: var(--sp-text-strong); }
   .winctl svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
 `;
 
@@ -83,15 +95,22 @@ function glyph(d: string, viewBox = "0 0 10 10"): SVGSVGElement {
   return svg;
 }
 
+/** The spark mark: a lightning bolt. */
+const MARK = "M9.2 1 3.5 9.2h4l-.8 5.8L12.5 6.8h-4z";
+
 /**
  * Make `bar` the window's title bar: the home button and the project's name
  * at its start, its empty parts dragging the window. Returns the window
  * buttons, to mount next to it (they stay put while the bar scrolls).
+ * With no project (the launcher) the mark is just the mark: it's home already.
  */
-export function titleBar(bar: HTMLElement, project: string): HTMLElement {
-  const home = h("button", { class: "home", title: "Home: open another project" }, glyph("M9.2 1 3.5 9.2h4l-.8 5.8L12.5 6.8h-4z", "0 0 16 16"));
-  home.addEventListener("click", () => void tauri?.invoke("plugin:event|emit", { event: HOME_EVENT, payload: null }).catch(() => {}));
-  const name = h("span", { class: "project", "data-drag": "", title: project }, project);
+export function titleBar(bar: HTMLElement, project: string | null): HTMLElement {
+  const home = project
+    ? h("button", { class: "home", title: "Home: open another project" }, glyph(MARK, "0 0 16 16"))
+    : h("span", { class: "home", "data-drag": "", title: "Spark" }, glyph(MARK, "0 0 16 16"));
+  if (project) home.addEventListener("click", () => void tauri?.invoke("plugin:event|emit", { event: HOME_EVENT, payload: null }).catch(() => {}));
+  const title = project ?? "Home";
+  const name = h("span", { class: "project", "data-drag": "", title }, title);
   bar.prepend(home, name);
   for (const el of bar.querySelectorAll(".grow")) el.setAttribute("data-drag", "");
   bar.append(updateButton());
@@ -119,12 +138,30 @@ export function titleBar(bar: HTMLElement, project: string): HTMLElement {
   );
 }
 
+/**
+ * The launcher's title bar (src/components/TitleBar.tsx): the same bar, in a
+ * shadow root of its own with Spark's theme, and no project in it.
+ */
+export function launcherTitleBar(): HTMLElement {
+  const host = document.createElement("spark-titlebar");
+  host.style.cssText = `display: block; position: relative; flex: none; height: ${BAR_H}px;`;
+  const root = host.attachShadow({ mode: "open" });
+  const bar = h("div", { class: "bar" }, h("span", { class: "grow" }));
+  const shell = h("div", { class: inSpark ? "titled" : "" }, bar);
+  if (inSpark) shell.append(titleBar(bar, null));
+  else bar.prepend(h("span", { class: "project" }, "spark"));
+  root.append(h("style", {}, `${THEME}\n:host { all: initial; }\n* { box-sizing: border-box; }\n.grow { flex: 1; min-width: 8px; }\n${TITLE_BAR_STYLE}`), shell);
+  // Its buttons never keep focus, as on the board.
+  root.addEventListener("click", (e) => (e.composedPath()[0] as Element).closest?.("button")?.blur());
+  return host;
+}
+
 // ---------------------------------------------------------------------------
-// Updates, while a project is open (the launcher has its own, src/components/UpdateIndicator.tsx).
-// The board can't use the updater's JS API or call Spark's commands, so it
-// asks through events, like the home button (src-tauri/src/update.rs): a check
-// downloads quietly and answers with the state, and only a click on "Restart
-// to update" installs and relaunches.
+// Updates, the same with a project open and in the launcher. The board can't
+// use the updater's JS API or call Spark's commands, so both ask through
+// events, like the home button (src-tauri/src/update.rs): a check downloads
+// quietly and answers with the state, and only a click on "Restart to update"
+// installs and relaunches.
 
 type BoardUpdate = {
   enabled: boolean;
@@ -138,7 +175,7 @@ const emit = (event: string) => tauri!.invoke("plugin:event|emit", { event, payl
 /** How often the board checks: "spark dev" updates on every push to dev. */
 const CHECK_MS = { release: 60 * 60 * 1000, dev: 10 * 60 * 1000 };
 
-/** "0.0.1-dev.42" → "dev 42", "0.2.0" → "v0.2.0" (as the launcher says it). */
+/** "0.0.1-dev.42" → "dev 42", "0.2.0" → "v0.2.0". */
 function shortVersion(v: string): string {
   const run = /-dev\.(\d+)$/.exec(v)?.[1];
   return run ? `dev ${run}` : `v${v}`;

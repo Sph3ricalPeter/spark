@@ -1,7 +1,9 @@
 // The board's left sidebar (shell.ts): a panel of tabs. Layers: the board's
 // frames and the element tree in each (layers.ts). Chats: every chat
 // with Claude about an element (chats.ts), newest first, with its element,
-// state and model; clicking one opens it on its element. "Resolve" archives a
+// state and model; clicking one opens it in the chat column, on its element
+// (a chat with no element, an Implement changes run or a task, opens there
+// as it is, and a reply carries it on). "Resolve" archives a
 // chat into the Resolved view at the bottom of the list, where it can be read
 // and reopened (chats are never deleted); a right-click on a chat offers the
 // same (open, resolve or reopen) and copying it. Changes: the
@@ -170,7 +172,7 @@ export function chatsTab(deps: ChatsDeps) {
   const el = h("div", { class: "chats" });
   let chats: Chat[] = [];
   let running: string | null = null;
-  /** Chats whose element isn't on the board (and runs, and resolved chats), shown inline instead. */
+  /** Chats whose element isn't on the board, and resolved chats, shown inline instead. */
   const expanded = new Set<string>();
   /** The Chats list, or the Resolved view (chats archived with "Resolve"). */
   let view: "list" | "resolved" = "list";
@@ -187,7 +189,7 @@ export function chatsTab(deps: ChatsDeps) {
       const last = c.messages.at(-1);
       const first = c.messages.find((m) => m.role === "user");
       const busy = running === c.id;
-      // A chat with no element (an Implement changes run, a task): its transcript opens here.
+      // A chat with no element (an Implement changes run, a task): it opens in the column as it is.
       const run = !!c.kind;
       const state = busy
         ? c.kind === "implement"
@@ -221,7 +223,7 @@ export function chatsTab(deps: ChatsDeps) {
         }
         deps.send("spark:chat-open", { id: c.id });
         view = "list";
-        if (run || !deps.open(c)) expanded.add(c.id);
+        if (!deps.open(c)) expanded.add(c.id);
         else expanded.delete(c.id);
         render();
       };
@@ -255,8 +257,8 @@ export function chatsTab(deps: ChatsDeps) {
         );
       }
       const openRow = () => {
-        // Runs and resolved chats are read here, in the list.
-        if (run || c.resolved) {
+        // Resolved chats are read here, in the list.
+        if (c.resolved) {
           if (expanded.has(c.id)) expanded.delete(c.id);
           else expanded.add(c.id);
           render();
@@ -278,7 +280,7 @@ export function chatsTab(deps: ChatsDeps) {
         e.preventDefault();
         const transcript = c.messages.map((m) => `${m.role === "user" ? "You" : "Claude"}: ${m.text}`).join("\n\n");
         openMenu(e.clientX, e.clientY, [
-          { label: run || c.resolved ? (expanded.has(c.id) ? "Hide conversation" : "Show conversation") : "Open on its element", run: openRow },
+          { label: c.resolved ? (expanded.has(c.id) ? "Hide conversation" : "Show conversation") : run ? "Open" : "Open on its element", run: openRow },
           !busy && { label: c.resolved ? "Reopen" : "Resolve", run: resolveOrReopen },
           "-",
           { label: "Copy conversation", disabled: !c.messages.length, run: () => void navigator.clipboard?.writeText(transcript).catch(() => {}) },
@@ -313,15 +315,6 @@ export function chatsTab(deps: ChatsDeps) {
       // Nothing left to show in Resolved (the last one was reopened): back to the list.
       if (view === "resolved" && !chats.some((c) => c.resolved)) view = "list";
       render();
-    },
-    /** Show a chat's transcript open in the list (a run with no element, as it starts). */
-    reveal(id: string) {
-      if (!chats.some((c) => c.id === id && c.kind && !c.resolved)) return false;
-      view = "list";
-      expanded.add(id);
-      render();
-      el.querySelector(`[data-chat="${id}"]`)?.scrollIntoView({ block: "nearest" });
-      return true;
     },
     openCount: () => chats.filter((c) => !c.closed && !c.kind && c.messages.length).length,
   };

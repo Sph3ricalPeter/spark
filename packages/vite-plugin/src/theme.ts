@@ -47,12 +47,35 @@ export const THEME = `
     --sp-link: #8fb4ff;
     --sp-warn: #d9a441;
     --sp-danger: #e5534b;
+    /* The board's canvas, and its dot grid. */
+    --sp-canvas: #0e0f11;
+    --sp-canvas-dot: #ffffff14;
+    /* The spark mark. */
+    --sp-brand: #ffd23f;
+    /* The window's close button on hover (as Windows draws it). */
+    --sp-win-close: #c42b1c;
   }
   /* Native dropdown lists are drawn by the browser: dark, like the rest of
      Spark, and never transparent text from the select they open from. */
   select { color-scheme: dark; }
   select option, select optgroup { background-color: var(--sp-field); color: var(--sp-text); font-style: normal; }
   .icon { flex: none; vertical-align: -2px; }
+  /* Spark's buttons, the same in every panel and in the launcher: .sp-btn is a plain one, .primary the action
+     that matters (Claude's: Plan, Build, Implement changes, Write sample data; Open folder), .ghost a quiet one,
+     .small a compact one, .wide fills its row. */
+  .sp-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; height: 28px; min-width: 0; padding: 0 12px;
+    border: none; border-radius: var(--sp-r-md); background: var(--sp-field); color: var(--sp-text-strong);
+    font: 600 var(--sp-fs-md)/1 var(--sp-font); white-space: nowrap; cursor: pointer;
+  }
+  .sp-btn.primary { background: var(--sp-accent); }
+  .sp-btn.ghost { background: transparent; color: var(--sp-text-dim); }
+  .sp-btn.ghost:not(:disabled):hover { background: var(--sp-field); color: var(--sp-text-strong); }
+  .sp-btn.small { height: 22px; padding: 0 8px; font-size: var(--sp-fs-xs); }
+  .sp-btn.wide { flex: 1 1 auto; width: 100%; }
+  .sp-btn > span { overflow: hidden; text-overflow: ellipsis; }
+  .sp-btn:disabled { opacity: .5; cursor: default; }
+  .sp-btn:not(:disabled):not(.ghost):hover { filter: brightness(1.12); }
   button:has(> .icon:only-child) { display: inline-flex; align-items: center; justify-content: center; }
 `;
 
@@ -95,6 +118,8 @@ const ICONS = {
   "chevron-left": ["m15 18-6-6 6-6"],
   smile: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z", "M8 14s1.5 2 4 2 4-2 4-2", "M9 9h.01", "M15 9h.01"],
   "message-circle": ["M7.9 20A9 9 0 1 0 4 16.1L2 22Z"],
+  folder: ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"],
+  "folder-open": ["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"],
   "git-compare": ["M21 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0", "M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0", "M13 6h3a2 2 0 0 1 2 2v7", "M11 18H8a2 2 0 0 1-2-2V9"],
 } as const;
 

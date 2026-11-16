@@ -20,12 +20,12 @@ Zustand). Release and deploy are ported from dawg and described in
   launcher: `start_project` starts it (one project runs at a time),
   `show_project` navigates the window there, and the board's home button
   emits `spark://home` to come back (the project keeps running).
-  The window is frameless: the launcher's `TitleBar.tsx` and, with a project
-  open, the board's bar (`titlebar.ts`) are the title bar (drag, double-click
-  maximizes, window buttons).
-  `update.rs` keeps updates going with a project open: the board's title
-  bar asks over `spark://update-check` / `spark://update-install` events
-  (the launcher uses the updater's JS API instead), answered with
+  The window is frameless: the title bar is one component, `titlebar.ts`,
+  the board's bar with a project open and the launcher's (`TitleBar.tsx`
+  mounts `launcherTitleBar`) at home (drag, double-click maximizes, window
+  buttons, the update button).
+  `update.rs` is the one updater: the title bar asks over
+  `spark://update-check` / `spark://update-install` events, answered with
   `spark://update-state`; installing still only follows a click.
   `capabilities/project.json` lets that window on the dev server's origin
   use the system dialogs, read-only window/event/path calls and the title
@@ -33,12 +33,13 @@ Zustand). Release and deploy are ported from dawg and described in
   frames, sending plugin commands to Spark (never the title bar's,
   `boardOnly`) and the app's own commands to spark.setup fakes and the
   frame's sample data (`sample.ts`) or an error.
-- `src`: the UI. Design tokens in `src/tokens.css`, never literals in
-  `src/styles.css` or components. `stores/updater-store.ts` checks, downloads
-  and installs updates; `components/UpdateIndicator.tsx` is the title-bar
-  button; `components/TitleBar.tsx` is the frameless window's title bar;
-  `components/Launcher.tsx` and `stores/projects-store.ts` are the
-  launcher (home): open a folder, recent projects.
+- `src`: the launcher (home): `components/Launcher.tsx` and
+  `stores/projects-store.ts` (open a folder, recent projects). It wears the
+  board's design system, not one of its own: `lib/theme.ts` puts theme.ts's
+  `--sp-*` variables on `:root` and registers its font, `components/Icon.tsx`
+  draws theme.ts's icons, buttons are its `.sp-btn`; never literals in
+  `src/styles.css` or components (add a variable to theme.ts).
+  `components/TitleBar.tsx` is the board's title bar (titlebar.ts).
 
 - `packages/vite-plugin`: `spark-vite-plugin`, added to an app's
   `vite.config.ts` to make it editable from inside itself (dev server only).
@@ -93,7 +94,10 @@ Zustand). Release and deploy are ported from dawg and described in
   step with the canvas selection both ways; the client names the tree
   through `ClientHooks.layers`), Components (Break down, below) and Changes tabs (a tab strip at its top). The
   Chats list (`chatsTab`, in its own shadow root) is in the chat column instead, behind its
-  Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); chats are never
+  Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); every chat opens in the
+  column: an element's on its element, one with no element (an Implement changes run, a task such as
+  Write sample data, which opens there as it starts) as it is (`ClientHooks.showChat`, until
+  something is selected or Close), and a reply carries on its session; chats are never
   deleted: "Resolve" archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
@@ -135,8 +139,11 @@ Zustand). Release and deploy are ported from dawg and described in
   prompts and the record; re-running continues from what's recorded;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
   shadow root's :host: Inter via `fonts.ts`, served from `assets/fonts`,
-  a 4-step font scale, 3 radii, a spacing scale, colors) plus inlined Lucide
-  icons; style Spark's UI with those, not literals;
+  a 4-step font scale, 3 radii, a spacing scale, colors), the shared
+  buttons (`.sp-btn`, `.primary` for the action that matters, Claude's
+  included: Plan, Build, Implement changes, Write sample data) plus inlined
+  Lucide icons; style Spark's UI with those, not literals; the launcher
+  uses the same;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
   fields are only ever added). Remembered UI (the board's frames, sizes,

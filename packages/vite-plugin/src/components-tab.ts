@@ -52,19 +52,11 @@ export const COMPONENTS_STYLE = `
   .bd-hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
   .bd-check { display: flex; align-items: center; gap: 6px; color: var(--sp-text); font-size: var(--sp-fs-sm); cursor: pointer; }
   .bd-row-btns { display: flex; gap: 6px; }
-  .bd-btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 12px; border: none;
-    border-radius: var(--sp-r-md); background: var(--sp-field); color: var(--sp-text-strong); font: 600 var(--sp-fs-md)/1 var(--sp-font); cursor: pointer;
-  }
-  .bd-btn.primary { background: var(--sp-accent); color: var(--sp-text-strong); flex: 1; }
-  .bd-btn:disabled { opacity: .5; cursor: default; }
-  .bd-btn:not(:disabled):hover { filter: brightness(1.12); }
   .bd-sum { padding: 8px 12px; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); border-bottom: 1px solid var(--sp-line); }
   .bd-empty { padding: 16px 14px; color: var(--sp-text-dim); line-height: 1.5; }
   .bd-area { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--sp-line); background: var(--sp-surface); }
   .bd-area .nm { flex: 1; min-width: 0; font-weight: 600; color: var(--sp-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bd-area .n { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
-  .bd-area .go { height: 22px; padding: 0 8px; font-size: var(--sp-fs-xs); }
   .bd-area.now .nm::after { content: " · building"; color: var(--sp-component); font-weight: 500; }
   .bd-item { display: flex; gap: 8px; padding: 7px 12px 7px calc(12px + var(--d, 0) * 14px); border-bottom: 1px solid var(--sp-line); cursor: default; }
   .bd-item:hover { background: var(--sp-surface); }
@@ -121,7 +113,7 @@ export function componentsTab(deps: ComponentsDeps) {
     const chip = target
       ? h("span", { class: "chip", title: target.src ?? target.file ?? target.label }, icon("component", 12), h("span", {}, target.label))
       : h("span", { class: "none" }, "Nothing picked");
-    const whole = h("button", { class: "bd-btn", title: "Break down the whole app, from its first app frame" }, "Whole app");
+    const whole = h("button", { class: "sp-btn", title: "Break down the whole app, from its first app frame" }, "Whole app");
     whole.addEventListener("click", () => {
       target = deps.wholeApp();
       render();
@@ -143,13 +135,13 @@ export function componentsTab(deps: ComponentsDeps) {
     box.checked = wide;
     box.addEventListener("change", () => (wide = box.checked));
     const check = h("label", { class: "bd-check", title: "Primitives (buttons, pills, menus) are usually shared by several regions: look for them across the whole app" }, box, "Find primitives across the whole app");
-    const plan = h("button", { class: "bd-btn primary", title: "Claude plans the components (nothing in the code changes yet)" }, icon("layers", 13), "Plan") as HTMLButtonElement;
+    const plan = h("button", { class: "sp-btn primary wide", title: "Claude plans the components (nothing in the code changes yet)" }, icon("layers", 13), "Plan") as HTMLButtonElement;
     plan.disabled = !target || busy;
     plan.addEventListener("click", () => {
       if (!target || busy) return;
       deps.send("spark:breakdown-plan", { target, depth, wholeApp: depth === "primitives" && wide });
     });
-    const stop = busy ? h("button", { class: "bd-btn", title: "Stop Claude (and the areas still to build)" }, "Stop") : null;
+    const stop = busy ? h("button", { class: "sp-btn", title: "Stop Claude (and the areas still to build)" }, "Stop") : null;
     stop?.addEventListener("click", () => deps.send("spark:stop", {}));
     return h(
       "div",
@@ -259,7 +251,7 @@ export function componentsTab(deps: ComponentsDeps) {
       for (const area of areas) {
         const inArea = list.filter((c) => c.area === area);
         const left = inArea.filter((c) => c.status === "planned").length;
-        const go = left ? (h("button", { class: "bd-btn go", title: `Build the ${left} ticked in ${area}` }, "Build") as HTMLButtonElement) : null;
+        const go = left ? (h("button", { class: "sp-btn small", title: `Build the ${left} ticked in ${area}` }, "Build") as HTMLButtonElement) : null;
         if (go) {
           go.disabled = busy;
           go.addEventListener("click", () => deps.send("spark:breakdown-build", { areas: [area] }));
@@ -267,7 +259,7 @@ export function componentsTab(deps: ComponentsDeps) {
         parts.push(h("div", { class: `bd-area${building === area ? " now" : ""}` }, h("span", { class: "nm" }, area), h("span", { class: "n" }, `${inArea.length - left}/${inArea.length}`), go));
         for (const { c, d } of ordered(inArea)) parts.push(row(c, d));
       }
-      const all = h("button", { class: "bd-btn primary", title: "Build every ticked component, one area at a time, Primitives first" }, icon("component", 13), todo ? `Build ${todo} ticked` : "Nothing to build") as HTMLButtonElement;
+      const all = h("button", { class: "sp-btn primary wide", title: "Build every ticked component, one area at a time, Primitives first" }, icon("component", 13), todo ? `Build ${todo} ticked` : "Nothing to build") as HTMLButtonElement;
       all.disabled = busy || !todo;
       all.addEventListener("click", () => deps.send("spark:breakdown-build", {}));
       parts.push(h("div", { class: "bd-foot" }, all));
