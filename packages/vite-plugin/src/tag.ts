@@ -15,7 +15,37 @@
 //
 // Attributes are inserted on the same line as the tag, so line numbers in
 // stack traces and source maps stay right; only columns shift.
-import ts from "typescript";
+//
+// The parser is Spark's own TypeScript, never the project's: TypeScript 7
+// (the native one, what `create vite` installs today) has no JS compiler API,
+// and a plain JS project has no TypeScript at all. The app bundles TypeScript
+// 6's `lib/typescript.js` next to the plugin as `vendor/typescript.cjs`
+// (tauri.conf.json resources); in this repo (the fixture) there is no vendor
+// folder and `typescript` resolves from Spark's own node_modules.
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import type * as TS from "typescript";
+
+let loaded: typeof TS | undefined;
+
+/** TypeScript's compiler API, loaded on first use. */
+function typescript(): typeof TS {
+  if (loaded) return loaded;
+  const require = createRequire(import.meta.url);
+  const vendored = fileURLToPath(new URL("../vendor/typescript.cjs", import.meta.url));
+  const tried: string[] = [];
+  for (const id of existsSync(vendored) ? [vendored, "typescript"] : ["typescript"]) {
+    try {
+      const mod = require(id) as Partial<typeof TS> | undefined;
+      if (typeof mod?.createSourceFile === "function" && mod.ScriptKind) return (loaded = mod as typeof TS);
+      tried.push(`${id}: version ${mod?.version ?? "?"} has no compiler API`);
+    } catch (e) {
+      tried.push(`${id}: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
+  throw new Error(`Spark couldn't load its TypeScript parser (${tried.join("; ")}). Reinstall Spark.`);
+}
 
 /** Components that don't accept arbitrary props. */
 const SKIP = new Set(["Fragment", "StrictMode", "Suspense", "Profiler"]);
@@ -29,7 +59,8 @@ export const ICON_LIBRARY =
   /^(lucide-react|lucide-preact|react-icons\/[\w-]+|@heroicons\/react\/[\w/-]+|@tabler\/icons-react|@phosphor-icons\/react|phosphor-react|react-feather|@radix-ui\/react-icons|react-bootstrap-icons|@mui\/icons-material)$/;
 
 /** Local name → `library:Icon` for this file's icon imports. */
-function iconImports(sf: ts.SourceFile): Map<string, string> {
+function iconImports(sf: TS.SourceFile): Map<string, string> {
+  const ts = typescript();
   const out = new Map<string, string>();
   for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || !st.importClause || st.importClause.isTypeOnly) continue;
@@ -51,12 +82,13 @@ function iconImports(sf: ts.SourceFile): Map<string, string> {
 }
 
 export function tagJsx(code: string, fileName: string, relPath: string): string | null {
+  const ts = typescript();
   const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.JSX;
   const sf = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, kind);
   const inserts: { at: number; text: string }[] = [];
   const icons = iconImports(sf);
 
-  const visit = (node: ts.Node) => {
+  const visit = (node: TS.Node) => {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const insert = tagFor(node, sf, relPath, icons);
       if (insert) inserts.push(insert);
@@ -74,11 +106,12 @@ export function tagJsx(code: string, fileName: string, relPath: string): string 
 }
 
 function tagFor(
-  node: ts.JsxOpeningElement | ts.JsxSelfClosingElement,
-  sf: ts.SourceFile,
+  node: TS.JsxOpeningElement | TS.JsxSelfClosingElement,
+  sf: TS.SourceFile,
   relPath: string,
   icons: Map<string, string>,
 ): { at: number; text: string } | null {
+  const ts = typescript();
   // `<Foo.Bar>` and `<svg:rect>` are left alone.
   if (!ts.isIdentifier(node.tagName)) return null;
   const name = node.tagName.text;
@@ -102,8 +135,9 @@ function tagFor(
 }
 
 /** The name of the nearest function that looks like a component (Capitalized). */
-function enclosingComponent(node: ts.Node): string | null {
-  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+function enclosingComponent(node: TS.Node): string | null {
+  const ts = typescript();
+  for (let n: TS.Node | undefined = node.parent; n; n = n.parent) {
     if (!ts.isFunctionDeclaration(n) && !ts.isFunctionExpression(n) && !ts.isArrowFunction(n)) continue;
     const name = functionName(n);
     if (name && /^[A-Z]/.test(name)) return name;
@@ -111,10 +145,11 @@ function enclosingComponent(node: ts.Node): string | null {
   return null;
 }
 
-function functionName(fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction): string | null {
+function functionName(fn: TS.FunctionDeclaration | TS.FunctionExpression | TS.ArrowFunction): string | null {
+  const ts = typescript();
   if (fn.name) return fn.name.text;
   // const Foo = () => …, or const Foo = memo(() => …) / forwardRef(…)
-  let p: ts.Node = fn.parent;
+  let p: TS.Node = fn.parent;
   while (ts.isCallExpression(p) || ts.isParenthesizedExpression(p)) p = p.parent;
   if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
   return null;

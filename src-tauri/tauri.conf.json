@@ -65,7 +65,9 @@
     },
     "resources": {
       "../packages/vite-plugin/src/*.ts": "plugin/src/",
-      "../packages/vite-plugin/assets/fonts/*": "plugin/assets/fonts/"
+      "../packages/vite-plugin/assets/fonts/*": "plugin/assets/fonts/",
+      "../node_modules/typescript/lib/typescript.js": "plugin/vendor/typescript.cjs",
+      "../node_modules/typescript/LICENSE.txt": "plugin/vendor/typescript.LICENSE.txt"
     }
   }
 }

@@ -8,9 +8,11 @@
 //!
 //! The project doesn't need to list the plugin. Spark ships the plugin's
 //! source as a resource and copies it into `<project>/.spark/plugin`, so its
-//! imports (`vite`, `typescript`) resolve from the project's own
-//! `node_modules`, then starts Vite with a config in `.spark/` that loads the
-//! project's config and adds the plugin. `.spark/` ignores itself in git.
+//! `vite` import resolves from the project's own `node_modules`, then starts
+//! Vite with a config in `.spark/` that loads the project's config and adds
+//! the plugin. `.spark/` ignores itself in git. TypeScript, the JSX tagger's
+//! parser, is the one thing it never takes from the project (TypeScript 7 has
+//! no JS API, a JS app has none): it comes along as `plugin/vendor`.
 //!
 //! One project runs at a time: opening another stops the one before, going
 //! home keeps it running (reopening it is instant), quitting Spark stops it.

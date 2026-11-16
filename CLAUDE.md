@@ -14,7 +14,11 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   logic (`updates_enabled`) and registers the updater only for builds that
   may self-update. `project.rs` opens a project folder (launcher, or
   `spark <folder>`): it copies the Vite plugin (bundled as the `plugin/`
-  resource) into `<project>/.spark/plugin`, starts the project's own Vite
+  resource, with TypeScript 6's `lib/typescript.js` as
+  `plugin/vendor/typescript.cjs`: `tag.ts` parses with that, never the
+  project's TypeScript, since TypeScript 7 has no JS API and JS apps have
+  none; keep Spark's `typescript` devDependency on 6.x) into
+  `<project>/.spark/plugin`, starts the project's own Vite
   with `.spark/vite.config.mjs` (the project's config plus the plugin), and
   shows the dev server in Spark's one window (`main`), in place of the
   launcher: `start_project` starts it (one project runs at a time),
