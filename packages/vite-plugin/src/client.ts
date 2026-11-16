@@ -3271,8 +3271,34 @@ function changesHere(scope: Element): HTMLElement {
 // ---------------------------------------------------------------------------
 // Events. Capture phase, so picking happens before the app sees anything.
 
+/**
+ * Is this event in the text being edited in place? Space or Enter typed there
+ * also count: inside a button they make the browser click the button (a
+ * click with no pointer, detail 0), which would otherwise reach the app.
+ */
+const inEditedText = (e: Event) => {
+  if (!editing || !(e.target instanceof Node)) return false;
+  if (editing.contains(e.target)) return true;
+  return e.type === "click" && (e as MouseEvent).detail === 0 && e.target.contains(editing);
+};
+
+/**
+ * Editing text in place: the event does what the browser does in editable
+ * text (place the caret, select, type) and nothing else. The app never hears
+ * it, so a dropdown's button doesn't toggle and a link doesn't go, and a
+ * click's default (submit a form, follow a link, focus a label's input)
+ * doesn't run either; the caret is placed on pointerdown, before it.
+ */
+function keepInText(e: Event) {
+  e.stopPropagation();
+  if (e.type === "click" || e.type === "auxclick") e.preventDefault();
+}
+
 const swallow = (e: Event) => {
-  if (editing && e.target instanceof Node && editing.contains(e.target)) return false;
+  if (inEditedText(e)) {
+    keepInText(e);
+    return false;
+  }
   if (!picking || !pickable(e.target)) return false;
   e.preventDefault();
   e.stopPropagation();
@@ -3304,7 +3330,6 @@ document.addEventListener("mouseup", swallow, true);
 document.addEventListener(
   "click",
   (e) => {
-    if (editing && e.target instanceof Node && editing.contains(e.target)) return;
     if (!swallow(e) || inDisabled(e.target)) return;
     pick(e);
   },
@@ -3313,7 +3338,7 @@ document.addEventListener(
 document.addEventListener(
   "dblclick",
   (e) => {
-    if (editing && e.target instanceof Node && editing.contains(e.target)) return;
+    if (inEditedText(e)) return keepInText(e);
     // A variant's name renames its case (gallery.ts), in edit mode too.
     if (e.target instanceof Element && e.target.closest(".spark-gallery-name")) return;
     if (!swallow(e)) return;
@@ -3329,6 +3354,28 @@ const keepFromApp = (e: Event) => {
 };
 document.addEventListener("keyup", keepFromApp, true);
 document.addEventListener("keypress", keepFromApp, true);
+// The rest of what editing text sends (typing, IME, focus, a middle click, touch):
+// the browser's alone too, never the app's handlers.
+for (const type of [
+  "beforeinput",
+  "input",
+  "compositionstart",
+  "compositionupdate",
+  "compositionend",
+  "focusin",
+  "focusout",
+  "focus",
+  "blur",
+  "select",
+  "selectstart",
+  "auxclick",
+  "touchstart",
+  "touchend",
+  "touchmove",
+  "dragstart",
+]) {
+  document.addEventListener(type, (e) => inEditedText(e) && keepInText(e), true);
+}
 /** Tab alone switches view/edit; Shift+Tab still walks the app's focus order backwards. */
 function plainTab(e: KeyboardEvent) {
   return e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
@@ -3671,8 +3718,8 @@ function showMenuFor(el: Element, at: { x: number; y: number }) {
 document.addEventListener(
   "contextmenu",
   (e) => {
-    // Editing text in place: the browser's menu (copy, paste, spelling) is the useful one.
-    if (editing && e.target instanceof Node && editing.contains(e.target)) return;
+    // Editing text in place: the browser's menu (copy, paste, spelling) is the useful one, not the app's.
+    if (inEditedText(e)) return keepInText(e);
     if (!picking) return;
     // Spark's own overlay (a handle, a pin) stands for the selection.
     const el = e.target === host ? selected : pickable(e.target);
