@@ -10,8 +10,11 @@
 //   into `.spark/` in the project root: selection.json and changes.json, and
 //   chats.json: the Ask chats, each one Claude session about one element (chats.ts),
 //   and state.json: how the board and panels were left (state-file.ts, state.ts).
+// - Keeps Spark's own settings, the same for every project, in settings.json
+//   in Spark's config folder (settings.ts).
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { searchForWorkspaceRoot, type Plugin } from "vite";
@@ -289,7 +292,26 @@ export default function spark(): Plugin {
         // The other frames keep their copies in step; the sender has it already.
         for (const c of server.ws.clients) if (c !== from) c.send("spark:state", { key: data.key, value: data.value ?? null });
       });
-      server.httpServer?.once("close", () => void state.close());
+      // Spark's own settings (settings.ts), the same in every project: in
+      // Spark's config folder (project.rs passes it), or ~/.spark outside Spark.
+      const settings = stateStore(process.env.SPARK_SETTINGS_DIR || path.join(os.homedir(), ".spark"), "settings.json");
+      server.middlewares.use("/@spark/settings", (req, res, next) => {
+        if (req.method !== "GET") return next();
+        settings.values().then(
+          (values) => {
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify(values));
+          },
+          () => next(),
+        );
+      });
+      server.ws.on("spark:settings", async (data: { key?: unknown; value?: unknown }, from) => {
+        if (typeof data?.key !== "string") return;
+        await settings.set(data.key, data.value);
+        for (const c of server.ws.clients) if (c !== from) c.send("spark:settings", { key: data.key, value: data.value ?? null });
+      });
+      server.httpServer?.once("close", () => void Promise.all([state.close(), settings.close()]));
       server.ws.on("spark:hello", async (_data, client) => {
         let changes = null;
         try {

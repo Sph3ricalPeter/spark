@@ -147,7 +147,13 @@ Zustand). Release and deploy are ported from dawg and described in
   the project's `.spark/state.json`: `state.ts` reads it before a page starts
   (`getState`/`setState`, one key per feature, listed at its top) and
   `state-file.ts` writes it. Never localStorage: each open is a new dev
-  server port, so a new, empty origin. Plan: the "Spark:
+  server port, so a new, empty origin. Spark's own settings, the same in every
+  project (theme, accent, fonts, text size, zoom speeds, glide, grid), live in
+  `settings.json` in Spark's config folder (`project.rs` passes it as
+  `SPARK_SETTINGS_DIR`; `~/.spark` outside Spark): `settings.ts` reads them
+  and puts the looks on each page's root as `--spu-*` variables, which
+  `THEME` reads under its defaults; the board's Settings panel (title bar
+  gear or Ctrl+,) edits them. Plan: the "Spark:
   plan" Claude Doc.
 - `examples/fixture`: a small dawg-like app to develop Spark against
   (`npm run fixture`, port 5179).

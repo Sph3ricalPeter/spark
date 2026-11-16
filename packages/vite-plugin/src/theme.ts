@@ -7,17 +7,18 @@
 // currentColor so they follow the text color; inlined here as path data
 // (no dependency, works offline). Add an icon by copying its paths from
 // lucide's icons/<name>.mjs.
-import { UI_FONT } from "./fonts.ts";
+import { MONO_FONT, UI_FONT } from "./fonts.ts";
 
 export const THEME = `
   :host {
-    /* Type: Inter for UI, the system monospace for values and code. */
-    --sp-font: ${UI_FONT};
-    --sp-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
-    --sp-fs-xs: 10px;
-    --sp-fs-sm: 11px;
-    --sp-fs-md: 12px;
-    --sp-fs-lg: 13px;
+    /* Type: Inter for UI, the system monospace for values and code. The
+       person's settings (settings.ts) can swap either and scale the sizes. */
+    --sp-font: var(--spu-font, ${UI_FONT});
+    --sp-mono: var(--spu-mono, ${MONO_FONT});
+    --sp-fs-xs: calc(10px * var(--spu-text-scale, 1));
+    --sp-fs-sm: calc(11px * var(--spu-text-scale, 1));
+    --sp-fs-md: calc(12px * var(--spu-text-scale, 1));
+    --sp-fs-lg: calc(13px * var(--spu-text-scale, 1));
     /* Radii: fields and buttons, popovers and cards, floating panels. */
     --sp-r-sm: 4px;
     --sp-r-md: 6px;
@@ -27,16 +28,16 @@ export const THEME = `
     --sp-2: 8px;
     --sp-3: 12px;
     --sp-4: 16px;
-    /* Color. */
-    --sp-bg: #16171a;
-    --sp-surface: #1d1f23;
-    --sp-field: #23252a;
-    --sp-line: #2a2c31;
-    --sp-line-strong: #33363c;
-    --sp-text: #d6d8dc;
-    --sp-text-dim: #8a8f98;
-    --sp-text-strong: #fff;
-    --sp-accent: #4f8cff;
+    /* Color: the settings' theme and accent (settings.ts) override these. */
+    --sp-bg: var(--spu-bg, #16171a);
+    --sp-surface: var(--spu-surface, #1d1f23);
+    --sp-field: var(--spu-field, #23252a);
+    --sp-line: var(--spu-line, #2a2c31);
+    --sp-line-strong: var(--spu-line-strong, #33363c);
+    --sp-text: var(--spu-text, #d6d8dc);
+    --sp-text-dim: var(--spu-text-dim, #8a8f98);
+    --sp-text-strong: var(--spu-text-strong, #fff);
+    --sp-accent: var(--spu-accent, #4f8cff);
     /* Components (Figma's purple): component frames on the board. */
     --sp-component: #a77bff;
     /* An instance of a component, or an element inside one (selection colors). */
@@ -67,6 +68,10 @@ const ICONS = {
   x: ["M18 6 6 18", "m6 6 12 12"],
   plus: ["M5 12h14", "M12 5v14"],
   minus: ["M5 12h14"],
+  settings: [
+    "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+    "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  ],
   "app-window": ["M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", "M10 4v4", "M2 8h20", "M6 4v4"],
   "rotate-ccw": ["M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5"],
   braces: [

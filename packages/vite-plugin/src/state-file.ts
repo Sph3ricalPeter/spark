@@ -18,8 +18,9 @@ export type StateFile = { version: 1; values: Record<string, unknown> };
 /** How long writes are gathered before the file is written (zooming sends many). */
 const WRITE_DELAY = 250;
 
-export function stateStore(dir: string) {
-  const file = path.join(dir, "state.json");
+/** `name` is the file in `dir`: state.json, or settings.json for Spark's own settings (index.ts). */
+export function stateStore(dir: string, name = "state.json") {
+  const file = path.join(dir, name);
   let state: Promise<StateFile> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let writing: Promise<unknown> = Promise.resolve();
