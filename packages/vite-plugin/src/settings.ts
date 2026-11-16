@@ -14,15 +14,17 @@
 // Keys, and what they hold (unset is the default):
 //   theme       THEMES below: "dark" (default), "graphite", "midnight", "black"
 //   accent      "#rrggbb": buttons, focus, the selected frame
-//   font        UI font family: "" Inter (Spark's own), "system", or a family name
-//   mono-font   values and code: "" the system monospace, or a family name
+//   font        UI font: a bundled one's id (fonts.ts UI_FONTS; unset is Inter), or
+//               any installed family name (Custom)
+//   mono-font   values and code: a bundled one's id (MONO_FONTS; unset is the
+//               system monospace), or any installed family name
 //   text-scale  multiplier of every UI font size (0.85 to 1.4)
 //   zoom-speed  shell.ts: `{ wheel?: n, pinch?: n }`, multipliers of the mouse
 //               wheel's and the touchpad pinch's zoom (¼ to 4)
 //   zoom-glide  false: a wheel notch jumps instead of gliding
 //   grid        false: no dot grid on the canvas
 // Values are JSON; shapes only grow.
-import { MONO_FONT, UI_FONT } from "./fonts.ts";
+import { MONO_FONT, MONO_FONTS, UI_FONT, UI_FONTS, familyOf, type BundledFont } from "./fonts.ts";
 
 export type ThemeName = "dark" | "graphite" | "midnight" | "black";
 
@@ -162,6 +164,16 @@ export function cleanFamily(name: string) {
   return name.replace(/["'`;{}<>\\]/g, "").trim();
 }
 
+/** The family for a font setting: a bundled font's id (fonts.ts), or any family name typed into Custom. */
+function fontFamily(v: unknown, bundled: BundledFont[]) {
+  if (typeof v !== "string" || !v) return "";
+  const f = bundled.find((b) => b.id === v);
+  if (f) return f.id ? familyOf(f) : "";
+  // Before the fonts were bundled, "system" meant the system UI font.
+  if (v === "system") return "Segoe UI";
+  return cleanFamily(v);
+}
+
 const isColor = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 
 /** The page's `--spu-*` variables for the current settings (only what isn't the default). */
@@ -172,11 +184,10 @@ export function looksCss(): string {
   if (getSetting("grid") === false) vars.push("--spu-canvas-dot: transparent;");
   const accent = getSetting("accent");
   if (isColor(accent)) vars.push(`--spu-accent: ${accent};`);
-  const font = getSetting("font");
-  if (font === "system") vars.push(`--spu-font: system-ui, "Segoe UI", sans-serif;`);
-  else if (typeof font === "string" && cleanFamily(font)) vars.push(`--spu-font: "${cleanFamily(font)}", ${UI_FONT};`);
-  const mono = getSetting("mono-font");
-  if (typeof mono === "string" && cleanFamily(mono)) vars.push(`--spu-mono: "${cleanFamily(mono)}", ${MONO_FONT};`);
+  const font = fontFamily(getSetting("font"), UI_FONTS);
+  if (font) vars.push(`--spu-font: "${font}", ${UI_FONT};`);
+  const mono = fontFamily(getSetting("mono-font"), MONO_FONTS);
+  if (mono) vars.push(`--spu-mono: "${mono}", ${MONO_FONT};`);
   const scale = getSetting("text-scale");
   if (typeof scale === "number" && Number.isFinite(scale) && scale !== 1)
     vars.push(`--spu-text-scale: ${Math.min(TEXT_SCALE.max, Math.max(TEXT_SCALE.min, scale))};`);

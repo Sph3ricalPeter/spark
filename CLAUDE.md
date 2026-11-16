@@ -152,7 +152,8 @@ Zustand). Release and deploy are ported from dawg and described in
   (`RULES`; a project adds its own in `spark.rules.md`, which wins), the
   prompts and the record; re-running continues from what's recorded;
   `theme.ts` is Spark's own design system (`--sp-*` variables on each
-  shadow root's :host: Inter via `fonts.ts`, served from `assets/fonts`,
+  shadow root's :host: Inter via `fonts.ts`, served from `assets/fonts`
+  with the other bundled open fonts Settings offers (`UI_FONTS`, `MONO_FONTS`),
   a 4-step font scale, 3 radii, a spacing scale, colors), the shared
   buttons (`.sp-btn`, `.primary` for the action that matters, Claude's
   included: Plan, Build, Implement changes, Write sample data) plus inlined
