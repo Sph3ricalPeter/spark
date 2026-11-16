@@ -189,7 +189,7 @@ function fieldFor(prop: string): Field | undefined {
 }
 
 /** Which of the inspector's folding sections are open, remembered with the project (state.ts). */
-const sectionsOpen: Record<string, boolean> = { all: false, vars: false, owners: false, rules: false };
+const sectionsOpen: Record<string, boolean> = { changes: true, all: false, vars: false, owners: false, rules: false };
 Object.assign(sectionsOpen, getState<Record<string, boolean>>("sections"));
 
 function fiberOf(el: Element): Fiber | null {
@@ -677,6 +677,7 @@ const STYLE = `${THEME}
     .change.here { background: ${ACCENT}14; margin: 0 -12px; padding: 5px 12px; }
     .change code { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
     .change button { padding: 0 6px; }
+    .here-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-2); }
     .fab {
       position: fixed; right: 12px; bottom: 12px; pointer-events: auto;
       background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); font-weight: 600;
@@ -1807,9 +1808,10 @@ type RunEvent =
 let run: { kind: "implement" | "ask"; lines: string[]; done?: Extract<RunEvent, { type: "done" }>; error?: string } | null = null;
 const isRunning = () => !!run && !run.done && !run.error;
 
-function implement() {
+/** Have Claude apply the pending changes, or only those with these ids. */
+function implement(ids?: string[]) {
   if (isRunning()) return;
-  import.meta.hot?.send("spark:implement", {});
+  import.meta.hot?.send("spark:implement", ids ? { ids } : {});
 }
 
 function sendAsk() {
@@ -2479,6 +2481,7 @@ function renderTarget(el: Element, t: Target) {
         ? `The whole frame. Ask Claude about all of it ${where}; click an element inside to edit that one.`
         : `This variant (case) of the component. Ask Claude about it ${where}; click an element inside to edit that one, Arrow Up for the frame.`,
     ),
+    changesHere(el),
   );
 }
 
@@ -2717,6 +2720,7 @@ function render() {
   for (const f of essentials) body.append(fieldRow(f));
   // Edits in the folded part still show: their categories open on their own.
   const editedRest = FIELDS.flatMap((g) => g.fields).filter((f) => !essentials.includes(f) && (f.kind === "sides" ? SIDES.some((s) => overrides.some((c) => c.property === `${f.prop}-${s}`)) : overrides.some((c) => c.property === f.prop)));
+  body.append(changesHere(el));
   const all = section("all", "All properties", editedRest.length ? `${editedRest.length} changed` : "", () => {
     const out: HTMLElement[] = [];
     for (const { group, fields } of FIELDS) {
@@ -2857,6 +2861,7 @@ function renderChanges() {
   implementBtn.disabled = pending.length === 0 || isRunning();
   footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
   shell?.setChangeCount?.(pending.length);
+  if (scopedImplement) scopedImplement.disabled = isRunning();
   // A run going: what Claude is doing now, and Stop. Its transcript and result are in the Chats list.
   if (run?.kind === "implement" && isRunning()) {
     implementBtn.replaceChildren("Stop");
@@ -2874,40 +2879,98 @@ function renderChanges() {
   }
   const here = new Set(selected ? overridesOn(selected).map((c) => c.id) : []);
   // Newest first: the change you just made is at the top.
-  for (const c of [...pending].sort((a, b) => b.at.localeCompare(a.at))) {
-    const what =
-      c.property === "text"
-        ? `text: "${c.from}" → "${c.to}"`
-        : c.property === "removed"
-          ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
-          : `${c.property}: ${c.from || "unset"} → ${c.to}`;
-    const kind = c.level === "instance" ? `on ${stepLabel(c)}` : c.level === "component" ? "css rule" : "variable";
-    footer.append(
-      h(
-        "div",
-        { class: `change${here.has(c.id) ? " here" : ""}` },
-        h(
-          "div",
-          { class: "what" },
-          h("div", { class: "lvl" }, kind),
-          h("code", {}, what),
-          h("div", { class: "where" }, describeChange(c)),
-          c.level === "instance" && scopeSelect(c),
-        ),
-        h(
-          "button",
-          {
-            title: "Revert",
-            click: () => {
-              revert(c.id);
-              changed();
-            },
-          },
-          lucide("rotate-ccw", 13),
-        ),
-      ),
-    );
+  for (const c of newestFirst(pending)) footer.append(changeRow(c, here.has(c.id)));
+}
+
+const newestFirst = (list: Change[]) => [...list].sort((a, b) => b.at.localeCompare(a.at));
+
+/** One pending change in a list (the Changes tab, the inspector's "Changes here"): what, where, its step, Revert. */
+function changeRow(c: Change, here: boolean): HTMLElement {
+  const what =
+    c.property === "text"
+      ? `text: "${c.from}" → "${c.to}"`
+      : c.property === "removed"
+        ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
+        : `${c.property}: ${c.from || "unset"} → ${c.to}`;
+  const kind = c.level === "instance" ? `on ${stepLabel(c)}` : c.level === "component" ? "css rule" : "variable";
+  return h(
+    "div",
+    { class: `change${here ? " here" : ""}` },
+    h("div", { class: "what" }, h("div", { class: "lvl" }, kind), h("code", {}, what), h("div", { class: "where" }, describeChange(c)), c.level === "instance" && scopeSelect(c)),
+    h(
+      "button",
+      {
+        title: "Revert",
+        click: () => {
+          revert(c.id);
+          changed();
+        },
+      },
+      lucide("rotate-ccw", 13),
+    ),
+  );
+}
+
+/** A rule's selector as it matches at rest: no pseudo-elements or states (`.btn:hover::after` → `.btn`). */
+function restingSelector(sel: string): string {
+  return sel.replace(/::?(focus-visible|focus-within|first-letter|first-line|placeholder|selection|backdrop|before|after|marker|hover|focus|active|visited|target)(?![\w-])/gi, "");
+}
+
+/** Does `scope` or anything inside it match a selector list (as written, or at rest)? */
+function matchesWithin(scope: Element, selector: string): boolean {
+  for (const sel of [selector, restingSelector(selector)]) {
+    try {
+      if (scope.matches(sel) || scope.querySelector(sel)) return true;
+    } catch {
+      // Not a selector the DOM takes (a pseudo-element left over): try the next form.
+    }
   }
+  return false;
+}
+
+/**
+ * The pending changes that change something in `scope` (the element and
+ * everything inside it): overrides covering an element there; CSS rule edits
+ * whose rule matches an element there; and any edit made with an element
+ * there selected (a variable is global, so only those count).
+ */
+function changesWithin(scope: Element): Change[] {
+  const inside = (x: Element) => x === scope || scope.contains(x);
+  const madeHere = (c: Change) => {
+    const src = c.element.src;
+    return !!src && (scope.getAttribute("data-spark-src") === src || !!scope.querySelector(`[data-spark-src="${CSS.escape(src)}"]`));
+  };
+  return allChanges().filter((c) => {
+    if (c.status !== "pending") return false;
+    if (c.level === "instance") return coveredElements(c).some(inside);
+    if (madeHere(c)) return true;
+    return c.level === "component" && !!c.selector && matchesWithin(scope, c.selector);
+  });
+}
+
+/** Its Implement button, kept in step with Claude's runs by renderChanges. */
+let scopedImplement: HTMLButtonElement | null = null;
+
+/**
+ * The inspector's "Changes here": the pending changes in the selection's
+ * subtree (it and everything inside it), as in the Changes tab, and
+ * Implement for just those.
+ */
+function changesHere(scope: Element): HTMLElement {
+  const list = newestFirst(changesWithin(scope));
+  scopedImplement = null;
+  return section("changes", "Changes here", String(list.length), () => {
+    if (list.length === 0) return [h("div", { class: "empty" }, "No pending changes on this or anything inside it.")];
+    const btn = h(
+      "button",
+      { class: "on", title: "Have Claude apply only these changes to the code", click: () => implement(list.map((c) => c.id)) },
+      list.length === 1 ? "Implement this change" : `Implement these ${list.length}`,
+    ) as HTMLButtonElement;
+    btn.disabled = isRunning();
+    scopedImplement = btn;
+    const on = new Set(scope === selected ? overridesOn(scope).map((c) => c.id) : []);
+    return [...list.map((c) => changeRow(c, on.has(c.id))), h("div", { class: "here-actions" }, btn)];
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -98,7 +98,9 @@ Zustand). Release and deploy are ported from dawg and described in
   Chats list (`chatsTab`, in its own shadow root) is in the chat column instead, behind its
   Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); chats are never
   deleted: "Resolve" archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
-  Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
+  Implement changes live in Changes, out of the inspector's way; the inspector's
+  "Changes here" section (`changesHere`) lists just the pending ones in the
+  selection's subtree, with the same rows and Implement for only those. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
   `menu.ts` is the right-click menus (Figma style, drawn by the board so
   they're never clipped by a zoomed frame) and blocks the browser's own
