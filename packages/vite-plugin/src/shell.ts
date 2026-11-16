@@ -118,7 +118,26 @@ type Frame = {
   layout: Layout;
   /** Component frames: the cases are in a column right now. */
   stacked: boolean;
+  /** Component frames: a width or height set on the board (dragged or typed); unset, the frame hugs its cases. */
+  fixW?: number;
+  fixH?: number;
+  /** Component frames: sizes set on the board for its case boxes, by case name; an unset side hugs. */
+  cases?: Record<string, BoxSize>;
+  /** Component frames: the size its content asks for (cases and the overlays they opened), and of the cases alone. */
+  hugW?: number;
+  hugH?: number;
+  casesW?: number;
+  casesH?: number;
+  /**
+   * Component frames: the size of the page inside, bigger than the frame (which
+   * shows its top-left part), so a case's popover or menu has room to open the
+   * way it would in the app instead of being squeezed into the frame. Only grows.
+   */
+  roomW?: number;
+  roomH?: number;
   el: HTMLElement;
+  /** What the board shows of the frame's page: the iframe is cut to the frame's size. */
+  view: HTMLElement;
   name: HTMLElement;
   meta: HTMLElement;
   iframe: HTMLIFrameElement;
@@ -134,6 +153,10 @@ type Frame = {
 
 /** `sample`: the frame's sample data, when one was picked. */
 type SavedApp = { id: string; x: number; y: number; w: number; h: number; preset: string; sample?: string };
+/** A size set on the board; a side left out hugs the content. */
+type BoxSize = { w?: number; h?: number };
+/** A component frame's sizes set on the board: its own, and its case boxes' by case name. */
+type SavedSizes = BoxSize & { cases?: Record<string, BoxSize> };
 type Layout = "auto" | "row" | "column";
 type Camera = { z: number; x: number; y: number };
 /** The board in the project's state.json (state.ts, key "board"); fields are only ever added. */
@@ -142,6 +165,8 @@ type Saved = {
   placed: Record<string, { x: number; y: number }>;
   selected: string;
   layouts?: Record<string, Layout>;
+  /** Component frames' sizes set on the board (and their case boxes'), by file. */
+  sizes?: Record<string, SavedSizes>;
   /** Zoom and pan: the board opens where it was left. */
   camera?: Camera;
   /** 2: the camera is from the window-wide canvas under the panels; before, the canvas started right of an open sidebar. */
@@ -179,10 +204,21 @@ function save(delay = 0) {
     placed: Object.fromEntries(frames.filter((f) => f.kind === "component" && f.placed).map((f) => [f.file, { x: f.x, y: f.y }])),
     selected: selectedId,
     layouts: Object.fromEntries(frames.filter((f) => f.layout !== "auto").map((f) => [f.file, f.layout])),
+    sizes: Object.fromEntries(frames.filter((f) => f.kind === "component" && hasSizes(f)).map((f) => [f.file, sizesOf(f)])),
     camera,
     canvas: 2,
   };
   setState("board", s, delay);
+}
+
+/** A component frame's sizes set on the board, as saved (and as its page reads them). */
+function sizesOf(f: Frame): SavedSizes {
+  const cases = Object.fromEntries(Object.entries(f.cases ?? {}).filter(([, b]) => b.w || b.h));
+  return { ...(f.fixW ? { w: f.fixW } : {}), ...(f.fixH ? { h: f.fixH } : {}), ...(Object.keys(cases).length ? { cases } : {}) };
+}
+
+function hasSizes(f: Frame) {
+  return Object.keys(sizesOf(f)).length > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,22 +295,34 @@ root.append(
     .frame { position: absolute; left: 0; top: 0; }
     /* The selected frame is on top of any it overlaps. */
     .frame.selected { z-index: 1; }
-    .frame iframe {
-      display: block; border: 0; background: var(--sp-text-strong);
+    /* The frame's page, cut to the frame's size (a component frame's page is bigger: room for its overlays). */
+    .frame .view {
+      position: relative; overflow: hidden; background: var(--sp-text-strong);
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) var(--sp-line), 0 12px 40px #0008;
     }
-    .frame.component iframe { background: transparent; }
+    .frame iframe { display: block; border: 0; background: transparent; width: 100%; height: 100%; }
+    .frame.component .view { background: transparent; }
+    /* A component frame resizes from its right and bottom edges, just outside it; double-click one to fit it to its cases again. */
+    .frame .rs { position: absolute; z-index: 1; }
+    .frame .rs.e { left: 100%; top: 0; bottom: 0; width: calc(8px / var(--z, 1)); cursor: ew-resize; }
+    .frame .rs.s { top: 100%; left: 0; right: 0; height: calc(8px / var(--z, 1)); cursor: ns-resize; }
+    .frame .rs.se { left: 100%; top: 100%; width: calc(10px / var(--z, 1)); height: calc(10px / var(--z, 1)); cursor: nwse-resize; }
+    .frame.selected .rs.se::after {
+      content: ""; position: absolute; left: 0; top: 0; width: calc(7px / var(--z, 1)); height: calc(7px / var(--z, 1));
+      border-right: calc(1.5px / var(--z, 1)) solid var(--sp-component); border-bottom: calc(1.5px / var(--z, 1)) solid var(--sp-component);
+      opacity: .7;
+    }
     /* The selected frame: a faint ring, so it never reads as a selected element. */
-    .edit-mode .frame.selected iframe {
+    .edit-mode .frame.selected .view {
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) color-mix(in srgb, var(--sp-accent) 45%, transparent), 0 12px 40px #0008;
     }
     /* View mode: the selected frame (where the bar, the panel and the keys go) has a dashed outline. */
-    .shell:not(.edit-mode) .frame.selected iframe {
+    .shell:not(.edit-mode) .frame.selected .view {
       outline: calc(1px / var(--z, 1)) dashed color-mix(in srgb, var(--sp-accent) 60%, transparent);
       outline-offset: calc(4px / var(--z, 1));
     }
-    .shell:not(.edit-mode) .frame.component.selected iframe { outline-color: color-mix(in srgb, var(--sp-component) 60%, transparent); }
-    .moving .frame iframe { pointer-events: none; }
+    .shell:not(.edit-mode) .frame.component.selected .view { outline-color: color-mix(in srgb, var(--sp-component) 60%, transparent); }
+    .moving .frame iframe, .resizing .frame iframe { pointer-events: none; }
     /* The frame's title: above it, at a constant on-screen size. */
     .ftitle {
       position: absolute; left: 0; bottom: 100%; display: flex; align-items: center; gap: 8px;
@@ -287,7 +335,7 @@ root.append(
     .frame.selected .ftitle { color: var(--sp-accent); }
     .frame.component .ftitle { color: color-mix(in srgb, var(--sp-component) 75%, transparent); }
     .frame.component.selected .ftitle { color: var(--sp-component); }
-    .edit-mode .frame.component.selected iframe {
+    .edit-mode .frame.component.selected .view {
       box-shadow: 0 0 0 calc(1px / var(--z, 1)) color-mix(in srgb, var(--sp-component) 55%, transparent), 0 12px 40px #0008;
     }
     .ftitle button {
@@ -495,8 +543,9 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
   // App frames run the real app at a chosen size; component frames render
   // cases with mock data and hug them. Each kind has its own icon and color.
   const title = h("div", { class: "ftitle" }, icon(kind === "app" ? "app-window" : "component", 12), name, meta);
-  const el = h("div", { class: `frame ${kind}` }, title, iframe);
-  const f: Frame = { id, kind, file, x: 0, y: 0, w: kind === "app" ? 1280 : 320, h: kind === "app" ? 720 : 160, preset: "custom", placed: false, layout: "auto", stacked: false, el, name, meta, iframe, ...at };
+  const view = h("div", { class: "view" }, iframe);
+  const el = h("div", { class: `frame ${kind}` }, title, view);
+  const f: Frame = { id, kind, file, x: 0, y: 0, w: kind === "app" ? 1280 : 320, h: kind === "app" ? 720 : 160, preset: "custom", placed: false, layout: "auto", stacked: false, el, view, name, meta, iframe, ...at };
   if (kind === "app") {
     if (id !== "app-1") {
       const close = h("button", { title: "Remove this frame" }, "×");
@@ -512,11 +561,70 @@ function makeFrame(kind: Frame["kind"], id: string, file: string, at: Partial<Fr
     flip.addEventListener("pointerdown", (e) => e.stopPropagation());
     flip.addEventListener("click", () => setLayout(f, f.stacked ? "row" : "column"));
     title.append(flip);
+    for (const dir of ["e", "s", "se"] as const) {
+      const grip = h("div", { class: `rs ${dir}`, title: "Drag to resize; double-click to fit the cases" });
+      grip.addEventListener("pointerdown", (e) => resizeFrame(f, dir, e as PointerEvent));
+      grip.addEventListener("dblclick", () => fitFrame(f, dir === "e" ? "w" : dir === "s" ? "h" : "both"));
+      el.append(grip);
+    }
   }
   title.addEventListener("pointerdown", (e) => moveFrame(f, e as PointerEvent));
   stage.append(el);
   iframe.src = kind === "app" ? appUrl(f.sample) : componentUrl(file, f.layout);
   return f;
+}
+
+/** The component frame's page lays its cases out again (a size set on the board changed). */
+function arrangeCases(f: Frame) {
+  try {
+    (f.iframe.contentWindow as (Window & { __sparkArrange?: () => void }) | null)?.__sparkArrange?.();
+  } catch {
+    // Off-origin or reloading: it reads the sizes as it loads.
+  }
+}
+
+/** The size a component frame shows: what was set on the board, else what its content asks for. */
+function hug(f: Frame) {
+  f.w = f.fixW ?? Math.max(80, Math.ceil(f.hugW ?? f.w));
+  f.h = f.fixH ?? Math.max(40, Math.ceil(f.hugH ?? f.h));
+}
+
+/** Drag a component frame's right or bottom edge (or the corner): it keeps that size, and its cases wrap to the width. */
+function resizeFrame(f: Frame, dir: "e" | "s" | "se", e: PointerEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  selectFrame(f);
+  shellEl.classList.add("resizing");
+  const w0 = f.w;
+  const h0 = f.h;
+  const cx = e.clientX;
+  const cy = e.clientY;
+  const move = (ev: PointerEvent) => {
+    if (dir !== "s") f.fixW = Math.max(80, Math.round(w0 + (ev.clientX - cx) / z));
+    if (dir !== "e") f.fixH = Math.max(40, Math.round(h0 + (ev.clientY - cy) / z));
+    hug(f);
+    arrangeCases(f);
+    apply();
+  };
+  const up = () => {
+    shellEl.classList.remove("resizing");
+    pushBelow(f);
+    save();
+    apply();
+  };
+  drag(e.currentTarget as HTMLElement, e, move, up);
+}
+
+/** A component frame hugs its cases again (one side or both); `cases` also lets every case box fit its content. */
+function fitFrame(f: Frame, side: "w" | "h" | "both", cases = false) {
+  if (side !== "h") f.fixW = undefined;
+  if (side !== "w") f.fixH = undefined;
+  if (cases) f.cases = {};
+  hug(f);
+  arrangeCases(f);
+  save();
+  apply();
 }
 
 /** Cases in a row or a column, for this component frame from now on. */
@@ -626,7 +734,9 @@ function syncComponents(files: string[]) {
     if (frames.some((f) => f.kind === "component" && f.file === file)) continue;
     const p = placed[file];
     const layout = loaded.layouts?.[file] ?? "auto";
-    frames.push(makeFrame("component", `c:${file}`, file, { layout, ...(p ? { x: p.x, y: p.y, placed: true } : {}) }));
+    const sz = loaded.sizes?.[file];
+    const sizes = { fixW: sz?.w || undefined, fixH: sz?.h || undefined, cases: { ...sz?.cases } };
+    frames.push(makeFrame("component", `c:${file}`, file, { layout, ...sizes, ...(p ? { x: p.x, y: p.y, placed: true } : {}) }));
   }
   if (!frames.some((f) => f.id === selectedId)) selectedId = frames[0].id;
   apply();
@@ -709,6 +819,24 @@ function layout() {
   }
 }
 
+/**
+ * The page inside a component frame: the cases' size plus ROOM on the right and
+ * below, in steps of ROOM_STEP, never shrinking. Popovers, menus and selects
+ * check the page's edges (Radix, floating-ui) and squeeze or flip to stay
+ * inside; this gives them the room they'd have in the app, and the frame then
+ * grows to show them (the gallery measures them). The cases alone decide it,
+ * not the overlays, so an overlay never resizes the page it's measured in
+ * (Radix closes a select when the page resizes).
+ */
+function roomFor(f: Frame) {
+  const want = (n: number) => Math.ceil((n + ROOM) / ROOM_STEP) * ROOM_STEP;
+  f.roomW = Math.max(f.roomW ?? 0, want(Math.max(f.casesW ?? 0, f.fixW ?? 0, 320)));
+  f.roomH = Math.max(f.roomH ?? 0, want(Math.max(f.casesH ?? 0, f.fixH ?? 0, 160)));
+  return { w: f.roomW, h: f.roomH };
+}
+const ROOM = 480;
+const ROOM_STEP = 320;
+
 /** Room between stacked frames, for the title above each. */
 const ROW_GAP = GAP / 2;
 
@@ -747,8 +875,14 @@ function apply() {
   applyCamera();
   for (const f of frames) {
     f.el.style.transform = `translate(${f.x}px, ${f.y}px)`;
-    f.iframe.style.width = `${f.w}px`;
-    f.iframe.style.height = `${f.h}px`;
+    f.view.style.width = `${f.w}px`;
+    f.view.style.height = `${f.h}px`;
+    if (f.kind === "component") {
+      // Its page has room past the frame's edges for the overlays its cases open.
+      const room = roomFor(f);
+      f.iframe.style.width = `${room.w}px`;
+      f.iframe.style.height = `${room.h}px`;
+    }
     f.el.classList.toggle("selected", f === sel);
     if (f.kind === "app") {
       const apps = frames.filter((x) => x.kind === "app");
@@ -1125,8 +1259,19 @@ function frameProperties() {
     h("div", { class: "actions" }, writeSamples),
     h("div", { class: "actions" }, remove),
   );
-  const comp = h("div", {}, row("File", file), row("Cases", layoutSel), row("Size", meta.cloneNode() as HTMLElement));
-  const compSize = comp.querySelector(".meta") as HTMLElement;
+  // A component frame hugs its cases unless a size is typed (or its edge dragged on the board).
+  const cwIn = h("input", { title: "Width (px): the cases wrap to it. Empty: hug the cases", inputmode: "numeric", placeholder: "Hug" }) as HTMLInputElement;
+  const chIn = h("input", { title: "Height (px). Empty: hug the cases", inputmode: "numeric", placeholder: "Hug" }) as HTMLInputElement;
+  const fitBtn = h("button", { class: "ib fit", title: "Fit to content: the frame hugs its cases, and every variant box fits its own again" }, icon("rotate-ccw", 13));
+  const compHint = h("div", { class: "hint below" });
+  const comp = h(
+    "div",
+    {},
+    row("File", file),
+    row("Cases", layoutSel),
+    row("Size", h("label", { class: "dim" }, h("i", {}, "W"), cwIn), h("label", { class: "dim" }, h("i", {}, "H"), chIn), fitBtn),
+    compHint,
+  );
   r.append(
     h(
       "style",
@@ -1163,6 +1308,8 @@ function frameProperties() {
       button.danger { background: transparent; border-color: transparent; color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
       button.danger:hover { color: var(--sp-danger); border-color: var(--sp-line-strong); }
       .hint { color: var(--sp-text-dim); font-size: var(--sp-fs-sm); }
+      .hint.below { padding: 0 0 2px 72px; }
+      .dim.hug input { color: var(--sp-text-dim); }
       .missing { padding: 2px 0 2px 72px; color: var(--sp-warn); font-size: var(--sp-fs-sm); overflow-wrap: anywhere; }
       .missing:empty { display: none; }
       .missing code { font: var(--sp-fs-xs) var(--sp-mono); }
@@ -1182,6 +1329,35 @@ function frameProperties() {
     if (shown?.kind === "app" && nw > 0 && nh > 0) setSize(shown, nw, nh);
     else apply();
   }
+  /** A typed component frame size: a number keeps it, empty hugs the cases again. */
+  function typedComp() {
+    if (shown?.kind !== "component") return;
+    const n = (i: HTMLInputElement) => {
+      const v = parseInt(i.value, 10);
+      return v > 0 ? v : undefined;
+    };
+    shown.fixW = n(cwIn) && Math.max(80, n(cwIn)!);
+    shown.fixH = n(chIn) && Math.max(40, n(chIn)!);
+    hug(shown);
+    arrangeCases(shown);
+    pushBelow(shown);
+    save();
+    apply();
+  }
+  for (const input of [cwIn, chIn]) {
+    input.addEventListener("change", typedComp);
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" || e.key === "Escape") input.blur();
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const d = (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1);
+        input.value = String((parseInt(input.value, 10) || (input === cwIn ? shown?.w : shown?.h) || 0) + d);
+        typedComp();
+      }
+    });
+  }
+  fitBtn.addEventListener("click", () => shown?.kind === "component" && fitFrame(shown, "both", true));
   for (const input of [wIn, hIn]) {
     input.addEventListener("change", typed);
     input.addEventListener("keydown", (e) => {
@@ -1258,7 +1434,22 @@ function frameProperties() {
         file.textContent = f.file.replace(/^\//, "") || "No case files yet";
         file.title = file.textContent;
         layoutSel.value = f.layout;
-        compSize.textContent = `${f.w} × ${f.h}`;
+        // A hugging side shows its size dimmed; typing one fixes it.
+        for (const [input, fixed, size] of [
+          [cwIn, f.fixW, f.w],
+          [chIn, f.fixH, f.h],
+        ] as const) {
+          if (r.activeElement !== input) input.value = String(size);
+          input.parentElement!.classList.toggle("hug", !fixed);
+        }
+        const boxes = Object.keys(f.cases ?? {}).length;
+        fitBtn.toggleAttribute("disabled", !f.fixW && !f.fixH && !boxes);
+        compHint.textContent =
+          f.fixW || f.fixH
+            ? `Fixed ${f.fixW ? "width" : ""}${f.fixW && f.fixH ? " and " : ""}${f.fixH ? "height" : ""}${boxes ? `, ${boxes} variant box${boxes > 1 ? "es" : ""} sized` : ""}. Drag its edges to resize.`
+            : boxes
+              ? `Hugs its cases; ${boxes} variant box${boxes > 1 ? "es" : ""} sized. Drag its edges to resize.`
+              : "Hugs its cases. Drag its right or bottom edge to resize.";
       }
     },
   };
@@ -1552,18 +1743,46 @@ const api: ShellApi = {
     const box = hooks.selectSource(src);
     if (box) bringIntoView(f, box);
   },
-  contentSize(win, w, hh, stacked) {
+  boxSizes(win) {
+    const f = frameOf(win);
+    return f?.kind === "component" ? sizesOf(f) : {};
+  },
+  setCaseSize(win, name, size, done = true) {
+    const f = frameOf(win);
+    if (!f || f.kind !== "component") return;
+    const cases = { ...f.cases };
+    const b = { w: size?.w ? Math.max(1, Math.round(size.w)) : undefined, h: size?.h ? Math.max(1, Math.round(size.h)) : undefined };
+    if (b.w || b.h) cases[name] = b;
+    else delete cases[name];
+    f.cases = cases;
+    arrangeCases(f);
+    if (done) save();
+  },
+  view(win) {
+    const f = frameOf(win);
+    return f?.kind === "component" ? { w: f.w, h: f.h } : null;
+  },
+  contentSize(win, w, hh, stacked, cases) {
     const f = frameOf(win);
     if (!f || f.kind !== "component") return;
     f.stacked = !!stacked;
     const flip = f.el.querySelector(".flip");
     if (flip) flip.textContent = f.stacked ? "↕ Stacked" : "↔ Row";
-    const nw = Math.max(80, Math.ceil(w));
-    const nh = Math.max(40, Math.ceil(hh));
-    if (nw === f.w && nh === f.h) return;
-    const grew = nw > f.w || nh > f.h;
-    f.w = nw;
-    f.h = nh;
+    f.hugW = w;
+    f.hugH = hh;
+    if (cases) {
+      f.casesW = cases.w;
+      f.casesH = cases.h;
+    }
+    const was = { w: f.w, h: f.h, rw: f.roomW, rh: f.roomH };
+    hug(f);
+    roomFor(f);
+    if (f.w === was.w && f.h === was.h) {
+      // The cases grew past the room their page has: it gets more.
+      if (f.roomW !== was.rw || f.roomH !== was.rh) apply();
+      return;
+    }
+    const grew = f.w > was.w || f.h > was.h;
     if (grew && f.placed) {
       pushBelow(f);
       save();
@@ -1671,6 +1890,11 @@ function frameMenuOf(f: Frame): MenuEntry[] {
       },
     },
     f.kind === "component" && { label: f.stacked ? "Cases in a row" : "Stack cases", run: () => setLayout(f, f.stacked ? "row" : "column") },
+    f.kind === "component" && {
+      label: "Fit to content",
+      disabled: !hasSizes(f),
+      run: () => fitFrame(f, "both", true),
+    },
     "-",
     f.kind === "app" && { label: "Add frame", run: addApp },
     f.kind === "app" && f.id !== "app-1" && apps > 1 && { label: "Remove frame", danger: true, run: () => removeFrame(f) },
@@ -1885,7 +2109,7 @@ function outline(find: ((win: Window) => Element[]) | null) {
       if (!r.width && !r.height) continue;
       // Clipped to the frame: what scrolled out of it isn't drawn outside it.
       const x0 = Math.max(0, r.left), y0 = Math.max(0, r.top);
-      const x1 = Math.min(f.iframe.clientWidth, r.right), y1 = Math.min(f.iframe.clientHeight, r.bottom);
+      const x1 = Math.min(f.w, r.right), y1 = Math.min(f.h, r.bottom);
       if (x1 <= x0 || y1 <= y0) continue;
       const b = h("div");
       b.style.cssText = `left: ${f.x + f.iframe.offsetLeft + x0}px; top: ${f.y + f.iframe.offsetTop + y0}px; width: ${x1 - x0}px; height: ${y1 - y0}px;`;

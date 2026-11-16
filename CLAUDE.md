@@ -135,7 +135,19 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   `gallery.ts` renders a component frame (`?spark=components&file=…`;
   the board lists the files through `/@spark/cases`): a `*.spark.tsx` next to a component exports one
   function per case, rendered alone with the app's global CSS and React
-  (each case's box contains its absolute/fixed parts and grows to hold them);
+  (each case's box contains its absolute/fixed parts and grows to hold them,
+  and the overlays a case portals out, a Radix or floating-ui popover, menu or
+  select, found by its open trigger: the frame's page is bigger than the frame
+  (`roomFor` in shell.ts: the cases plus room right and below, only growing,
+  never sized by the overlays, since Radix closes a select on resize), so
+  overlays open unsqueezed, and the frame, cut to its size by `.view`, grows to
+  show them; the client clamps to `ShellApi.view`, not the window);
+  a component frame hugs its cases unless its right/bottom edge is dragged or
+  W/H typed in its inspector (the cases wrap to a set width), and a variant
+  box resizes from its handles in edit mode or its inspector's box W/H
+  ("hug" fits it); both are board-only (`sizes` in the board state,
+  `ShellApi.boxSizes`/`setCaseSize`), never written to the app, and "Fit to
+  content" (inspector, frame menu, double-click an edge) clears them;
   an optional root `spark.setup.tsx` exports a default wrapper and `tauri`
   fakes for `invoke`; the empty view has Claude write the files;
   `sample.ts` is sample data, the app frames' mock backend: spark.setup's

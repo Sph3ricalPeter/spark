@@ -50,6 +50,8 @@ const STYLE = `
   html.spark-one, html.spark-one body { overflow: hidden !important; }
   .spark-gallery.one .spark-gallery-file { margin: 0; }
   .spark-gallery.one .spark-gallery-cases { flex-wrap: nowrap; }
+  /* A frame given a width (dragged on the board, or typed): the cases wrap to it. */
+  .spark-gallery.one.fixed .spark-gallery-cases { flex-wrap: wrap; }
   .spark-gallery.one.stack .spark-gallery-cases { flex-direction: column; }
   .spark-gallery.one .spark-gallery-empty { margin: 0; }
   .spark-gallery-file { margin: 0 0 40px; }
@@ -78,15 +80,180 @@ const STYLE = `
   .spark-gallery-empty button:disabled { opacity: 0.6; cursor: default; }
 `;
 
+/** A component frame's sizes the person set on the board (shell.ts), in px; a missing one hugs. */
+export type BoxSizes = { w?: number; h?: number; cases?: Record<string, { w?: number; h?: number }> };
+
+/** A box that's the whole viewport (a modal's backdrop): it says nothing about where the overlay is. */
+function fullScreen(r: DOMRect) {
+  return r.left <= 0.5 && r.top <= 0.5 && r.width >= innerWidth - 1 && r.height >= innerHeight - 1;
+}
+
+/** Spark's own elements and what never draws. */
+const SKIP = /^(SCRIPT|STYLE|LINK|TEMPLATE|NOSCRIPT|META)$/;
+
+/** Clear: no alpha (transparent, rgba(…, 0)). */
+const clear = (c: string) => c === "transparent" || /^rgba?\(.*[,/]\s*0(\.0*)?\)$/.test(c);
+
 /**
- * A case whose component is positioned absolutely or fixed (a readout, a
- * popover) takes no room in its box: grow the box to hold it, so the cases
- * don't pile up on each other. Only parts that stick out past the box count,
- * so a part sized to the box (width: 100%) never makes it grow.
+ * Does the element draw anything itself (a fill, a border, a shadow, text, an
+ * image or a control)? Wrappers that only place an overlay (Radix's popper
+ * wrapper, its select's full-height positioner) don't, so they don't count.
  */
-function fitStages(root: HTMLElement) {
-  for (const stage of Array.from(root.querySelectorAll<HTMLElement>(".spark-gallery-stage"))) {
+function paints(n: Element, cs: CSSStyleDeclaration) {
+  if (Number(cs.opacity) === 0) return false;
+  if (/^(IMG|SVG|CANVAS|VIDEO|INPUT|TEXTAREA|SELECT|BUTTON|IFRAME|PICTURE|HR)$/i.test(n.tagName)) return true;
+  if (!clear(cs.backgroundColor) || cs.backgroundImage !== "none" || cs.boxShadow !== "none") return true;
+  const border = (w: string, st: string, c: string) => parseFloat(w) > 0 && st !== "none" && st !== "hidden" && !clear(c);
+  if (
+    border(cs.borderTopWidth, cs.borderTopStyle, cs.borderTopColor) ||
+    border(cs.borderRightWidth, cs.borderRightStyle, cs.borderRightColor) ||
+    border(cs.borderBottomWidth, cs.borderBottomStyle, cs.borderBottomColor) ||
+    border(cs.borderLeftWidth, cs.borderLeftStyle, cs.borderLeftColor)
+  )
+    return true;
+  return Array.from(n.childNodes).some((c) => c.nodeType === Node.TEXT_NODE && !!c.textContent?.trim());
+}
+
+/**
+ * Where an overlay shows: the union of the boxes that draw something, each
+ * cut to the ancestors that clip it (a long list scrolls inside its menu),
+ * backdrops left out. Null when nothing of it shows.
+ */
+function overlayBounds(root: Element): DOMRect | null {
+  let l = Infinity;
+  let t = Infinity;
+  let r = -Infinity;
+  let b = -Infinity;
+  const visit = (n: Element, clip: DOMRect | null) => {
+    if (SKIP.test(n.tagName)) return;
+    const cs = getComputedStyle(n);
+    if (cs.display === "none") return;
+    const box = n.getBoundingClientRect();
+    if (box.width && box.height && cs.visibility !== "hidden" && !fullScreen(box) && paints(n, cs)) {
+      const x0 = clip ? Math.max(box.left, clip.left) : box.left;
+      const y0 = clip ? Math.max(box.top, clip.top) : box.top;
+      const x1 = clip ? Math.min(box.right, clip.right) : box.right;
+      const y1 = clip ? Math.min(box.bottom, clip.bottom) : box.bottom;
+      if (x1 > x0 && y1 > y0) {
+        l = Math.min(l, x0);
+        t = Math.min(t, y0);
+        r = Math.max(r, x1);
+        b = Math.max(b, y1);
+      }
+    }
+    const clips = cs.overflowX !== "visible" || cs.overflowY !== "visible";
+    const inner = clips && box.width && box.height ? (clip ? intersect(clip, box) : box) : clip;
+    for (const c of Array.from(n.children)) visit(c, inner);
+  };
+  visit(root, null);
+  // Off screen (a popper before it's placed sits at -200%): not there yet.
+  return r > l && b > t && r > 0 && b > 0 ? new DOMRect(l, t, r - l, b - t) : null;
+}
+
+function intersect(a: DOMRect, b: DOMRect) {
+  const l = Math.max(a.left, b.left);
+  const t = Math.max(a.top, b.top);
+  return new DOMRect(l, t, Math.max(0, Math.min(a.right, b.right) - l), Math.max(0, Math.min(a.bottom, b.bottom) - t));
+}
+
+/**
+ * The app's overlays: what a case portals out of its box into the page (a
+ * Radix or floating-ui popover, a menu, a dialog), each the outermost
+ * positioned element outside the gallery.
+ */
+function overlayRoots(gallery: Element): Element[] {
+  const out: Element[] = [];
+  const visit = (n: Element) => {
+    if (n === gallery || n.tagName.startsWith("SPARK-") || SKIP.test(n.tagName)) return;
+    const cs = getComputedStyle(n);
+    if (cs.display === "none") return;
+    if (cs.position === "fixed" || cs.position === "absolute") out.push(n);
+    else for (const c of Array.from(n.children)) visit(c);
+  };
+  for (const c of Array.from(document.body.children)) visit(c);
+  return out;
+}
+
+/** How far apart two boxes are (0 when they touch or overlap). */
+function gap(a: DOMRect, b: DOMRect) {
+  return Math.hypot(Math.max(0, a.left - b.right, b.left - a.right), Math.max(0, a.top - b.bottom, b.top - a.bottom));
+}
+
+/** What opens an overlay, while it's open: Radix, Headless UI, React Aria and plain ARIA all mark it. */
+const OPEN_TRIGGER = '[aria-expanded="true"], [data-state="open"], [data-state="delayed-open"], [data-state="instant-open"], [data-open], [data-headlessui-state~="open"]';
+
+/**
+ * The case box an overlay belongs to: the one whose open trigger it sits next
+ * to (within 24px: popovers keep a few px off their trigger, a select's list
+ * covers it), else one whose content it touches. Measured from the trigger and
+ * the content, never the box, which grows to hold the overlay: what's merely
+ * near a box (a dialog in the middle of the page) never sticks to it. -1: none.
+ */
+function ownerOf(o: DOMRect, stages: HTMLElement[]): number {
+  let best = -1;
+  let bestD = Infinity;
+  for (const [i, s] of stages.entries()) {
+    for (const t of Array.from(s.querySelectorAll(OPEN_TRIGGER))) {
+      const d = gap(o, t.getBoundingClientRect());
+      if (d <= 24 && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  }
+  if (best >= 0) return best;
+  for (const [i, s] of stages.entries()) {
+    for (const c of Array.from(s.children)) {
+      const r = c.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      const d = gap(o, r);
+      if (d <= 8 && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Each case's box holds what its component shows: parts positioned absolutely
+ * or fixed (a readout, a popover inside it) take no room, and overlays portaled
+ * out to the page (a select's list, a menu) aren't in it at all, so the box
+ * grows right and down to hold them and the cases don't pile up on each other.
+ * Only parts that stick out past the box count, so a part sized to the box
+ * (width: 100%) never makes it grow. A size set on the board wins: that side
+ * doesn't grow. Returns the overlays, so the frame can be sized to them too.
+ */
+function fitStages(root: HTMLElement, sizes: BoxSizes, between: () => void): DOMRect[] {
+  const stages = Array.from(root.querySelectorAll<HTMLElement>(".spark-gallery-stage"));
+  const pad = 24;
+  // Overlays are placed by script, so they stay put while the boxes are laid
+  // out again below: measure them now, against the boxes they were placed for,
+  // as how far they reach from the box's top-left corner (where its content
+  // starts, so that stays put as the box grows).
+  const rects = stages.map((s) => s.getBoundingClientRect());
+  const overlays = overlayRoots(root)
+    .map((o) => overlayBounds(o))
+    .filter((o): o is DOMRect => !!o);
+  const reach = stages.map(() => ({ w: 0, h: 0 }));
+  for (const o of overlays) {
+    const i = ownerOf(o, stages);
+    if (i < 0) continue;
+    reach[i].w = Math.max(reach[i].w, o.right - rects[i].left);
+    reach[i].h = Math.max(reach[i].h, o.bottom - rects[i].top);
+  }
+  const set = stages.map((stage) => sizes.cases?.[stage.parentElement?.getAttribute("data-spark-case") ?? ""] ?? {});
+  for (const [i, stage] of stages.entries()) {
+    const fixW = set[i].w ? `${set[i].w}px` : "";
+    const fixH = set[i].h ? `${set[i].h}px` : "";
+    if (stage.style.width !== fixW) stage.style.width = fixW;
+    if (stage.style.height !== fixH) stage.style.height = fixH;
     stage.style.minWidth = stage.style.minHeight = "";
+  }
+  // The boxes at their own size: the row or column is picked from those.
+  between();
+  for (const [i, stage] of stages.entries()) {
     const box = stage.getBoundingClientRect();
     let right = box.right;
     let bottom = box.bottom;
@@ -98,10 +265,15 @@ function fitStages(root: HTMLElement) {
       right = Math.max(right, r.right);
       bottom = Math.max(bottom, r.bottom);
     }
-    const pad = 24;
-    if (right > box.right + 0.5) stage.style.minWidth = `${Math.ceil(right - box.left + pad)}px`;
-    if (bottom > box.bottom + 0.5) stage.style.minHeight = `${Math.ceil(bottom - box.top + pad)}px`;
+    // Past the box at its own size: an overlay as wide as the box's trigger never makes it grow.
+    right = Math.max(right, box.left + reach[i].w);
+    bottom = Math.max(bottom, box.top + reach[i].h);
+    const w = right > box.right + 0.5 ? right - box.left + pad : 0;
+    const h = bottom > box.bottom + 0.5 ? bottom - box.top + pad : 0;
+    if (w > box.width + 0.5 && !set[i].w) stage.style.minWidth = `${Math.ceil(w)}px`;
+    if (h > box.height + 0.5 && !set[i].h) stage.style.minHeight = `${Math.ceil(h)}px`;
   }
+  return overlays;
 }
 
 /** A component frame stacks its cases when one is wider than this. */
@@ -154,35 +326,71 @@ export function mountGallery({ React, createRoot, files, setup }: GalleryInput) 
       // Cases sit in a row, or stack in a column: "auto" stacks wide ones
       // (a case wider than STACK_W), the board's toggle picks one for good.
       let layout = params.get("layout") ?? "auto";
+      const shellApi = () => window.parent.__sparkShell;
+      let queued = 0;
       const arrange = () => {
-        fitStages(el);
-        const widest = Math.max(0, ...Array.from(el.querySelectorAll(".spark-gallery-case"), (c) => c.getBoundingClientRect().width));
-        el.classList.toggle("stack", layout === "column" || (layout === "auto" && widest > STACK_W));
+        cancelAnimationFrame(queued);
+        queued = 0;
+        const sizes = shellApi()?.boxSizes?.(window) ?? {};
+        // A width set on the board: the cases wrap to it.
+        const fixW = sizes.w ? `${sizes.w}px` : "";
+        if (el.style.width !== fixW) el.style.width = fixW;
+        el.classList.toggle("fixed", !!sizes.w);
+        let cases = { w: 0, h: 0 };
+        const overlays = fitStages(el, sizes, () => {
+          const widest = Math.max(0, ...Array.from(el.querySelectorAll(".spark-gallery-case"), (c) => c.getBoundingClientRect().width));
+          el.classList.toggle("stack", layout === "column" || (layout === "auto" && widest > STACK_W));
+          // The cases at their own size, before their boxes grow for what they
+          // opened: the frame's page gets room around this, so opening a
+          // popover never resizes the page (Radix closes its select then).
+          const n = el.getBoundingClientRect();
+          cases = { w: n.right, h: n.bottom };
+        });
         // The board sizes the frame to the cases (with the page's own margin
-        // around them), and to anything that sticks out of them.
+        // around them), and to anything that sticks out of them: parts, and
+        // the overlays the cases open.
         const r = el.getBoundingClientRect();
         let right = r.right;
         let bottom = r.bottom;
-        for (const d of Array.from(el.querySelectorAll("*"))) {
-          const dr = d.getBoundingClientRect();
-          if (!dr.width && !dr.height) continue;
-          right = Math.max(right, dr.right);
-          bottom = Math.max(bottom, dr.bottom);
+        for (const d of Array.from(el.querySelectorAll("*"), (d) => d.getBoundingClientRect())) {
+          if (!d.width && !d.height) continue;
+          right = Math.max(right, d.right);
+          bottom = Math.max(bottom, d.bottom);
         }
-        window.parent.__sparkShell?.contentSize(window, right + r.left, bottom + r.top, el.classList.contains("stack"));
+        // An overlay past the cases gets the page's margin around it too.
+        for (const o of overlays) {
+          right = Math.max(right, o.right + 16);
+          bottom = Math.max(bottom, o.bottom + 16);
+        }
+        shellApi()?.contentSize(window, right + r.left, bottom + r.top, el.classList.contains("stack"), cases);
+      };
+      /** Overlays move on their own (a popper placed a frame later): measure again then. */
+      const later = () => {
+        if (!queued) queued = requestAnimationFrame(arrange);
       };
       document.documentElement.classList.add("spark-one");
-      // The cases can change size on their own (fonts, images, state): measure again.
-      const ro = new ResizeObserver(() => arrange());
+      // The cases can change size on their own (fonts, images, state): measure
+      // again, a frame later (arranging resizes what it observes).
+      const ro = new ResizeObserver(later);
       ro.observe(el);
-      new MutationObserver(() => {
+      new MutationObserver((records) => {
         for (const c of Array.from(el.querySelectorAll(".spark-gallery-stage"))) ro.observe(c);
-      }).observe(el, { childList: true, subtree: true });
+        // An overlay opened, closed or moved (outside the gallery, which the
+        // ResizeObserver already watches; never Spark's own overlay).
+        const outside = records.some((m) => {
+          const t = m.target instanceof Element ? m.target : m.target.parentElement;
+          return !!t && !el.contains(t) && !t.closest("spark-root, spark-panel, spark-changes");
+        });
+        if (outside) later();
+      }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class", "hidden", "data-state", "data-side"] });
       void document.fonts?.ready.then(arrange);
-      (window as unknown as { __sparkLayout?: (v: string) => void }).__sparkLayout = (v) => {
+      const w = window as unknown as { __sparkLayout?: (v: string) => void; __sparkArrange?: () => void };
+      w.__sparkLayout = (v) => {
         layout = v;
         arrange();
       };
+      // The board changed a size (a frame or a case box dragged, typed, or fit).
+      w.__sparkArrange = arrange;
     }
     g.__sparkGallery = createRoot(el);
   }

@@ -52,3 +52,37 @@
   margin: 0 0 var(--gap-2);
   font-size: var(--fs-lg);
 }
+
+.dropdown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-2);
+  min-width: 180px;
+}
+.dropdown .caret {
+  color: var(--text-dim);
+}
+.dropdown-list {
+  position: fixed;
+  z-index: 10;
+  margin: 0;
+  padding: var(--gap-1);
+  list-style: none;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px #0008;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.dropdown-list li {
+  padding: 6px var(--gap-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.dropdown-list li:hover,
+.dropdown-list li[aria-selected="true"] {
+  background: var(--bg-1);
+}

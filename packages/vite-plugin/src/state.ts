@@ -7,7 +7,8 @@
 // on a new port, and localStorage is per origin, so it started empty every
 // time. Keys, and what they hold:
 //   board      shell.ts: app frames (id, x, y, w, h, preset, sample), moved component
-//              frames, row/stacked layouts, the selected frame, the camera
+//              frames, row/stacked layouts, component frames' and variant boxes'
+//              sizes set on the board, the selected frame, the camera
 //   panel-open client.ts: the inspector is docked open
 //   sections   client.ts: which inspector sections are unfolded
 //   sidebar    sidebar.ts: the left sidebar is open, and on which tab

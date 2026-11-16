@@ -152,8 +152,18 @@ export type ShellApi = {
   goToSource?(src: string, from: Window): void;
   /** Break down into components: the board's Components tab, on this target (components-tab.ts BreakdownTarget). */
   breakdown?(target: unknown): void;
-  /** A component frame's content size, so the frame hugs it; `stacked`: its cases are in a column. */
-  contentSize(win: Window, w: number, h: number, stacked?: boolean): void;
+  /**
+   * A component frame's content size, so the frame hugs it (overlays the cases
+   * opened included); `stacked`: its cases are in a column; `cases`: the size
+   * of the cases alone, which the frame's page is given room around.
+   */
+  contentSize(win: Window, w: number, h: number, stacked?: boolean, cases?: { w: number; h: number }): void;
+  /** The sizes set on the board for this component frame and its case boxes (gallery.ts BoxSizes); unset ones hug. */
+  boxSizes?(win: Window): { w?: number; h?: number; cases?: Record<string, { w?: number; h?: number }> };
+  /** Set (or with null, fit to its content again) a case box's size; `done`: the drag ended, so it's saved. */
+  setCaseSize?(win: Window, name: string, size: { w?: number; h?: number } | null, done?: boolean): void;
+  /** The part of a component frame's page the board shows (its page is bigger, so overlays have room). */
+  view?(win: Window): { w: number; h: number } | null;
   /** An app frame loaded: spark.setup's sample data (sample.ts) and the one it runs on (null: none). */
   samples?(win: Window, names: string[], current: string | null): void;
   /** The app's own commands this frame called that no fake answered, so far (sample.ts noAnswer). */

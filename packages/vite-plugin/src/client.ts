@@ -360,6 +360,16 @@ function coverCount(path: PathEntry[], step: Step): number {
 const inComponentFrame = new URLSearchParams(location.search).get("spark") === "components";
 
 /**
+ * The part of the page the frame shows. A component frame's page is bigger
+ * than the frame (room for the popovers its cases open, shell.ts roomFor), so
+ * whatever keeps itself inside the frame keeps inside this, not the window.
+ */
+function viewSize(): { w: number; h: number } {
+  const v = shell?.view?.(window);
+  return v ?? { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight };
+}
+
+/**
  * The step new edits to `path` go to: the one picked, else, like a prefab,
  * this one instance (an override that never reaches the component unless
  * applied upstream). Editing a case in a component frame is editing the
@@ -1293,7 +1303,7 @@ function targetInfo(t: Target, el: Element) {
     kind: "frame" as const,
     name: frameTitle(),
     frame: inComponentFrame ? ("component" as const) : ("app" as const),
-    size: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+    size: { width: viewSize().w, height: viewSize().h },
     ...(inComponentFrame ? { file: file?.replace(/^\//, "") ?? null, component: frameComponent, cases } : { url: location.pathname + location.search }),
     roots: roots(document.body),
   };
@@ -1302,7 +1312,8 @@ function targetInfo(t: Target, el: Element) {
 /** Where `el` is on screen; the frame is its viewport (the page may scroll under it). */
 function rectOf(el: Element): DOMRect {
   if (el !== document.documentElement) return el.getBoundingClientRect();
-  return new DOMRect(0, 0, el.clientWidth, el.clientHeight);
+  const v = viewSize();
+  return new DOMRect(0, 0, v.w, v.h);
 }
 
 /**
@@ -1386,12 +1397,22 @@ function placeBoxModel() {
   });
 }
 
+/** A selected variant box's box (gallery.ts stage): what its handles resize, on the board only. */
+function caseBox(el: Element | null): HTMLElement | null {
+  if (!shell?.setCaseSize || targetOf(el)?.kind !== "case") return null;
+  return el!.querySelector<HTMLElement>(":scope > .spark-gallery-stage");
+}
+
+/** A variant box resizes from its right and bottom: its content starts top-left. */
+const CASE_DIRS: Dir[] = ["e", "s", "se"];
+
 function placeHandles() {
   placeBoxModel();
-  const show = !!selected && selected.isConnected && picking && !editing && !targetOf(selected);
-  const r = show ? selected!.getBoundingClientRect() : null;
+  const box = selected && picking && !editing ? caseBox(selected) : null;
+  const show = !!selected && selected.isConnected && picking && !editing && (!targetOf(selected) || !!box);
+  const r = show ? (box ?? selected!).getBoundingClientRect() : null;
   for (const el of handles) {
-    if (!r) {
+    if (!r || (box && !CASE_DIRS.includes(el.dataset.dir as Dir))) {
       el.style.display = "none";
       continue;
     }
@@ -1456,8 +1477,8 @@ function placeDims(r: DOMRect | null) {
   const w = dimsBadge.offsetWidth / z;
   const hgt = dimsBadge.offsetHeight / z;
   const gap = 6 / z;
-  const vw = window.innerWidth - (open && !shell ? PANEL_W : 0);
-  const vh = window.innerHeight;
+  const vw = (shell ? viewSize().w : window.innerWidth) - (open && !shell ? PANEL_W : 0);
+  const vh = shell ? viewSize().h : window.innerHeight;
   const top = r.bottom + gap + hgt <= vh ? r.bottom + gap : r.top - gap - hgt >= 0 ? r.top - gap - hgt : Math.max(0, r.bottom - gap - hgt);
   const cx = Math.max(w / 2 + 2 / z, Math.min(r.left + r.width / 2, vw - w / 2 - 2 / z));
   dimsBadge.style.left = `${cx}px`;
@@ -1515,7 +1536,7 @@ function label(el: Element | null) {
   tagLabel.textContent = `${what}  ${Math.round(r.width)}×${Math.round(r.height)}`;
   tagLabel.style.display = "block";
   // Keep it on screen and out from under the panel.
-  const maxLeft = window.innerWidth - (open && !shell ? PANEL_W : 0) - tagLabel.offsetWidth - 4;
+  const maxLeft = (shell ? viewSize().w : window.innerWidth) - (open && !shell ? PANEL_W : 0) - tagLabel.offsetWidth - 4;
   tagLabel.style.left = `${Math.max(0, Math.min(r.left, maxLeft))}px`;
   tagLabel.style.top = `${r.top > 22 ? r.top - 20 : r.bottom + 4}px`;
 }
@@ -1844,6 +1865,11 @@ for (const handle of handles) {
     p.stopPropagation();
     handle.setPointerCapture(p.pointerId);
     const dir = handle.dataset.dir as Dir;
+    const box = caseBox(el);
+    if (box) {
+      resizeCase(handle, el, box, dir, p);
+      return;
+    }
     const cs = getComputedStyle(el);
     const r = el.getBoundingClientRect();
     // width/height mean the content box unless box-sizing says otherwise.
@@ -1880,6 +1906,57 @@ for (const handle of handles) {
     handle.addEventListener("pointermove", move as EventListener);
     handle.addEventListener("pointerup", up);
     handle.addEventListener("pointercancel", up);
+  });
+}
+
+/**
+ * Drag a variant box's handle: the box gets that size on the board (saved
+ * with the board, never written to the app), and its content lays out in it.
+ */
+function resizeCase(handle: HTMLElement, el: Element, box: HTMLElement, dir: Dir, p: PointerEvent) {
+  const name = el.getAttribute("data-spark-case") ?? "";
+  const set = shell?.boxSizes?.(window).cases?.[name] ?? {};
+  const r = box.getBoundingClientRect();
+  const x0 = p.clientX;
+  const y0 = p.clientY;
+  let size = { ...set };
+  resizing = true;
+  const move = (ev: PointerEvent) => {
+    const k = ev.altKey ? 0.25 : 1;
+    size = { ...set };
+    if (dir.includes("e")) size.w = Math.max(24, Math.round(r.width + (ev.clientX - x0) * k));
+    if (dir.includes("s")) size.h = Math.max(24, Math.round(r.height + (ev.clientY - y0) * k));
+    shell?.setCaseSize?.(window, name, size, false);
+    placeHandles();
+  };
+  const up = () => {
+    handle.removeEventListener("pointermove", move as EventListener);
+    handle.removeEventListener("pointerup", up);
+    handle.removeEventListener("pointercancel", up);
+    resizing = false;
+    shell?.setCaseSize?.(window, name, size, true);
+    placeHandles();
+    render();
+  };
+  handle.addEventListener("pointermove", move as EventListener);
+  handle.addEventListener("pointerup", up);
+  handle.addEventListener("pointercancel", up);
+}
+
+// Double-click a variant box's handle: that side fits its content again.
+for (const handle of handles) {
+  handle.addEventListener("dblclick", (e) => {
+    const el = selected;
+    if (!el || !caseBox(el)) return;
+    e.stopPropagation();
+    const name = el.getAttribute("data-spark-case") ?? "";
+    const dir = handle.dataset.dir as Dir;
+    const size = { ...shell?.boxSizes?.(window).cases?.[name] };
+    if (dir.includes("e")) delete size.w;
+    if (dir.includes("s")) delete size.h;
+    shell?.setCaseSize?.(window, name, size, true);
+    placeHandles();
+    render();
   });
 }
 
@@ -2222,7 +2299,7 @@ function placePins() {
     // The pin's bottom-left corner sits on the element's top-right one, kept inside the
     // frame: an element as wide or as high up as the page would put it past the edge, out of reach.
     const s = 1 / (shell?.zoom ?? 1);
-    p.node.style.left = `${Math.min(r.right, document.documentElement.clientWidth - 22 * s)}px`;
+    p.node.style.left = `${Math.min(r.right, viewSize().w - 22 * s)}px`;
     p.node.style.top = `${Math.max(r.top, 22 * s) - 22}px`;
   }
 }
@@ -2734,6 +2811,8 @@ function renderTarget(el: Element, t: Target) {
   // The frame's own properties (size, device, layout), like a component's.
   const fp = t.kind === "frame" ? shell?.frameProps?.(window) : null;
   if (fp) body.append(h("div", { style: "margin-top: var(--sp-3)" }, fp));
+  const box = t.kind === "case" ? caseBoxRows(el) : null;
+  if (box) body.append(box);
   const where = shell ? "in the chat on the right" : "in the popup next to it";
   body.append(
     h(
@@ -2745,6 +2824,54 @@ function renderTarget(el: Element, t: Target) {
     ),
     changesHere(el),
   );
+}
+
+/**
+ * A variant box's size on the board, Figma style: W and H, each "hug" (fits
+ * its content, overlays included) or a number of px it keeps. Board-only: it
+ * shows how the component lays out in that room, and is never written to the app.
+ */
+function caseBoxRows(el: Element): HTMLElement | null {
+  const box = caseBox(el);
+  if (!box) return null;
+  const name = el.getAttribute("data-spark-case") ?? "";
+  const sizes = () => ({ ...shell?.boxSizes?.(window).cases?.[name] });
+  const set = sizes();
+  const r = box.getBoundingClientRect();
+  const pair = h("div", { class: "pair" });
+  for (const [side, label, onScreen] of [
+    ["w", "W", r.width],
+    ["h", "H", r.height],
+  ] as const) {
+    const fixed = set[side];
+    const field = numberField(fixed ? `${fixed}px` : "hug", { computed: `${Math.round(onScreen)}px`, label, changed: !!fixed, min: 24, keywords: ["hug"] }, (v, final) => {
+      const size = sizes();
+      const n = parseFloat(v);
+      if (v.trim() === "hug" || !(n > 0)) delete size[side];
+      else size[side] = Math.round(n);
+      shell?.setCaseSize?.(window, name, size, final);
+      placeHandles();
+      if (final) render();
+    });
+    field.title = `${side === "w" ? "Width" : "Height"} of the variant box on the board: hug fits its content, a number keeps that size`;
+    pair.append(field);
+  }
+  const fit = h(
+    "button",
+    {
+      class: "sp-btn",
+      title: "The box fits its content again (overlays it opens included)",
+      click: () => {
+        shell?.setCaseSize?.(window, name, null, true);
+        placeHandles();
+        render();
+      },
+    },
+    "Fit to content",
+  );
+  if (!set.w && !set.h) fit.setAttribute("disabled", "");
+  const note = h("div", { class: "resolved-line" }, h("span", { class: "resolved" }, `= ${Math.round(r.width)} × ${Math.round(r.height)} on the board; drag its handles to resize`));
+  return h("div", { style: "margin-top: var(--sp-3)" }, row("box", pair, note), h("div", { class: "here-actions" }, fit));
 }
 
 function locLink(loc: string | null) {
