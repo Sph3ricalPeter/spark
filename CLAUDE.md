@@ -50,6 +50,9 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   `data-spark-call` to component call sites; `client.ts` is the overlay and
   docked panel (Shadow DOM, no React; Alt+S). View mode (default) leaves the
   app usable; edit mode (Tab or Alt+E; the View/Edit switch in the board's bottom toolbar shows which) picks elements; Esc steps out (popover, selection) but never leaves edit mode, only Tab or Alt+E switch back to view.
+  Going to view mode parks the edit selection (`parked`, keys, multi-select
+  included) and coming back to edit mode selects it again (`unpark`), minus
+  elements gone meanwhile; on the board only in the still-selected frame.
   Spark's own buttons and dropdowns never keep focus: Tab and Esc are
   always Spark's shortcuts except while typing in a text field.
   Shift+click adds to the selection (the first pick leads: inspector,

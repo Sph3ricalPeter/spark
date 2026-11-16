@@ -1149,7 +1149,14 @@ function blurApp() {
   if (a instanceof HTMLElement && a !== document.body && !host.contains(a) && a !== editing) a.blur();
 }
 
+/**
+ * The edit-mode selection (keys, the lead first), put aside while in view mode
+ * and brought back on the way into edit mode. Elements gone by then are dropped.
+ */
+let parked: string[] = [];
+
 function setPicking(v: boolean) {
+  const was = picking;
   picking = v;
   if (v) blurApp();
   editBtn.classList.toggle("on", v);
@@ -1157,13 +1164,32 @@ function setPicking(v: boolean) {
   if (v && !open) setOpen(true);
   if (!v) {
     hover(null);
-    if (selected) select(null);
-  }
+    if (selected) {
+      parked = selection().map((el) => chatKey(el, instancePath(el)));
+      select(null);
+    }
+  } else if (!was) unpark();
   placeHandles();
   render();
   shell?.setMode(v, setPicking);
 }
 viewBtn.addEventListener("click", () => setPicking(false));
+
+/** Back in edit mode: select what was selected before view mode, if it's still there.
+ * On the board only in the selected frame (another frame picked meanwhile starts fresh). */
+function unpark() {
+  const keys = parked;
+  parked = [];
+  if (!keys.length || selected || (shell && !shell.isActive(window))) return;
+  const els: Element[] = [];
+  for (const key of keys) {
+    const el = findByKey(key);
+    if (el && !els.includes(el)) els.push(el);
+  }
+  if (!els.length) return;
+  select(els[0]);
+  for (const el of els.slice(1)) toggleSelect(el);
+}
 editBtn.addEventListener("click", () => setPicking(true));
 
 /** One step out on Esc: popover, then selection. Never leaves edit mode (only Tab does). True when something closed. */
@@ -1514,6 +1540,7 @@ function select(el: Element | null) {
   stopViewing();
   clearAlso();
   if (el !== selected) editTarget = null;
+  if (el) parked = [];
   if (editing) stopTextEdit(true);
   if (el) view = "inspect";
   markTab();
