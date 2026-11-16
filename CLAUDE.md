@@ -70,7 +70,9 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   double-click to edit text in place, and the property editor built from
   `fields.ts` (scrubbable numbers, dropdowns, color swatches), which opens
   with every element's size row (W and H, Figma style: width/height edits,
-  then the kind's `ESSENTIALS`);
+  then the kind's `ESSENTIALS`; text starts with font-family, whose
+  `fontField` lists `fontChoices`: font variables, @font-face fonts, the
+  app's stacks, generic families);
   `css.ts` reads matched rules, authored values and tokens; `changes.ts` is
   the changelog and its live previews: an override lives on a step of
   the element's chain, prefab style: the component itself (base), its

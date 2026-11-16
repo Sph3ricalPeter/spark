@@ -45,7 +45,7 @@ import {
 } from "./changes.ts";
 import { authored, findRule, matchedRules, tokenRule, tokensUsed } from "./css.ts";
 import { iconLabel, iconMarkup, iconPreview, openIconPicker, sourceIcon, svgRoot } from "./icons.ts";
-import { closePopover, colorField, colorTokens, displayColor, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
+import { closePopover, colorField, colorTokens, displayColor, fontChoices, fontField, h, menuButton, numberField, selectField, textField, type OnValue } from "./fields.ts";
 import { frameGlue } from "./frame.ts";
 import { words as caseTitle } from "./gallery.ts";
 import { markdown, MARKDOWN_STYLE } from "./markdown.ts";
@@ -75,6 +75,7 @@ type Field =
   | { prop: string; kind: "select"; options: string[] }
   | { prop: string; kind: "color" }
   | { prop: string; kind: "text" }
+  | { prop: string; kind: "font" }
   | { prop: string; kind: "sides"; step?: number };
 
 /** Width and height keywords. "stretch" fills the parent (Figma's Fill) where the browser has it. */
@@ -121,13 +122,14 @@ const FIELDS: { group: string; fields: Field[] }[] = [
     group: "Text",
     fields: [
       { prop: "color", kind: "color" },
-      { prop: "font-family", kind: "text" },
+      { prop: "font-family", kind: "font" },
       { prop: "font-size", kind: "number", min: 0, keywords: ["inherit", "smaller", "larger"] },
       { prop: "font-weight", kind: "select", options: ["100", "200", "300", "400", "500", "600", "700", "800", "900"] },
       { prop: "line-height", kind: "number", step: 0.1, unit: "", min: 0, keywords: ["normal", "inherit"] },
       { prop: "letter-spacing", kind: "number", keywords: ["normal", "inherit"] },
       { prop: "text-align", kind: "select", options: ["start", "left", "center", "right", "end", "justify"] },
       { prop: "text-transform", kind: "select", options: ["none", "uppercase", "lowercase", "capitalize"] },
+      { prop: "text-decoration-line", kind: "select", options: ["none", "underline", "overline", "line-through"] },
     ],
   },
   {
@@ -151,7 +153,7 @@ type Kind = "text" | "button" | "input" | "icon" | "media" | "stack" | "box";
 const KIND_LABEL: Record<Kind, string> = { text: "Text", button: "Button", input: "Field", icon: "Icon", media: "Image", stack: "Layout", box: "Box" };
 /** The properties people change most on each kind, first in the inspector (under the size row, W and H, which every kind gets). */
 const ESSENTIALS: Record<Kind, string[]> = {
-  text: ["color", "font-size", "font-weight", "line-height", "text-align", "margin"],
+  text: ["font-family", "color", "font-size", "font-weight", "line-height", "letter-spacing", "text-align", "margin"],
   button: ["background-color", "color", "border-radius", "font-size", "font-weight", "padding"],
   input: ["background-color", "color", "border-color", "border-radius", "font-size", "padding"],
   icon: ["color", "opacity"],
@@ -789,6 +791,15 @@ const STYLE = `${THEME}
     .quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
     .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-1); }
     .color { display: flex; gap: 6px; position: relative; }
+    /* font-family: the stack as text, the font list behind the caret. */
+    .font { display: flex; position: relative; min-width: 0; }
+    .font > input { flex: 1; min-width: 0; height: 24px; padding-right: 22px; }
+    .font-btn {
+      position: absolute; top: 0; right: 0; bottom: 0; width: 22px; padding: 0; border: none; background: transparent;
+      display: inline-flex; align-items: center; justify-content: center; color: var(--sp-text-dim);
+    }
+    .font-btn:hover, .font-btn.open { color: var(--sp-text-strong); }
+    .font .popover.menu { max-width: 320px; }
     .swatch {
       width: 22px; height: 22px; padding: 0; flex: none; cursor: pointer;
       border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-sm);
@@ -3081,6 +3092,7 @@ function render() {
     if (f.kind === "number") field = numberField(value, { computed, step: f.step, unit: f.unit, min: f.min, keywords: f.keywords, changed }, onValue(f.prop));
     else if (f.kind === "select") field = selectField(value || computed, f.options, changed, onValue(f.prop), f.prop === "font-weight" ? WEIGHTS : {});
     else if (f.kind === "color") field = colorField(value, computed, colors, changed, onValue(f.prop));
+    else if (f.kind === "font") field = fontField(value, () => fontChoices(skip), changed, onValue(f.prop));
     else field = textField(value, changed, onValue(f.prop));
     marked(field, mark);
     if (f.kind !== "select") {

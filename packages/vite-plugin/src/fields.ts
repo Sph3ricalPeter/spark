@@ -282,6 +282,83 @@ export function selectField(value: string, options: string[], changed: boolean, 
   return wrap;
 }
 
+/**
+ * font-family: the stack as text (type anything), and a dropdown of the
+ * project's font variables, the fonts the app loads and uses, and the generic
+ * families, each drawn in its own font.
+ */
+export function fontField(value: string, choices: () => MenuItem[], changed: boolean, onValue: OnValue): HTMLElement {
+  const input = textField(value, changed, onValue) as HTMLInputElement;
+  const btn = h("button", { class: "font-btn", type: "button", title: "Pick a font" }, icon("chevron-down", 12));
+  const wrap = h("div", { class: "font" }, input, btn);
+  menuButton(
+    btn,
+    wrap,
+    choices,
+    () => input.value.trim(),
+    (v) => {
+      input.value = v;
+      onValue(v, true);
+    },
+    "right",
+  );
+  return wrap;
+}
+
+/** The first family of a font stack, unquoted ("Inter", system-ui → Inter). */
+const firstFamily = (stack: string) => stack.split(",")[0].trim().replace(/^["']|["']$/g, "");
+const GENERIC_FONTS = ["system-ui", "sans-serif", "serif", "monospace", "cursive"];
+
+/**
+ * What the font picker offers: font variables on :root (by name, or a value
+ * that ends in a generic family), the families the app loads with
+ * @font-face, the ones its elements use, and the generic families. Spark's
+ * own fonts ("Spark …") are left out.
+ */
+export function fontChoices(skip: (n: Node) => boolean): MenuItem[] {
+  const vars = new Map<string, string>();
+  const cs = getComputedStyle(document.documentElement);
+  const generic = new RegExp(`(^|,)\\s*(${GENERIC_FONTS.join("|")})\\s*$`);
+  for (const sheet of Array.from(document.styleSheets)) {
+    if (sheet.ownerNode && skip(sheet.ownerNode)) continue;
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue;
+    }
+    for (const rule of Array.from(rules)) {
+      if (!(rule instanceof CSSStyleRule) || !/(^|,)\s*(:root|html)\s*($|,)/.test(rule.selectorText)) continue;
+      for (const prop of Array.from(rule.style)) {
+        if (!prop.startsWith("--") || prop.startsWith("--sp")) continue;
+        const v = cs.getPropertyValue(prop).trim();
+        if (!v || /^-?[\d.]/.test(v) || CSS.supports("color", v)) continue;
+        const named = /(^--|-)(font|family|typeface)(-|$)/i.test(prop) && !/size|weight|leading|tracking|height|spacing|style/i.test(prop);
+        if (named || generic.test(v)) vars.set(prop, v);
+      }
+    }
+  }
+  const loaded = new Set<string>();
+  document.fonts.forEach((f) => {
+    const fam = firstFamily(f.family);
+    if (fam && !fam.startsWith("Spark ")) loaded.add(fam);
+  });
+  const used = new Set<string>();
+  const els = document.body ? Array.from(document.body.querySelectorAll("*")).slice(0, 3000) : [];
+  for (const el of els) {
+    if (skip(el)) continue;
+    const stack = getComputedStyle(el).fontFamily;
+    if (stack && !firstFamily(stack).startsWith("Spark ")) used.add(stack);
+  }
+  const quote = (fam: string) => (/^[\w-]+$/.test(fam) ? fam : `"${fam}"`);
+  return [
+    ...[...vars].map(([name, v]) => ({ value: `var(${name})`, label: name, hint: firstFamily(v), group: "Variables", font: v })),
+    ...[...loaded].sort().map((fam) => ({ value: quote(fam), label: fam, group: "Loaded fonts", font: quote(fam) })),
+    ...[...used].filter((stack) => !loaded.has(firstFamily(stack))).map((stack) => ({ value: stack, label: firstFamily(stack), hint: stack.split(",").length > 1 ? "stack" : undefined, group: "Used in the app", font: stack })),
+    ...GENERIC_FONTS.map((g) => ({ value: g, label: g, group: "Generic", font: g })),
+  ];
+}
+
 export function textField(value: string, changed: boolean, onValue: OnValue): HTMLElement {
   const input = h("input", { value, spellcheck: "false", class: changed ? "changed" : "" }) as HTMLInputElement;
   keepKeys(input);
@@ -293,7 +370,8 @@ export function textField(value: string, changed: boolean, onValue: OnValue): HT
 // ---------------------------------------------------------------------------
 // Menu: Spark's own dropdown list
 
-export type MenuItem = { value: string; label: string; hint?: string; group?: string };
+/** `font` draws the label in that font (the font picker's preview). */
+export type MenuItem = { value: string; label: string; hint?: string; group?: string; font?: string };
 
 /**
  * Make `btn` open a menu of `items()` under `parent` (which must be
@@ -321,7 +399,7 @@ export function menuButton(
         "button",
         { class: `menu-item${it.value === now ? " on" : ""}`, type: "button", role: "option" },
         h("span", { class: "menu-check" }, it.value === now && icon("check", 12)),
-        h("span", { class: "menu-label" }, it.label),
+        h("span", { class: "menu-label", ...(it.font ? { style: `font-family: ${it.font.replace(/"/g, "'")}` } : {}) }, it.label),
         it.hint ? h("span", { class: "menu-hint" }, it.hint) : null,
       );
       row.addEventListener("click", (e) => {
