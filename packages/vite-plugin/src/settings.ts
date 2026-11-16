@@ -71,6 +71,14 @@ export const ACCENTS: [string, string][] = [
 ];
 
 export const TEXT_SCALE = { min: 0.85, max: 1.4 };
+/** The zoom speed multipliers' range: 1/4x to 4x, in powers of two on the sliders. */
+export const ZOOM_SPEED = { min: 0.25, max: 4 };
+
+/** How far the mouse wheel's or the pinch's zoom goes, ×. */
+export function zoomSpeed(kind: "wheel" | "pinch") {
+  const v = getSetting("zoom-speed")?.[kind];
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(ZOOM_SPEED.max, Math.max(ZOOM_SPEED.min, v)) : 1;
+}
 
 const ENDPOINT = "/@spark/settings";
 
@@ -85,6 +93,23 @@ try {
 /** The saved value for `key`, or undefined. */
 export function getSetting<K extends keyof Settings>(key: K): Settings[K] | undefined {
   return values[key] as Settings[K] | undefined;
+}
+
+/** Where a change goes: the dev server (the board), or Spark itself (the launcher, connectSettings). */
+let save = (key: string, value: unknown) => import.meta.hot?.send("spark:settings", { key, value });
+
+/**
+ * For a page with no Spark dev server behind it (the launcher): read and
+ * write the settings some other way (Spark's commands, settings.rs).
+ */
+export async function connectSettings(backend: { load(): Promise<Record<string, unknown>>; save(key: string, value: unknown): void }) {
+  save = backend.save;
+  try {
+    values = (await backend.load()) ?? {};
+  } catch {
+    // Can't read them: the defaults.
+  }
+  changed();
 }
 
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -107,7 +132,7 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K] 
   clearTimeout(pending.get(key));
   const send = () => {
     pending.delete(key);
-    import.meta.hot?.send("spark:settings", { key, value: values[key] ?? null });
+    save(key, values[key] ?? null);
   };
   if (delay > 0) pending.set(key, setTimeout(send, delay));
   else send();
@@ -144,6 +169,7 @@ export function looksCss(): string {
   const vars: string[] = [];
   const theme = THEMES[getSetting("theme") as ThemeName];
   if (theme && getSetting("theme") !== "dark") for (const [k, v] of Object.entries(theme.colors)) vars.push(`--spu-${k}: ${v};`);
+  if (getSetting("grid") === false) vars.push("--spu-canvas-dot: transparent;");
   const accent = getSetting("accent");
   if (isColor(accent)) vars.push(`--spu-accent: ${accent};`);
   const font = getSetting("font");

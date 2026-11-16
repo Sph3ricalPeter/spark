@@ -50,7 +50,7 @@ export const THEME = `
     --sp-danger: #e5534b;
     /* The board's canvas, and its dot grid. */
     --sp-canvas: var(--spu-canvas, #0e0f11);
-    --sp-canvas-dot: #ffffff14;
+    --sp-canvas-dot: var(--spu-canvas-dot, #ffffff14);
     /* The spark mark. */
     --sp-brand: #ffd23f;
     /* The window's close button on hover (as Windows draws it). */

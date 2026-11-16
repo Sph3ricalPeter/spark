@@ -18,9 +18,8 @@ export type StateFile = { version: 1; values: Record<string, unknown> };
 /** How long writes are gathered before the file is written (zooming sends many). */
 const WRITE_DELAY = 250;
 
-/** `name` is the file in `dir`: state.json, or settings.json for Spark's own settings (index.ts). */
-export function stateStore(dir: string, name = "state.json") {
-  const file = path.join(dir, name);
+export function stateStore(dir: string) {
+  const file = path.join(dir, "state.json");
   let state: Promise<StateFile> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let writing: Promise<unknown> = Promise.resolve();
@@ -59,6 +58,64 @@ export function stateStore(dir: string, name = "state.json") {
       if (!timer) timer = setTimeout(flush, WRITE_DELAY);
     },
     /** Write now (the dev server is closing). */
+    async close() {
+      if (timer) {
+        clearTimeout(timer);
+        flush();
+      }
+      await writing;
+    },
+  };
+}
+
+/**
+ * Spark's own settings (settings.ts): `settings.json` in Spark's config
+ * folder, the same shape as state.json. Not kept in memory: the launcher
+ * (src-tauri/src/settings.rs) writes the same file while a project's server
+ * keeps running, so every read and write starts from what's on disk.
+ */
+export function settingsStore(dir: string) {
+  const file = path.join(dir, "settings.json");
+  /** Changes not written yet: key → value (null removes it). */
+  const changes = new Map<string, unknown>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let writing: Promise<unknown> = Promise.resolve();
+
+  async function read(): Promise<Record<string, unknown>> {
+    try {
+      const raw = JSON.parse(await readFile(file, "utf8")) as Partial<StateFile> | null;
+      if (raw && typeof raw.values === "object" && raw.values) return raw.values;
+    } catch {
+      // No settings yet (or a broken file): the defaults.
+    }
+    return {};
+  }
+
+  function apply(values: Record<string, unknown>) {
+    for (const [k, v] of changes) {
+      if (v === undefined || v === null) delete values[k];
+      else values[k] = v;
+    }
+    return values;
+  }
+
+  function flush() {
+    timer = null;
+    const run = async () => {
+      const values = apply(await read());
+      changes.clear();
+      await mkdir(dir, { recursive: true });
+      await writeFile(file, JSON.stringify({ version: 1, values }, null, 2) + "\n");
+    };
+    writing = writing.then(run, run).catch(() => {});
+  }
+
+  return {
+    values: async () => apply(await read()),
+    set(key: string, value: unknown) {
+      changes.set(key, value ?? null);
+      if (!timer) timer = setTimeout(flush, WRITE_DELAY);
+    },
     async close() {
       if (timer) {
         clearTimeout(timer);

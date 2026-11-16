@@ -1,4 +1,5 @@
 mod project;
+mod settings;
 mod update;
 
 use serde::Serialize;
@@ -99,7 +100,9 @@ pub fn run() {
             project::start_project,
             project::show_project,
             project::check_project,
-            project::launch_folder
+            project::launch_folder,
+            settings::settings_read,
+            settings::settings_write
         ])
         .build(tauri::generate_context!())
         .expect("error while building spark")
