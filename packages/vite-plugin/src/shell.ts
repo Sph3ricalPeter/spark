@@ -1295,8 +1295,10 @@ const api: ShellApi = {
   },
   register(hooks) {
     // A reloaded frame registers a fresh client; the old one belongs to a dead page.
+    // The iframe keeps its window across a reload, so the same key can come back
+    // with a new client: its old panel and change list go too, or they pile up.
     for (const [w, old] of clients) {
-      if (w.closed || !frameOf(w)) {
+      if (w.closed || !frameOf(w) || (w === hooks.win && old !== hooks)) {
         old.panel.remove();
         old.changes?.remove();
         clients.delete(w);
