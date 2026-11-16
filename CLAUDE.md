@@ -64,7 +64,9 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   (`@frame:<frame id>`, `@case:<file>#<export>` keys, `target` in the prompt).
   Edit mode has selection handles to resize,
   double-click to edit text in place, and the property editor built from
-  `fields.ts` (scrubbable numbers, dropdowns, color swatches);
+  `fields.ts` (scrubbable numbers, dropdowns, color swatches), which opens
+  with every element's size row (W and H, Figma style: width/height edits,
+  then the kind's `ESSENTIALS`);
   `css.ts` reads matched rules, authored values and tokens; `changes.ts` is
   the changelog and its live previews: an override lives on a step of
   the element's chain, prefab style: the component itself (base), its

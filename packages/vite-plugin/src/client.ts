@@ -77,7 +77,17 @@ type Field =
   | { prop: string; kind: "text" }
   | { prop: string; kind: "sides"; step?: number };
 
-const SIZE_KEYWORDS = ["auto", "fit-content", "min-content", "max-content", "inherit"];
+/** Width and height keywords. "stretch" fills the parent (Figma's Fill) where the browser has it. */
+const SIZE_KEYWORDS = [
+  "auto",
+  "fit-content",
+  ...(typeof CSS !== "undefined" && CSS.supports("width", "stretch") ? ["stretch"] : []),
+  "min-content",
+  "max-content",
+  "inherit",
+];
+/** Shown together in the size row (W and H) at the top of every element's inspector, never again below. */
+const SIZE_PROPS = ["width", "height"];
 
 /** The properties the panel edits, grouped as they're shown. */
 const FIELDS: { group: string; fields: Field[] }[] = [
@@ -139,15 +149,15 @@ const SIDES = ["top", "right", "bottom", "left"] as const;
 /** What kind of thing an element is, for which properties come first. */
 type Kind = "text" | "button" | "input" | "icon" | "media" | "stack" | "box";
 const KIND_LABEL: Record<Kind, string> = { text: "Text", button: "Button", input: "Field", icon: "Icon", media: "Image", stack: "Layout", box: "Box" };
-/** The properties people change most on each kind, first in the inspector and in the Ask popup. */
+/** The properties people change most on each kind, first in the inspector (under the size row, W and H, which every kind gets). */
 const ESSENTIALS: Record<Kind, string[]> = {
   text: ["color", "font-size", "font-weight", "line-height", "text-align", "margin"],
   button: ["background-color", "color", "border-radius", "font-size", "font-weight", "padding"],
   input: ["background-color", "color", "border-color", "border-radius", "font-size", "padding"],
-  icon: ["width", "height", "color", "opacity"],
-  media: ["width", "height", "border-radius", "opacity"],
+  icon: ["color", "opacity"],
+  media: ["border-radius", "opacity"],
   stack: ["gap", "flex-direction", "align-items", "justify-content", "padding", "background-color", "border-radius"],
-  box: ["background-color", "border-radius", "width", "height", "padding", "display"],
+  box: ["background-color", "border-radius", "padding", "display"],
 };
 /** What font-weight numbers are called, shown next to them. */
 const WEIGHTS: Record<string, string> = {
@@ -767,6 +777,7 @@ const STYLE = `${THEME}
     .menu-item.active .menu-hint { color: #ffffffbb; }
     .num input { flex: 1; }
     .quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+    .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-1); }
     .color { display: flex; gap: 6px; position: relative; }
     .swatch {
       width: 22px; height: 22px; padding: 0; flex: none; cursor: pointer;
@@ -2963,12 +2974,45 @@ function render() {
     return { mark, title: where.join("\n") || name };
   };
 
-  // The essentials for this kind of element first; everything else, by category, under "All properties".
+  /** Width and height side by side, Figma's W and H: the value set (an edit, else the source), else the size on screen. */
+  const sizeRow = (): HTMLElement => {
+    const pair = h("div", { class: "pair" });
+    const values: string[] = [];
+    const computeds: string[] = [];
+    const marks: Mark[] = [];
+    const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+    for (const [prop, label, onScreen] of [
+      ["width", "W", r.width],
+      ["height", "H", r.height],
+    ] as const) {
+      const v = valueOf(prop);
+      const { changed, mark } = v;
+      // The size on screen reads like Figma's, to a tenth (85.3, not 85.28).
+      const value = !changed && /^\d+\.\d\d+px$/.test(v.value) ? `${Math.round(parseFloat(v.value) * 10) / 10}px` : v.value;
+      // Scrub from the number on screen when the computed value isn't one (an inline element's "auto").
+      const cv = cs.getPropertyValue(prop).trim();
+      const computed = /^-?[\d.]+px$/.test(cv) ? cv : px(onScreen);
+      values.push(value);
+      computeds.push(computed);
+      marks.push(mark);
+      const field = numberField(value, { computed, label, changed, min: 0, keywords: SIZE_KEYWORDS }, onValue(prop));
+      field.title = prop;
+      pair.append(marked(field, mark));
+    }
+    // A keyword, % or variable: what it comes to on screen.
+    const note =
+      resolvedLine(values.join(" "), computeds.join(" "), jumpToVariable) ??
+      (values.every((v) => /^-?[\d.]+px$/.test(v)) ? null : h("div", { class: "resolved-line" }, h("span", { class: "resolved" }, `= ${Math.round(r.width * 10) / 10} × ${Math.round(r.height * 10) / 10} on screen`)));
+    return row("size", pair, note, rowMark("size", SIZE_PROPS, marks));
+  };
+
+  // The size and the essentials for this kind of element first; everything else, by category, under "All properties".
   const kind = kindOf(el, cs);
-  const essentials = ESSENTIALS[kind].map(fieldFor).filter((f): f is Field => !!f);
+  const essentials = [...SIZE_PROPS, ...ESSENTIALS[kind]].map(fieldFor).filter((f): f is Field => !!f);
   body.append(h("h3", {}, KIND_LABEL[kind]));
   if (kind === "icon") body.append(iconRow(el, overrides.filter((c) => c.property === "icon").at(-1), markOf));
-  for (const f of essentials) body.append(fieldRow(f));
+  body.append(sizeRow());
+  for (const f of essentials) if (!SIZE_PROPS.includes(f.prop)) body.append(fieldRow(f));
   // Edits in the folded part still show: their categories open on their own.
   const editedRest = FIELDS.flatMap((g) => g.fields).filter((f) => !essentials.includes(f) && (f.kind === "sides" ? SIDES.some((s) => overrides.some((c) => c.property === `${f.prop}-${s}`)) : overrides.some((c) => c.property === f.prop)));
   body.append(changesHere(el));
