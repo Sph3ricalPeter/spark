@@ -245,55 +245,89 @@ export function boardOnly(cmd: string, args: unknown): boolean {
  */
 const DEAF_EVENTS = new Set(["tauri://close-requested"]);
 
+/** The app's event listeners in Spark's window, by id: unlistened when the page goes. */
+const listeners = new Map<number, string>();
+let deafIds = 0;
+
+/** What becomes of one of the app's Tauri calls in a frame. */
+type Route =
+  | { kind: "answer"; run: () => unknown }
+  | { kind: "refuse"; message: string }
+  /** Spark's Tauri handles it; `then` sees the result. */
+  | { kind: "pass"; then?: (result: unknown) => void };
+
 /**
- * Tauri injects its IPC into the top window only: Spark's window with the project open,
- * which runs the shell. Lend it to the frame, so the app's Tauri calls work
- * there, the system Open and Save dialogs above all.
- *
- * - `isTauri` and `__TAURI_INTERNALS__` are non-enumerable on the parent,
- *   so they're named here, not found by walking its keys.
- * - Plugin commands (`plugin:dialog|open`, events, window getters) go to
- *   Spark's window, which allows what `src-tauri/capabilities/project.json`
- *   lists: dialogs and read-only calls. The title bar's calls are in that
- *   list too, for the board; the app is refused them (`boardOnly`), so it
- *   never closes, moves or resizes Spark.
+ * The rules for the app's Tauri calls in a frame, whichever way they arrive
+ * (borrowTauri):
+ * - spark.setup's fakes and the frame's sample data (sample.ts) answer first.
+ * - The title bar's calls are refused (`boardOnly`), so the app never
+ *   closes, moves or resizes Spark; `DEAF_EVENTS` get a listener that never fires.
+ * - Other plugin commands (`plugin:dialog|open`, events, window getters) go
+ *   to Spark's window, which allows what `src-tauri/capabilities/project.json`
+ *   lists: dialogs and read-only calls.
  * - The app's own commands (`invoke("open_file")`) belong to its Rust side,
- *   which doesn't run inside Spark. spark.setup's fakes and the frame's
- *   sample data answer them (sample.ts); otherwise they fail and say why. They're never sent to
- *   Spark, whose own commands can share their names (`app_info`).
+ *   which doesn't run inside Spark: they fail, say why and are listed on the
+ *   board (`noAnswer`). They're never sent to Spark, whose own commands can
+ *   share their names (`app_info`).
+ */
+function route(cmd: string, args: unknown): Route {
+  const fake = window.__sparkTauriFakes?.[cmd];
+  if (fake) return { kind: "answer", run: () => fake(args) };
+  if (boardOnly(cmd, args)) return { kind: "refuse", message: `Spark's window belongs to Spark: "${cmd}" isn't available to the app inside it.` };
+  const a = (args ?? {}) as { event?: unknown; eventId?: unknown };
+  if (cmd === "plugin:event|listen" && typeof a.event === "string") {
+    if (DEAF_EVENTS.has(a.event)) return { kind: "answer", run: () => --deafIds };
+    const event = a.event;
+    return { kind: "pass", then: (id) => typeof id === "number" && listeners.set(id, event) };
+  }
+  if (cmd === "plugin:event|unlisten" && typeof a.eventId === "number") {
+    if (a.eventId < 0) return { kind: "answer", run: () => undefined };
+    listeners.delete(a.eventId);
+  }
+  if (cmd.startsWith("plugin:")) return { kind: "pass" };
+  noAnswer(cmd);
+  return {
+    kind: "refuse",
+    message: `Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, has no answer here. Give the frame sample data (its inspector, or spark.setup.tsx's samples).`,
+  };
+}
+
+/**
+ * Give the app's frame Tauri that follows `route`. Two cases:
+ * - WebView2 (Windows) runs Tauri's scripts in every frame, so the frame has
+ *   Tauri of its own, talking to Spark's Rust as Spark's window. Its
+ *   `__TAURI_INTERNALS__` can't be replaced (Tauri defines it read-only), but
+ *   every call goes out as a `fetch` to the IPC protocol: catch it there
+ *   (`interceptIpc`).
+ * - Elsewhere Tauri is only in the top window (Spark's, running the shell):
+ *   lend it to the frame through a wrapper.
  */
 export function borrowTauri() {
   if (mode !== "frame") return;
+  if ("__TAURI_INTERNALS__" in window) {
+    interceptIpc();
+    window.addEventListener("pagehide", () => {
+      const own = (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
+      for (const [eventId, event] of listeners) void own.invoke("plugin:event|unlisten", { event, eventId }).catch(() => {});
+      listeners.clear();
+    });
+    return;
+  }
   const parent = window.parent as unknown as Record<string, unknown>;
   const host = parent.__TAURI_INTERNALS__ as TauriInternals | undefined;
-  if (!host || "__TAURI_INTERNALS__" in window) return;
+  if (!host) return;
   // Callbacks and event listeners this page registers live in the parent and
   // in Spark; drop them with the page.
   const callbacks = new Set<number>();
-  const listeners = new Map<number, string>();
-  let deafIds = 0;
   const internals = Object.create(host as object, {
     invoke: {
-      value: (cmd: string, args?: unknown, options?: unknown) => {
-        const fake = window.__sparkTauriFakes?.[cmd];
-        if (fake) return Promise.resolve().then(() => fake(args));
-        if (boardOnly(cmd, args)) return Promise.reject(new Error(`Spark's window belongs to Spark: "${cmd}" isn't available to the app inside it.`));
-        const a = (args ?? {}) as { event?: unknown; eventId?: unknown };
-        if (cmd === "plugin:event|listen" && typeof a.event === "string") {
-          if (DEAF_EVENTS.has(a.event)) return Promise.resolve(--deafIds);
-          const event = a.event;
-          return host.invoke(cmd, args, options).then((id) => {
-            if (typeof id === "number") listeners.set(id, event);
-            return id;
-          });
-        }
-        if (cmd === "plugin:event|unlisten" && typeof a.eventId === "number") {
-          if (a.eventId < 0) return Promise.resolve();
-          listeners.delete(a.eventId);
-        }
-        if (cmd.startsWith("plugin:")) return host.invoke(cmd, args, options);
-        noAnswer(cmd);
-        return Promise.reject(new Error(`Spark runs this app's frontend only, so "${cmd}", a command of the app's own Rust side, has no answer here. Give the frame sample data (its inspector, or spark.setup.tsx's samples).`));
+      value: async (cmd: string, args?: unknown, options?: unknown) => {
+        const r = route(cmd, args);
+        if (r.kind === "answer") return r.run();
+        if (r.kind === "refuse") throw new Error(r.message);
+        const out = await host.invoke(cmd, args, options);
+        r.then?.(out);
+        return out;
       },
     },
     transformCallback: {
@@ -304,6 +338,7 @@ export function borrowTauri() {
       },
     },
   });
+  // `isTauri` and `__TAURI_INTERNALS__` are non-enumerable on the parent, so they're named here.
   Object.defineProperty(window, "__TAURI_INTERNALS__", { value: internals, configurable: true });
   Object.defineProperty(window, "isTauri", { value: true, configurable: true });
   // Plugins' own globals (`__TAURI_EVENT_PLUGIN_INTERNALS__` and the like).
@@ -317,4 +352,58 @@ export function borrowTauri() {
     for (const id of callbacks) host.unregisterCallback?.(id);
     callbacks.clear();
   });
+}
+
+/** The command an IPC request is for (`http://ipc.localhost/open_file` on Windows, `ipc://localhost/…` elsewhere), or null. */
+export function ipcCommand(url: string): string | null {
+  const m = /^(?:https?:\/\/ipc\.localhost|ipc:\/\/localhost)\/([^?#]+)/.exec(url);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
+
+/** An IPC request's arguments: Tauri sends JSON, or raw bytes for a binary payload. */
+function ipcArgs(body: BodyInit | null | undefined): unknown {
+  if (typeof body !== "string") return body ?? {};
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
+
+/** A reply as Tauri's IPC protocol sends it (ipc-protocol.js reads `Tauri-Response` and the content type). */
+export function ipcResponse(ok: boolean, value: unknown): Response {
+  const status = { "Tauri-Response": ok ? "ok" : "error" };
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    return new Response(value as BodyInit, { headers: { ...status, "Content-Type": "application/octet-stream" } });
+  }
+  return new Response(JSON.stringify(value === undefined ? null : value), { headers: { ...status, "Content-Type": "application/json" } });
+}
+
+/** The frame's own Tauri (WebView2): answer its IPC requests by `route`, before they reach Spark's Rust. */
+function interceptIpc() {
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const cmd = ipcCommand(url);
+    if (cmd === null) return realFetch(input, init);
+    const r = route(cmd, ipcArgs(init?.body));
+    if (r.kind === "pass") {
+      const res = realFetch(input, init);
+      const then = r.then;
+      if (then) void res.then((x) => (x.headers.get("Tauri-Response") === "ok" ? x.clone().json().then(then) : undefined)).catch(() => {});
+      return res;
+    }
+    if (r.kind === "refuse") return Promise.resolve(ipcResponse(false, r.message));
+    return Promise.resolve()
+      .then(r.run)
+      .then(
+        (v) => ipcResponse(true, v),
+        (e) => ipcResponse(false, e instanceof Error ? e.message : e),
+      );
+  };
 }

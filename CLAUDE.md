@@ -29,10 +29,13 @@ Zustand). Release and deploy are ported from dawg and described in
   `spark://update-state`; installing still only follows a click.
   `capabilities/project.json` lets that window on the dev server's origin
   use the system dialogs, read-only window/event/path calls and the title
-  bar's window calls; `mode.ts` `borrowTauri` lends Tauri to the board's
-  frames, sending plugin commands to Spark (never the title bar's,
+  bar's window calls; `mode.ts` `borrowTauri` routes the board's frames'
+  Tauri calls (`route`): plugin commands to Spark (never the title bar's,
   `boardOnly`) and the app's own commands to spark.setup fakes and the
-  frame's sample data (`sample.ts`) or an error.
+  frame's sample data (`sample.ts`) or an error. On Windows WebView2 gives
+  every frame Tauri of its own (read-only `__TAURI_INTERNALS__`, talking to
+  Spark's Rust), so there it intercepts the frame's IPC `fetch` instead
+  (`interceptIpc`); elsewhere it lends the frame the top window's Tauri.
 - `src`: the launcher (home): `components/Launcher.tsx` and
   `stores/projects-store.ts` (open a folder, recent projects). It wears the
   board's design system, not one of its own: `lib/theme.ts` puts theme.ts's

@@ -3223,6 +3223,8 @@ function resetEdits(els: Element[]) {
 function askAbout() {
   if (!picking) setPicking(true);
   if (!open) setOpen(true);
+  // The Claude column may be showing the chats list, which has no prompt: back to the conversation.
+  if (shell?.chatsOpen?.()) shell.setChatsOpen?.(false);
   requestAnimationFrame(() => {
     placeAsk();
     askInput.focus();
