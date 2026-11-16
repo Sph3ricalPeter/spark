@@ -24,6 +24,11 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   launcher: `start_project` starts it (one project runs at a time),
   `show_project` navigates the window there, and the board's home button
   emits `spark://home` to come back (the project keeps running).
+  The open project is remembered (`open-project.json` in Spark's config
+  folder, written by `show_project`): restarting Spark, an update's restart
+  included, reopens it through `launch_folder` (`startup_folder`; a
+  `spark <folder>` argument wins); only the home button forgets it, and a
+  folder that's gone or no longer a project falls back to the start screen.
   The window is frameless: the title bar is one component, `titlebar.ts`,
   the board's bar with a project open and home's (`home.ts` mounts
   `launcherTitleBar`) (drag, double-click maximizes, window

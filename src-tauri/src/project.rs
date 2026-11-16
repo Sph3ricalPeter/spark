@@ -16,6 +16,10 @@
 //!
 //! One project runs at a time: opening another stops the one before, going
 //! home keeps it running (reopening it is instant), quitting Spark stops it.
+//!
+//! The open project is remembered (`open-project.json` in Spark's config
+//! folder), so restarting Spark, an update's restart included, opens it
+//! again. Only the home button forgets it: the next start is the launcher.
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -61,6 +65,8 @@ export default async (env) => {
 pub const MAIN: &str = "main";
 /// What the board's home button emits (shell.ts): show the launcher again.
 pub const HOME_EVENT: &str = "spark://home";
+/// The project that was open when Spark last ran, in Spark's config folder.
+const OPEN_FILE: &str = "open-project.json";
 
 struct Running {
     child: Child,
@@ -435,7 +441,52 @@ pub async fn show_project(app: AppHandle, folder: String) -> Result<(), String> 
     let _ = window.set_title(&project_title(&name_of(&path), &base));
     window
         .navigate(url.parse().map_err(|e| format!("{e}"))?)
-        .map_err(|e| format!("Couldn't show the project: {e}"))
+        .map_err(|e| format!("Couldn't show the project: {e}"))?;
+    if let Some(dir) = config_dir(&app) {
+        remember(&dir, Some(&folder));
+    }
+    Ok(())
+}
+
+fn config_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok()
+}
+
+/// Remember the open project for the next start, or forget it (`None`).
+pub fn remember(dir: &Path, folder: Option<&str>) {
+    let file = dir.join(OPEN_FILE);
+    match folder {
+        Some(folder) => {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(file, serde_json::json!({ "folder": folder }).to_string());
+        }
+        None => {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// The project that was open when Spark last ran, if it's still there and
+/// still a project; a folder that's gone is forgotten.
+pub fn remembered(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(OPEN_FILE)).ok()?;
+    let folder = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("folder")?
+        .as_str()?
+        .to_string();
+    if check_folder(Path::new(&folder)).is_ok() {
+        Some(folder)
+    } else {
+        remember(dir, None);
+        None
+    }
+}
+
+/// What the launcher opens as Spark starts: the folder it was launched with
+/// (`spark <folder>`), else the project that was open when it last ran.
+pub fn startup_folder(args: &[String], dir: Option<&Path>) -> Option<String> {
+    folder_arg(args).or_else(|| dir.and_then(remembered))
 }
 
 /// Back to the launcher. The project keeps running, so reopening it is instant.
@@ -481,8 +532,9 @@ fn app_url(dev_url: Option<&Url>, dev: bool, https: bool) -> Url {
     Url::parse(url).unwrap()
 }
 
-/// At startup: the launcher's title, the folder Spark was launched with, and
-/// the board's home button. Not where home is: the window may not have
+/// At startup: the launcher's title, the folder to open (launched with, or
+/// the project left open last time), and the board's home button, which
+/// forgets the open project. Not where home is: the window may not have
 /// loaded the launcher yet (its URL is still `about:blank`), and going "home"
 /// there left a blank window. `show_project` reads it off the launcher.
 pub fn init(app: &AppHandle) {
@@ -490,9 +542,16 @@ pub fn init(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN) {
         *projects.title.lock().unwrap() = window.title().unwrap_or_else(|_| "spark".into());
     }
-    *projects.pending.lock().unwrap() = folder_arg(&std::env::args().collect::<Vec<_>>());
+    let dir = config_dir(app);
+    *projects.pending.lock().unwrap() =
+        startup_folder(&std::env::args().collect::<Vec<_>>(), dir.as_deref());
     let handle = app.clone();
-    app.listen_any(HOME_EVENT, move |_| go_home(&handle));
+    app.listen_any(HOME_EVENT, move |_| {
+        if let Some(dir) = &dir {
+            remember(dir, None);
+        }
+        go_home(&handle);
+    });
 }
 
 /// The project folder given on the command line (`spark <folder>`), if any.
@@ -546,6 +605,41 @@ mod tests {
         let built = app_url(Some(&dev), false, false);
         assert!(is_launcher(&built) && built != dev);
         assert!(is_launcher(&app_url(None, true, false)));
+    }
+
+    #[test]
+    fn the_open_project_is_reopened_until_home_forgets_it() {
+        let root = std::env::temp_dir().join(format!("spark-open-{}", std::process::id()));
+        let config = root.join("config");
+        let project = root.join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("package.json"), "{}").unwrap();
+        std::fs::write(project.join("vite.config.ts"), "").unwrap();
+        let folder = project.to_string_lossy().into_owned();
+        let args = vec!["spark".to_string()];
+
+        // Nothing open last time: the launcher.
+        assert_eq!(startup_folder(&args, Some(&config)), None);
+        // A project open when Spark quit (or restarted to update): it again.
+        remember(&config, Some(&folder));
+        assert_eq!(startup_folder(&args, Some(&config)), Some(folder.clone()));
+        // `spark <folder>` wins over it.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let launched = vec!["spark".into(), other.to_string_lossy().into_owned()];
+        assert_eq!(
+            startup_folder(&launched, Some(&config)),
+            Some(other.to_string_lossy().into_owned())
+        );
+        // Home forgets it.
+        remember(&config, None);
+        assert_eq!(startup_folder(&args, Some(&config)), None);
+        // A folder that's gone (or no longer a project) is forgotten.
+        remember(&config, Some(&folder));
+        std::fs::remove_file(project.join("vite.config.ts")).unwrap();
+        assert_eq!(startup_folder(&args, Some(&config)), None);
+        assert!(!config.join(OPEN_FILE).exists());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
