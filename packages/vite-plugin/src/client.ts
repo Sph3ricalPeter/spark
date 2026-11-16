@@ -8,7 +8,8 @@
 // - hover highlights, click selects (the app doesn't see the click),
 //   Arrow Up selects the parent (up to the variant box and the frame itself);
 //   Esc steps out one level at a time (popover, text edit, selection) but
-//   never leaves edit mode: only Tab (or Alt+E) switches back to view;
+//   never leaves edit mode: only Tab (or Alt+E) switches back to view; in the
+//   empty chat prompt (a chat pin focuses it) one Esc leaves it and the selection;
 // - the selection has handles: drag them to resize (Shift keeps the ratio
 //   on a corner, Alt drags slower; sizes stay whole pixels);
 // - double-click text to edit it in place; Enter or Esc keeps the edit.
@@ -1957,9 +1958,7 @@ function refreshPins() {
           click: (e: Event) => {
             e.stopPropagation();
             const at = pins.find((p) => p.node === node)?.el;
-            if (!at?.isConnected) return;
-            select(at);
-            askInput.focus();
+            if (at?.isConnected) openPin(at);
           },
         }, lucide("message-circle", 12));
       const chat = openChatOn(k) ?? openChatOn(key);
@@ -1970,8 +1969,19 @@ function refreshPins() {
     }
   }
   pins = next;
-  pinLayer.replaceChildren(...pins.map((p) => p.node));
+  // Only when the pins changed: taking a pin out of the page, even to put it straight
+  // back, drops a click pressed on it (refreshPins runs twice a second, see follow).
+  const nodes = pins.map((p) => p.node);
+  const now = pinLayer.children;
+  if (nodes.length !== now.length || nodes.some((n, i) => now[i] !== n)) pinLayer.replaceChildren(...nodes);
   placePins();
+}
+/** A pin was clicked: its element's chat, with the cursor in the prompt (Esc steps out of both). */
+function openPin(el: Element) {
+  // The column shows the conversation, not the list, so the prompt can take focus.
+  if (listing && shell?.isActive(window)) shell.setChatsOpen?.(false);
+  select(el);
+  askInput.focus();
 }
 function placePins() {
   // Pins stay out of the way of a selection: with one (here or in another frame), only the
@@ -1990,9 +2000,11 @@ function placePins() {
       p.node.style.top = `${r.top + 28 * s - 22}px`;
       continue;
     }
-    // The pin's bottom-left corner sits on the element's top-right one.
-    p.node.style.left = `${r.right}px`;
-    p.node.style.top = `${r.top - 22}px`;
+    // The pin's bottom-left corner sits on the element's top-right one, kept inside the
+    // frame: an element as wide or as high up as the page would put it past the edge, out of reach.
+    const s = 1 / (shell?.zoom ?? 1);
+    p.node.style.left = `${Math.min(r.right, document.documentElement.clientWidth - 22 * s)}px`;
+    p.node.style.top = `${Math.max(r.top, 22 * s) - 22}px`;
   }
 }
 
@@ -3065,7 +3077,12 @@ const panelKeys = (e: Event) => {
   } else if (k.key === "Escape") {
     const t = k.composedPath()[0] as HTMLElement | undefined;
     // Esc while typing leaves the field; otherwise it steps out like in the app.
-    if (t && textEntry(k)) {
+    // The chat prompt is the exception: one Esc leaves it and steps out too (clears the
+    // selection a pin or a click put it on), unless there's a draft in it to keep in context.
+    if (t === askInput && !askInput.value.trim()) {
+      t.blur();
+      escapeStep();
+    } else if (t && textEntry(k)) {
       t.blur();
       closePopover();
     } else {
