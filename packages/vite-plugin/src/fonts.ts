@@ -15,14 +15,17 @@ export const UI_FONT = `"Spark Inter", ui-sans-serif, system-ui, sans-serif`;
 /** The monospace stack for values and code. */
 export const MONO_FONT = "ui-monospace, SFMono-Regular, Consolas, monospace";
 
-/** Register the font in a document. @font-face doesn't work inside a shadow root, so it goes in the head. */
-export function installFont(doc: Document = document) {
+export type FontSubset = keyof typeof RANGES;
+
+/** Register the font in a document. @font-face doesn't work inside a shadow root, so it goes in the head.
+ * `url` is where each file is: the dev server's /@spark/fonts/ on the board, the bundled files in the launcher. */
+export function installFont(doc: Document = document, url = (subset: FontSubset) => `/@spark/fonts/inter-${subset}-wght-normal.woff2`) {
   if (doc.querySelector("style[data-spark='font']")) return;
   const css = Object.entries(RANGES)
     .map(
       ([subset, range]) =>
         `@font-face { font-family: "Spark Inter"; font-style: normal; font-display: swap; font-weight: 100 900; ` +
-        `src: url("/@spark/fonts/inter-${subset}-wght-normal.woff2") format("woff2-variations"); unicode-range: ${range}; }`,
+        `src: url("${url(subset as FontSubset)}") format("woff2-variations"); unicode-range: ${range}; }`,
     )
     .join("\n");
   const style = doc.createElement("style");

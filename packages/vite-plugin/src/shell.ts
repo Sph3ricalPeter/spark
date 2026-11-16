@@ -41,12 +41,11 @@ import { componentsTab, COMPONENTS_STYLE, type BreakdownTarget, type PlanCompone
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
 import { name as projectName } from "/@spark/project";
-import { inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
+import { BAR_H, inSpark, titleBar, TITLE_BAR_STYLE } from "./titlebar.ts";
 import { getState, setState } from "./state.ts";
 import { ACCENTS, THEMES, TEXT_SCALE, cleanFamily, getSetting, hasSettings, onSettings, resetSettings, setSetting, type ThemeName } from "./settings.ts";
 import { SAMPLE_PARAM } from "./sample.ts";
 
-const BAR_H = 36;
 /** The inspector's and the chat's default widths; dragging their left edges changes them (grip.ts). */
 const PANEL_W = 300;
 const CHAT_W = 340;
@@ -196,13 +195,6 @@ root.append(
     `${THEME}
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .bar {
-      position: absolute; top: 0; left: 0; right: 0; height: ${BAR_H}px; z-index: 3;
-      display: flex; align-items: center; gap: 6px; padding: 0 10px;
-      background: var(--sp-bg); color: var(--sp-text); border-bottom: 1px solid var(--sp-line);
-      font: var(--sp-fs-md)/1 var(--sp-font); user-select: none; overflow: hidden;
-    }
-    .bar .project { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--sp-text-strong); }
     .sidebar { top: ${BAR_H}px; }
     ${LAYERS_STYLE}
     ${SIDEBAR_STYLE}
@@ -249,7 +241,7 @@ root.append(
     .bar .gear:hover, .bar .gear.on { background: var(--sp-field); color: var(--sp-text-strong); }
     /* Settings (buildSettings): a panel under the title bar's gear, over the right columns. */
     .settings {
-      position: absolute; top: ${BAR_H + 6}px; right: 8px; z-index: 2147483647; width: 340px; max-height: calc(100% - ${BAR_H + 14}px);
+      position: absolute; top: ${BAR_H + 6}px; right: 8px; z-index: 2147483647; width: 360px; max-height: calc(100% - ${BAR_H + 14}px);
       display: flex; flex-direction: column; box-sizing: border-box;
       background: var(--sp-surface); border: 1px solid var(--sp-line-strong); border-radius: var(--sp-r-lg);
       box-shadow: 0 12px 40px #000b, 0 2px 6px #0006; color: var(--sp-text); font: var(--sp-fs-md)/1.3 var(--sp-font);
@@ -301,8 +293,8 @@ root.append(
     /* The canvas is the whole window under the bar: the panels cover its edges, so resizing them never moves it. */
     .canvas {
       position: absolute; top: ${BAR_H}px; left: 0; right: 0; bottom: 0; overflow: hidden;
-      background-color: var(--spu-canvas, #0e0f11);
-      background-image: radial-gradient(#ffffff14 1px, transparent 1px);
+      background-color: var(--sp-canvas);
+      background-image: radial-gradient(var(--sp-canvas-dot) 1px, transparent 1px);
       background-size: 16px 16px;
     }
     .canvas.no-grid { background-image: none; }
@@ -1297,7 +1289,7 @@ function frameProperties() {
   const sampleSel = h("select", { title: "The sample data this frame's app runs on (spark.setup.tsx samples). Picking one starts the app over on it." }) as HTMLSelectElement;
   const sampleNone = h("span", { class: "hint" });
   const missingEl = h("div", { class: "missing" });
-  const writeSamples = h("button", { class: "write", title: "Claude writes a mock backend for the app in spark.setup.tsx (a chat in Chats)" });
+  const writeSamples = h("button", { class: "sp-btn primary wide", title: "Claude writes a mock backend for the app in spark.setup.tsx (a chat in Chats)" });
   const file = h("span", { class: "file" });
   const layoutSel = h("select", { title: "Cases in a row or stacked in a column" }) as HTMLSelectElement;
   for (const [v, n] of [["auto", "Auto"], ["row", "Row"], ["column", "Stacked"]]) layoutSel.append(h("option", { value: v }, n));
@@ -1353,8 +1345,6 @@ function frameProperties() {
       .missing { padding: 2px 0 2px 72px; color: var(--sp-warn); font-size: var(--sp-fs-sm); overflow-wrap: anywhere; }
       .missing:empty { display: none; }
       .missing code { font: var(--sp-fs-xs) var(--sp-mono); }
-      button.write { height: auto; min-height: 24px; padding: 3px 8px; font-size: var(--sp-fs-sm); color: var(--sp-text-strong); }
-      button.write:disabled { cursor: default; color: var(--sp-text-dim); }
       `,
     ),
     h("div", { class: "fp" }, h("div", { class: "head" }, kindIcon, name, meta), app, comp),
@@ -1609,8 +1599,10 @@ const api: ShellApi = {
   },
   register(hooks) {
     // A reloaded frame registers a fresh client; the old one belongs to a dead page.
+    // The iframe keeps its window across a reload, so the same key can come back
+    // with a new client: its old panel and change list go too, or they pile up.
     for (const [w, old] of clients) {
-      if (w.closed || !frameOf(w)) {
+      if (w.closed || !frameOf(w) || (w === hooks.win && old !== hooks)) {
         old.panel.remove();
         old.changes?.remove();
         clients.delete(w);
@@ -1910,8 +1902,17 @@ canvas.addEventListener("contextmenu", (e) => {
 // Chats: every chat with Claude about an element, from the dev server (chats.ts)
 
 type ChatRef = { id: string; key: string; kind?: string };
-/** Open a chat on its element: the frame that has it becomes the selected one, in Edit mode. */
+/** Open a chat in the chat column: on its element (the frame that has it becomes the selected one, in Edit
+ * mode), or, for a chat with no element (an Implement changes run, a task), in the selected frame's column. */
 function openChat(chat: ChatRef): boolean {
+  if (chat.kind) {
+    const win = selected().iframe.contentWindow;
+    const hooks = win ? clients.get(win) : undefined;
+    if (!hooks?.showChat) return false;
+    setChatsOpen(false);
+    hooks.showChat(chat.id);
+    return true;
+  }
   for (const f of frames) {
     const win = f.iframe.contentWindow;
     const hooks = win ? clients.get(win) : undefined;
@@ -2151,9 +2152,10 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   }
   else return;
   showChats();
-  // A task (the Components view's "Write them with Claude", an Ask with nothing selected) has no element
-  // to show its chat on: the chat column's list opens on it, so every run is in sight as it goes.
-  if (e.type === "start" && e.chat && chatData.find((c) => c.id === e.chat)?.kind === "task" && chatList.reveal(e.chat)) setChatsOpen(true);
+  // A task ("Write sample data with Claude", the Components view's "Write them with Claude", Break down) has no
+  // element: the chat column opens its conversation, like an element's, so the run is in sight as it goes.
+  const started = e.type === "start" && e.chat ? chatData.find((c) => c.id === e.chat) : undefined;
+  if (started?.kind === "task") openChat(started);
 });
 import.meta.hot?.send("spark:chats-get", {});
 // Claude was busy with another chat: "Write sample data" can be pressed again.

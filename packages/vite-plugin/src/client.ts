@@ -189,7 +189,7 @@ function fieldFor(prop: string): Field | undefined {
 }
 
 /** Which of the inspector's folding sections are open, remembered with the project (state.ts). */
-const sectionsOpen: Record<string, boolean> = { all: false, vars: false, owners: false, rules: false };
+const sectionsOpen: Record<string, boolean> = { changes: true, all: false, vars: false, owners: false, rules: false };
 Object.assign(sectionsOpen, getState<Record<string, boolean>>("sections"));
 
 function fiberOf(el: Element): Fiber | null {
@@ -677,6 +677,7 @@ const STYLE = `${THEME}
     .change.here { background: color-mix(in srgb, var(--sp-accent) 8%, transparent); margin: 0 -12px; padding: 5px 12px; }
     .change code { font: var(--sp-fs-sm) var(--sp-mono); color: var(--sp-text-strong); word-break: break-all; }
     .change button { padding: 0 6px; }
+    .here-actions { display: flex; justify-content: flex-end; margin-top: var(--sp-2); }
     .fab {
       position: fixed; right: 12px; bottom: 12px; pointer-events: auto;
       background: var(--sp-accent); border-color: var(--sp-accent); color: var(--sp-text-strong); font-weight: 600;
@@ -1368,6 +1369,7 @@ function jumpToVariable(name: string) {
 
 function select(el: Element | null) {
   blurApp();
+  stopViewing();
   clearAlso();
   if (el !== selected) editTarget = null;
   if (editing) stopTextEdit(true);
@@ -1807,14 +1809,25 @@ type RunEvent =
 let run: { kind: "implement" | "ask"; lines: string[]; done?: Extract<RunEvent, { type: "done" }>; error?: string } | null = null;
 const isRunning = () => !!run && !run.done && !run.error;
 
-function implement() {
+/** Have Claude apply the pending changes, or only those with these ids. */
+function implement(ids?: string[]) {
   if (isRunning()) return;
-  import.meta.hot?.send("spark:implement", {});
+  import.meta.hot?.send("spark:implement", ids ? { ids } : {});
 }
 
 function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
+  // A reply in a chat with no element: it carries on that chat's Claude session.
+  const v = viewed();
+  if (v) {
+    if (v.closed) import.meta.hot?.send("spark:chat-open", { id: v.id });
+    import.meta.hot?.send("spark:ask", { request, selection: null, chat: v.key });
+    askInput.value = "";
+    sendBtn.classList.remove("ready");
+    askInput.blur();
+    return;
+  }
   const el = askElement();
   // A frame or variant box isn't one element: no owners or text, just its target.
   const about = (x: Element, label?: string) => {
@@ -1854,6 +1867,26 @@ function askLabel(el: Element, path: PathEntry[]): string {
 
 /** The element the popup is on: its chat key and what it's called. */
 let askOn: { key: string; label: string } | null = null;
+/** On the board: a chat with no element (an Implement changes run, a task) opened from the Chats list. The column
+ * shows it instead of the selection's chat until something is selected or it's closed (stopViewing). */
+let viewing: string | null = null;
+const viewed = () => (viewing ? chats.find((c) => c.id === viewing) : undefined);
+
+/** Open a chat with no element in the column, like an element's: its conversation, and a reply resumes it. */
+function showChat(id: string) {
+  viewing = id;
+  syncAsk();
+  renderChat();
+  askInput.focus();
+}
+
+/** Back from a chat with no element to the selection's own chat. */
+function stopViewing() {
+  if (viewing === null) return;
+  viewing = null;
+  syncAsk();
+  renderChat();
+}
 
 /** An element's chat: where it's written plus the instance it is (owners, list keys), so a
  * conversation stays with one element across reloads, and each list item has its own. */
@@ -2092,6 +2125,15 @@ function syncAsk() {
 
 /** Fill the popup for the selection: its name, then its conversation. */
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
+  const v = viewed();
+  makeBtn.style.display = v ? "none" : "";
+  if (v) {
+    askTag.style.setProperty("--role", "var(--sp-accent)");
+    askTag.title = `${v.label || "Claude"}: a chat of its own, with no element. Select something to ask about it instead.`;
+    askTag.replaceChildren(lucide("message-circle", 12), h("span", { class: "nm" }, v.label || "Claude"));
+    askMore.style.display = "none";
+    return;
+  }
   const t = targetOf(el);
   const n = t ? { ...targetName(t), comp: true } : askName(el, path);
   // Already a component (its instance's root element), or a frame or variant: there's nothing to extract,
@@ -2120,7 +2162,20 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
 /** One chat with Claude about an element (chats.ts on the dev server). */
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
+type Chat = {
+  id: string;
+  key: string;
+  label: string;
+  sessionId: string | null;
+  model?: string;
+  messages: ChatMessage[];
+  created: number;
+  updated: number;
+  closed?: boolean;
+  resolved?: boolean;
+  /** A chat with no element (an Implement changes run, a task such as "Write sample data with Claude"). */
+  kind?: "implement" | "task";
+};
 
 /** The chat column shows every chat (the board's list) instead of the selection's conversation. */
 let listing = false;
@@ -2156,14 +2211,16 @@ let runChat: string | null = null;
 
 /** The conversation on the selected element, with Claude's progress while it answers. */
 function renderChat() {
-  const chat = askOn ? openChatOn(askOn.key) : undefined;
+  const chat = viewed() ?? (askOn ? openChatOn(askOn.key) : undefined);
   const answering = isRunning() && !!chat && runChat === chat.id;
   const msgs = chat?.messages ?? [];
   askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
   const model = (answering && runModel) || chat?.model;
   askTitle.replaceChildren(...(listing ? ["All chats"] : ["Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : [])]));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
-  newChatBtn.toggleAttribute("disabled", answering);
+  newChatBtn.toggleAttribute("disabled", answering && !viewing);
+  newChatBtn.textContent = viewing ? "Close" : "New chat";
+  newChatBtn.title = viewing ? "Back to the selection's chat; this one stays in Chats" : "Start over with a new Claude session; this chat stays in Chats";
   // Claude writes Markdown; the person's own words stay as typed.
   const nodes: HTMLElement[] = msgs.map((m) =>
     m.role === "claude"
@@ -2206,6 +2263,7 @@ function askHint(answering: boolean, replying: boolean) {
 }
 
 function resetChat() {
+  if (viewing) return stopViewing();
   if (!askOn) return;
   import.meta.hot?.send("spark:chat-new", { chat: askOn.key });
   askInput.focus();
@@ -2305,6 +2363,7 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
 import.meta.hot?.on("spark:chats", (d: { chats: Chat[] }) => {
   chats = d.chats;
   rekeySelection();
+  if (viewing) syncAsk();
   renderChat();
   refreshPins();
 });
@@ -2479,6 +2538,7 @@ function renderTarget(el: Element, t: Target) {
         ? `The whole frame. Ask Claude about all of it ${where}; click an element inside to edit that one.`
         : `This variant (case) of the component. Ask Claude about it ${where}; click an element inside to edit that one, Arrow Up for the frame.`,
     ),
+    changesHere(el),
   );
 }
 
@@ -2717,6 +2777,7 @@ function render() {
   for (const f of essentials) body.append(fieldRow(f));
   // Edits in the folded part still show: their categories open on their own.
   const editedRest = FIELDS.flatMap((g) => g.fields).filter((f) => !essentials.includes(f) && (f.kind === "sides" ? SIDES.some((s) => overrides.some((c) => c.property === `${f.prop}-${s}`)) : overrides.some((c) => c.property === f.prop)));
+  body.append(changesHere(el));
   const all = section("all", "All properties", editedRest.length ? `${editedRest.length} changed` : "", () => {
     const out: HTMLElement[] = [];
     for (const { group, fields } of FIELDS) {
@@ -2851,12 +2912,13 @@ function renderChanges() {
   const pending = allChanges().filter((c) => c.status === "pending");
   const implementBtn = h(
     "button",
-    { class: "on", title: "Have Claude apply these changes to the code", click: () => implement() },
+    { class: "sp-btn primary", title: "Have Claude apply these changes to the code", click: () => implement() },
     "Implement changes",
   ) as HTMLButtonElement;
   implementBtn.disabled = pending.length === 0 || isRunning();
   footer.replaceChildren(h("div", { class: "changes-head" }, h("h3", {}, `Changes (${pending.length})`), h("span", { class: "grow" }), implementBtn));
   shell?.setChangeCount?.(pending.length);
+  if (scopedImplement) scopedImplement.disabled = isRunning();
   // A run going: what Claude is doing now, and Stop. Its transcript and result are in the Chats list.
   if (run?.kind === "implement" && isRunning()) {
     implementBtn.replaceChildren("Stop");
@@ -2874,40 +2936,98 @@ function renderChanges() {
   }
   const here = new Set(selected ? overridesOn(selected).map((c) => c.id) : []);
   // Newest first: the change you just made is at the top.
-  for (const c of [...pending].sort((a, b) => b.at.localeCompare(a.at))) {
-    const what =
-      c.property === "text"
-        ? `text: "${c.from}" → "${c.to}"`
-        : c.property === "removed"
-          ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
-          : `${c.property}: ${c.from || "unset"} → ${c.to}`;
-    const kind = c.level === "instance" ? `on ${stepLabel(c)}` : c.level === "component" ? "css rule" : "variable";
-    footer.append(
-      h(
-        "div",
-        { class: `change${here.has(c.id) ? " here" : ""}` },
-        h(
-          "div",
-          { class: "what" },
-          h("div", { class: "lvl" }, kind),
-          h("code", {}, what),
-          h("div", { class: "where" }, describeChange(c)),
-          c.level === "instance" && scopeSelect(c),
-        ),
-        h(
-          "button",
-          {
-            title: "Revert",
-            click: () => {
-              revert(c.id);
-              changed();
-            },
-          },
-          lucide("rotate-ccw", 13),
-        ),
-      ),
-    );
+  for (const c of newestFirst(pending)) footer.append(changeRow(c, here.has(c.id)));
+}
+
+const newestFirst = (list: Change[]) => [...list].sort((a, b) => b.at.localeCompare(a.at));
+
+/** One pending change in a list (the Changes tab, the inspector's "Changes here"): what, where, its step, Revert. */
+function changeRow(c: Change, here: boolean): HTMLElement {
+  const what =
+    c.property === "text"
+      ? `text: "${c.from}" → "${c.to}"`
+      : c.property === "removed"
+        ? `removed <${c.element.tag}>${c.element.comp ? ` in ${c.element.comp}${pathFor(c)[0]?.key != null ? `[${pathFor(c)[0].key}]` : ""}` : ""}`
+        : `${c.property}: ${c.from || "unset"} → ${c.to}`;
+  const kind = c.level === "instance" ? `on ${stepLabel(c)}` : c.level === "component" ? "css rule" : "variable";
+  return h(
+    "div",
+    { class: `change${here ? " here" : ""}` },
+    h("div", { class: "what" }, h("div", { class: "lvl" }, kind), h("code", {}, what), h("div", { class: "where" }, describeChange(c)), c.level === "instance" && scopeSelect(c)),
+    h(
+      "button",
+      {
+        title: "Revert",
+        click: () => {
+          revert(c.id);
+          changed();
+        },
+      },
+      lucide("rotate-ccw", 13),
+    ),
+  );
+}
+
+/** A rule's selector as it matches at rest: no pseudo-elements or states (`.btn:hover::after` → `.btn`). */
+function restingSelector(sel: string): string {
+  return sel.replace(/::?(focus-visible|focus-within|first-letter|first-line|placeholder|selection|backdrop|before|after|marker|hover|focus|active|visited|target)(?![\w-])/gi, "");
+}
+
+/** Does `scope` or anything inside it match a selector list (as written, or at rest)? */
+function matchesWithin(scope: Element, selector: string): boolean {
+  for (const sel of [selector, restingSelector(selector)]) {
+    try {
+      if (scope.matches(sel) || scope.querySelector(sel)) return true;
+    } catch {
+      // Not a selector the DOM takes (a pseudo-element left over): try the next form.
+    }
   }
+  return false;
+}
+
+/**
+ * The pending changes that change something in `scope` (the element and
+ * everything inside it): overrides covering an element there; CSS rule edits
+ * whose rule matches an element there; and any edit made with an element
+ * there selected (a variable is global, so only those count).
+ */
+function changesWithin(scope: Element): Change[] {
+  const inside = (x: Element) => x === scope || scope.contains(x);
+  const madeHere = (c: Change) => {
+    const src = c.element.src;
+    return !!src && (scope.getAttribute("data-spark-src") === src || !!scope.querySelector(`[data-spark-src="${CSS.escape(src)}"]`));
+  };
+  return allChanges().filter((c) => {
+    if (c.status !== "pending") return false;
+    if (c.level === "instance") return coveredElements(c).some(inside);
+    if (madeHere(c)) return true;
+    return c.level === "component" && !!c.selector && matchesWithin(scope, c.selector);
+  });
+}
+
+/** Its Implement button, kept in step with Claude's runs by renderChanges. */
+let scopedImplement: HTMLButtonElement | null = null;
+
+/**
+ * The inspector's "Changes here": the pending changes in the selection's
+ * subtree (it and everything inside it), as in the Changes tab, and
+ * Implement for just those.
+ */
+function changesHere(scope: Element): HTMLElement {
+  const list = newestFirst(changesWithin(scope));
+  scopedImplement = null;
+  return section("changes", "Changes here", String(list.length), () => {
+    if (list.length === 0) return [h("div", { class: "empty" }, "No pending changes on this or anything inside it.")];
+    const btn = h(
+      "button",
+      { class: "on", title: "Have Claude apply only these changes to the code", click: () => implement(list.map((c) => c.id)) },
+      list.length === 1 ? "Implement this change" : `Implement these ${list.length}`,
+    ) as HTMLButtonElement;
+    btn.disabled = isRunning();
+    scopedImplement = btn;
+    const on = new Set(scope === selected ? overridesOn(scope).map((c) => c.id) : []);
+    return [...list.map((c) => changeRow(c, on.has(c.id))), h("div", { class: "here-actions" }, btn)];
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -3516,6 +3636,7 @@ if (shell) {
     setOpen,
     setPicking,
     deselect: () => select(null),
+    showChat,
     refresh: () => {
       render();
       syncChatsMode();
