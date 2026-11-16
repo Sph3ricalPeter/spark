@@ -35,6 +35,29 @@ const MODULES: Record<string, string> = {
   "/@spark/gallery": path.join(here, "gallery.ts"),
   "/@spark/sample": path.join(here, "sample.ts"),
 };
+/**
+ * Page reloads, by window. Vite reloads every page on a "full-reload" (an
+ * edit to main.tsx or index.html, a change with no HMR boundary, a new
+ * prebundled dependency), and on the board that is Spark's whole window.
+ * The server sends it as `spark:full-reload` instead (configureServer), and
+ * this module, first on every page, reloads only the app's own windows: the
+ * board's frames and a page the app is embedded in, never the shell.
+ */
+const RELOAD = "/@spark/reload";
+const RELOAD_ID = "\0spark-reload";
+const RELOAD_MODULE = [
+  `import { mode } from "/@spark/mode";`,
+  `if (import.meta.hot && mode !== "shell") import.meta.hot.on("spark:full-reload", (p) => {`,
+  // Vite's own rules (client.mjs): an HTML change reloads only that page.
+  `  if (p?.ifFallback && !globalThis.__vite_is_fallback_page__) return;`,
+  `  if (p?.path && p.path.endsWith(".html")) {`,
+  `    const page = decodeURI(location.pathname), changed = import.meta.env.BASE_URL + p.path.slice(1);`,
+  `    if (page !== changed && p.path !== "/index.html" && !(page.endsWith("/") && page + "index.html" === changed)) return;`,
+  `  }`,
+  `  location.reload();`,
+  `});`,
+].join("\n");
+
 const ENTRY = "/@spark/entry";
 const ENTRY_ID = "\0spark-entry:";
 const COMPONENTS = "/@spark/components";
@@ -187,7 +210,11 @@ export default function spark(): Plugin {
       // front, so opening it doesn't make Vite discover them and reload the page.
       const icons = projectIconLibraries(path.resolve(config.root ?? process.cwd()));
       return {
-        server: { fs: { allow: [searchForWorkspaceRoot(config.root ?? process.cwd()), here] } },
+        server: {
+          fs: { allow: [searchForWorkspaceRoot(config.root ?? process.cwd()), here] },
+          // Spark's own files (chats, state, images, the plugin copy) are never the app's modules.
+          watch: { ignored: ["**/.spark/**"] },
+        },
         ...(icons.length ? { optimizeDeps: { include: icons } } : {}),
       };
     },
@@ -199,6 +226,7 @@ export default function spark(): Plugin {
     resolveId(id) {
       if (id in MODULES) return MODULES[id];
       if (id === CASES) return CASES_ID;
+      if (id === RELOAD) return RELOAD_ID;
       if (id === SAMPLES) return SAMPLES_ID;
       if (id === ICON_LIBS) return ICON_LIBS_ID;
       if (id === PROJECT) return PROJECT_ID;
@@ -213,6 +241,7 @@ export default function spark(): Plugin {
 
     load(id) {
       if (id === CASES_ID) return CASES_MODULE;
+      if (id === RELOAD_ID) return RELOAD_MODULE;
       if (id === SAMPLES_ID) return SAMPLES_MODULE;
       if (id === ICON_LIBS_ID) return `export default ${JSON.stringify(projectIconLibraries(root))};`;
       if (id === PROJECT_ID) return `export const name = ${JSON.stringify(path.basename(root))};`;
@@ -246,16 +275,26 @@ export default function spark(): Plugin {
           const abs = src.startsWith("/") ? src : path.posix.join(dir, src);
           return `<script type="module" src="${ENTRY}?src=${encodeURIComponent(abs)}"></script>`;
         });
-        if (entries) return out;
+        const reload = { tag: "script", attrs: { type: "module", src: RELOAD }, injectTo: "head-prepend" } as const;
+        if (entries) return { html: out, tags: [reload] };
         // No entry to wrap: no shell, the client docks into the page as is.
         return {
           html,
-          tags: [{ tag: "script", attrs: { type: "module", src: "/@spark/client" }, injectTo: "body" }],
+          tags: [reload, { tag: "script", attrs: { type: "module", src: "/@spark/client" }, injectTo: "body" }],
         };
       },
     },
 
     configureServer(server) {
+      // Full reloads go to the pages that want them (RELOAD), not to every
+      // page Vite serves: the board itself never reloads for an app change.
+      // server.ws is also the client environment's hot channel (Vite 6+).
+      const send = server.ws.send.bind(server.ws) as (...args: unknown[]) => void;
+      server.ws.send = ((...args: unknown[]) => {
+        const p = args[0] as { type?: string } | string;
+        if (typeof p === "object" && p?.type === "full-reload") return send({ type: "custom", event: "spark:full-reload", data: p });
+        return send(...args);
+      }) as typeof server.ws.send;
       // Spark's UI fonts (fonts.ts), bundled so they work offline.
       server.middlewares.use("/@spark/fonts", (req, res, next) => {
         const name = path.basename((req.url ?? "").split("?")[0]);
