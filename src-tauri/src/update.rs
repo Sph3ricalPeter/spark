@@ -1,11 +1,10 @@
-//! Updates while a project is open.
+//! Updates, for the launcher and with a project open alike.
 //!
-//! The launcher checks and downloads through the updater's JS API
-//! (`src/stores/updater-store.ts`), but once a project opens the window shows
-//! the project's dev server instead, which can't import it, nor call Spark's
-//! own commands (it's a remote origin). The board's title bar
-//! (`packages/vite-plugin/src/titlebar.ts`) talks to this through events, like
-//! its home button: `spark://update-check` checks and downloads quietly and
+//! With a project open the window shows the project's dev server, which can't
+//! import the updater's JS API nor call Spark's own commands (it's a remote
+//! origin), so the title bar (`packages/vite-plugin/src/titlebar.ts`, the
+//! board's and the launcher's, one component) talks to this through events,
+//! like its home button: `spark://update-check` checks and downloads quietly and
 //! answers with `spark://update-state`; `spark://update-install` installs and
 //! relaunches, only ever from a click on "Restart to update" (the updater
 //! never restarts the app on its own).

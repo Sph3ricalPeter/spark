@@ -62,6 +62,8 @@ export type ClientHooks = {
   findChat?(key: string): boolean;
   /** Select that element and open its chat; its box in the frame, or null when it's not here. */
   openChat?(key: string): { x: number; y: number; w: number; h: number } | null;
+  /** Open a chat with no element (an Implement changes run, a task) in this frame's chat column, by id. */
+  showChat?(id: string): void;
   /** The Layers tab: the layers under `of` (null: the frame's top level). */
   layers?(of: Element | null): Layer[];
   /** The layers from the top level down to the one showing `el` (an element in an svg shows as its svg). */

@@ -1369,6 +1369,7 @@ function jumpToVariable(name: string) {
 
 function select(el: Element | null) {
   blurApp();
+  stopViewing();
   clearAlso();
   if (el !== selected) editTarget = null;
   if (editing) stopTextEdit(true);
@@ -1817,6 +1818,16 @@ function implement(ids?: string[]) {
 function sendAsk() {
   const request = askInput.value.trim();
   if (!request || isRunning()) return;
+  // A reply in a chat with no element: it carries on that chat's Claude session.
+  const v = viewed();
+  if (v) {
+    if (v.closed) import.meta.hot?.send("spark:chat-open", { id: v.id });
+    import.meta.hot?.send("spark:ask", { request, selection: null, chat: v.key });
+    askInput.value = "";
+    sendBtn.classList.remove("ready");
+    askInput.blur();
+    return;
+  }
   const el = askElement();
   // A frame or variant box isn't one element: no owners or text, just its target.
   const about = (x: Element, label?: string) => {
@@ -1856,6 +1867,26 @@ function askLabel(el: Element, path: PathEntry[]): string {
 
 /** The element the popup is on: its chat key and what it's called. */
 let askOn: { key: string; label: string } | null = null;
+/** On the board: a chat with no element (an Implement changes run, a task) opened from the Chats list. The column
+ * shows it instead of the selection's chat until something is selected or it's closed (stopViewing). */
+let viewing: string | null = null;
+const viewed = () => (viewing ? chats.find((c) => c.id === viewing) : undefined);
+
+/** Open a chat with no element in the column, like an element's: its conversation, and a reply resumes it. */
+function showChat(id: string) {
+  viewing = id;
+  syncAsk();
+  renderChat();
+  askInput.focus();
+}
+
+/** Back from a chat with no element to the selection's own chat. */
+function stopViewing() {
+  if (viewing === null) return;
+  viewing = null;
+  syncAsk();
+  renderChat();
+}
 
 /** An element's chat: where it's written plus the instance it is (owners, list keys), so a
  * conversation stays with one element across reloads, and each list item has its own. */
@@ -2094,6 +2125,15 @@ function syncAsk() {
 
 /** Fill the popup for the selection: its name, then its conversation. */
 function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
+  const v = viewed();
+  makeBtn.style.display = v ? "none" : "";
+  if (v) {
+    askTag.style.setProperty("--role", "var(--sp-accent)");
+    askTag.title = `${v.label || "Claude"}: a chat of its own, with no element. Select something to ask about it instead.`;
+    askTag.replaceChildren(lucide("message-circle", 12), h("span", { class: "nm" }, v.label || "Claude"));
+    askMore.style.display = "none";
+    return;
+  }
   const t = targetOf(el);
   const n = t ? { ...targetName(t), comp: true } : askName(el, path);
   // Already a component (its instance's root element), or a frame or variant: there's nothing to extract,
@@ -2122,7 +2162,20 @@ function renderAsk(el: Element, path: PathEntry[], kind: Kind) {
 
 type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: number; with?: string[] };
 /** One chat with Claude about an element (chats.ts on the dev server). */
-type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
+type Chat = {
+  id: string;
+  key: string;
+  label: string;
+  sessionId: string | null;
+  model?: string;
+  messages: ChatMessage[];
+  created: number;
+  updated: number;
+  closed?: boolean;
+  resolved?: boolean;
+  /** A chat with no element (an Implement changes run, a task such as "Write sample data with Claude"). */
+  kind?: "implement" | "task";
+};
 
 /** The chat column shows every chat (the board's list) instead of the selection's conversation. */
 let listing = false;
@@ -2158,14 +2211,16 @@ let runChat: string | null = null;
 
 /** The conversation on the selected element, with Claude's progress while it answers. */
 function renderChat() {
-  const chat = askOn ? openChatOn(askOn.key) : undefined;
+  const chat = viewed() ?? (askOn ? openChatOn(askOn.key) : undefined);
   const answering = isRunning() && !!chat && runChat === chat.id;
   const msgs = chat?.messages ?? [];
   askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
   const model = (answering && runModel) || chat?.model;
   askTitle.replaceChildren(...(listing ? ["All chats"] : ["Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : [])]));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
-  newChatBtn.toggleAttribute("disabled", answering);
+  newChatBtn.toggleAttribute("disabled", answering && !viewing);
+  newChatBtn.textContent = viewing ? "Close" : "New chat";
+  newChatBtn.title = viewing ? "Back to the selection's chat; this one stays in Chats" : "Start over with a new Claude session; this chat stays in Chats";
   // Claude writes Markdown; the person's own words stay as typed.
   const nodes: HTMLElement[] = msgs.map((m) =>
     m.role === "claude"
@@ -2208,6 +2263,7 @@ function askHint(answering: boolean, replying: boolean) {
 }
 
 function resetChat() {
+  if (viewing) return stopViewing();
   if (!askOn) return;
   import.meta.hot?.send("spark:chat-new", { chat: askOn.key });
   askInput.focus();
@@ -2307,6 +2363,7 @@ import.meta.hot?.on("spark:run", (e: RunEvent) => {
 import.meta.hot?.on("spark:chats", (d: { chats: Chat[] }) => {
   chats = d.chats;
   rekeySelection();
+  if (viewing) syncAsk();
   renderChat();
   refreshPins();
 });
@@ -2855,7 +2912,7 @@ function renderChanges() {
   const pending = allChanges().filter((c) => c.status === "pending");
   const implementBtn = h(
     "button",
-    { class: "on", title: "Have Claude apply these changes to the code", click: () => implement() },
+    { class: "sp-btn primary", title: "Have Claude apply these changes to the code", click: () => implement() },
     "Implement changes",
   ) as HTMLButtonElement;
   implementBtn.disabled = pending.length === 0 || isRunning();
@@ -3229,6 +3286,8 @@ function resetEdits(els: Element[]) {
 function askAbout() {
   if (!picking) setPicking(true);
   if (!open) setOpen(true);
+  // The Claude column may be showing the chats list, which has no prompt: back to the conversation.
+  if (shell?.chatsOpen?.()) shell.setChatsOpen?.(false);
   requestAnimationFrame(() => {
     placeAsk();
     askInput.focus();
@@ -3577,6 +3636,7 @@ if (shell) {
     setOpen,
     setPicking,
     deselect: () => select(null),
+    showChat,
     refresh: () => {
       render();
       syncChatsMode();
