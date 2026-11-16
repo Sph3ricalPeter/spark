@@ -121,7 +121,7 @@ whole UI, the start screen included, is in `packages/vite-plugin`. Release and d
   `.spark/images/<hash>`, served at `/@spark/images/`, a chat message's `images`; runner.ts sends
   them as stream-json image blocks; `dragDropEnabled: false` leaves file drops to the page, and
   menu.ts `blockFileDrops` keeps a stray drop from opening the file); chats are never
-  deleted: "Resolve" archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
+  deleted: "Resolve" (the chat column's header, a list row's hover button or its menu) archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way; the inspector's
   "Changes here" section (`changesHere`) lists just the pending ones in the
   selection's subtree, with the same rows and Implement for only those. `frame.ts` is its side in the app and

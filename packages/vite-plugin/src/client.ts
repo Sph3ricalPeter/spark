@@ -535,7 +535,10 @@ const COLUMN_STYLE = `
     .ask.column .chat-empty { margin: auto 0; padding: 0 8px; text-align: center; color: var(--sp-text-dim); }
     .ask.column .chat-empty b { color: var(--sp-text); font-weight: 600; }
     /* The Chats button: the column switches to the list of every chat and back. */
-    .ask-top .chats-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+    .ask-top .chats-btn, .ask-top .resolve-chat { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+    /* A narrow column keeps the model's name: Resolve is just its check mark there. */
+    .ask.column { container-type: inline-size; }
+    @container (max-width: 400px) { .ask-top .resolve-chat .label { display: none; } }
     .ask-top .chats-btn .n { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
     .ask-top .chats-btn.on { background: var(--sp-line-strong); color: var(--sp-text-strong); }
     .ask-list { display: none; }
@@ -1048,7 +1051,14 @@ const chatsBtn = h(
   chatsCount,
 );
 const askList = h("div", { class: "ask-list" });
-const askTop = h("div", { class: "ask-top" }, askTitle, ...(shell ? [chatsBtn] : []), newChatBtn);
+/** Resolve the chat on show: it's archived into the list's Resolved view (read and reopened there), and the column starts fresh. */
+const resolveBtn = h(
+  "button",
+  { type: "button", class: "resolve-chat", title: "Resolve this chat: it moves to Resolved in Chats, where you can still read and reopen it", click: () => resolveChat() },
+  lucide("check", 13),
+  h("span", { class: "label" }, "Resolve"),
+);
+const askTop = h("div", { class: "ask-top" }, askTitle, resolveBtn, ...(shell ? [chatsBtn] : []), newChatBtn);
 const askBox = h(
   "div",
   { class: "ask" },
@@ -2492,6 +2502,8 @@ function renderChat() {
   const model = (answering && runModel) || chat?.model;
   askTitle.replaceChildren(...(listing ? ["All chats"] : ["Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : [])]));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
+  // Resolve: a chat that has something in it, isn't being answered, and isn't resolved already.
+  resolveBtn.style.display = !listing && chat && msgs.length && !answering && !chat.resolved ? "" : "none";
   newChatBtn.toggleAttribute("disabled", answering && !viewing && !listing);
   newChatBtn.textContent = viewing && !listing ? "Close" : "New chat";
   newChatBtn.title = viewing ? "Back to the selection's chat; this one stays in Chats" : "Start over with a new Claude session; this chat stays in Chats";
@@ -2548,6 +2560,13 @@ function renderChat() {
 /** The prompt's placeholder: what Claude is doing, or what you'd ask about (this or, with Shift+click picks, these). */
 function askHint(answering: boolean, replying: boolean) {
   askInput.placeholder = isRunning() ? (answering ? "Claude is answering…" : "Claude is busy…") : replying ? "Reply…" : also.length ? "Ask Claude to change these…" : "Ask Claude to change this…";
+}
+
+function resolveChat() {
+  const chat = viewed() ?? (askOn ? openChatOn(askOn.key) : undefined);
+  if (!chat || (isRunning() && runChat === chat.id)) return;
+  import.meta.hot?.send("spark:chat-resolve", { id: chat.id });
+  if (viewing) stopViewing();
 }
 
 function resetChat() {
