@@ -1,5 +1,5 @@
 // The window's title bar: the board's, with a project open, and the
-// launcher's (src/components/TitleBar.tsx mounts `launcherTitleBar`), so
+// launcher's (home.ts mounts `launcherTitleBar`), so
 // both look and work the same.
 //
 // Spark's window has no native frame (decorations off, like dawg), so the
@@ -16,7 +16,6 @@
 // The home event's name is in project.rs too (HOME_EVENT).
 import { h } from "./fields.ts";
 import { THEME, icon } from "./theme.ts";
-import { connectSettings } from "./settings.ts";
 import { buildSettingsPanel, isSettingsKey, settingsStyle } from "./settings-panel.ts";
 
 type Internals = {
@@ -141,8 +140,8 @@ export function titleBar(bar: HTMLElement, project: string | null): HTMLElement 
 }
 
 /**
- * The launcher's title bar (src/components/TitleBar.tsx): the same bar, in a
- * shadow root of its own with Spark's theme, and no project in it.
+ * Home's title bar (home.ts): the same bar, in a shadow root of its own with
+ * Spark's theme, and no project in it. Home connects the settings.
  */
 export function launcherTitleBar(): HTMLElement {
   const host = document.createElement("spark-titlebar");
@@ -183,12 +182,6 @@ export function launcherTitleBar(): HTMLElement {
     },
     true,
   );
-  // No dev server behind the launcher: Spark keeps the settings (settings.rs).
-  if (tauri)
-    void connectSettings({
-      load: () => tauri.invoke("settings_read") as Promise<Record<string, unknown>>,
-      save: (key, value) => void tauri.invoke("settings_write", { key, value }).catch(() => {}),
-    });
   // Its buttons never keep focus, as on the board.
   root.addEventListener("click", (e) => (e.composedPath()[0] as Element).closest?.("button")?.blur());
   return host;

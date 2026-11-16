@@ -4,8 +4,8 @@ AI-native design tool: a bridge between visual design and real CSS/React UI
 components. Designs are trees of nested components (like Unity prefabs); a
 person hand-edits, and AI reads the exact diff through MCP and applies it.
 
-Windows desktop app: Tauri 2 (`src-tauri`) + React/TypeScript (`src`, Vite,
-Zustand). Release and deploy are ported from dawg and described in
+Windows desktop app: Tauri 2 (`src-tauri`) + TypeScript (`src`, Vite); Spark's
+whole UI, the start screen included, is in `packages/vite-plugin`. Release and deploy are ported from dawg and described in
 `docs/release-setup.md` and `.claude/release.md`.
 
 ## Layout
@@ -21,8 +21,8 @@ Zustand). Release and deploy are ported from dawg and described in
   `show_project` navigates the window there, and the board's home button
   emits `spark://home` to come back (the project keeps running).
   The window is frameless: the title bar is one component, `titlebar.ts`,
-  the board's bar with a project open and the launcher's (`TitleBar.tsx`
-  mounts `launcherTitleBar`) at home (drag, double-click maximizes, window
+  the board's bar with a project open and home's (`home.ts` mounts
+  `launcherTitleBar`) (drag, double-click maximizes, window
   buttons, the update button).
   `update.rs` is the one updater: the title bar asks over
   `spark://update-check` / `spark://update-install` events, answered with
@@ -36,13 +36,13 @@ Zustand). Release and deploy are ported from dawg and described in
   every frame Tauri of its own (read-only `__TAURI_INTERNALS__`, talking to
   Spark's Rust), so there it intercepts the frame's IPC `fetch` instead
   (`interceptIpc`); elsewhere it lends the frame the top window's Tauri.
-- `src`: the launcher (home): `components/Launcher.tsx` and
-  `stores/projects-store.ts` (open a folder, recent projects). It wears the
-  board's design system, not one of its own: `lib/theme.ts` puts theme.ts's
-  `--sp-*` variables on `:root` and registers its font, `components/Icon.tsx`
-  draws theme.ts's icons, buttons are its `.sp-btn`; never literals in
-  `src/styles.css` or components (add a variable to theme.ts).
-  `components/TitleBar.tsx` is the board's title bar (titlebar.ts).
+- `src`: only `main.ts`, the glue between Spark's own page and Tauri (folder
+  picker, `start_project`/`show_project`, the recent list in localStorage,
+  `settings_read`/`settings_write`, the font files). The start screen itself
+  is `packages/vite-plugin/src/home.ts` (`startHome`), drawn like the board:
+  a shadow root with THEME, the board's title bar, the same settings (read
+  before it shows). Never add UI, CSS or a design system to `src/`: that's
+  how home kept drifting from the board.
 
 - `packages/vite-plugin`: `spark-vite-plugin`, added to an app's
   `vite.config.ts` to make it editable from inside itself (dev server only).
@@ -156,7 +156,7 @@ Zustand). Release and deploy are ported from dawg and described in
   a 4-step font scale, 3 radii, a spacing scale, colors), the shared
   buttons (`.sp-btn`, `.primary` for the action that matters, Claude's
   included: Plan, Build, Implement changes, Write sample data) plus inlined
-  Lucide icons; style Spark's UI with those, not literals; the launcher
+  Lucide icons; style Spark's UI with those, not literals; home (`home.ts`)
   uses the same;
   `index.ts` injects the client and saves `.spark/selection.json` and
   `.spark/changes.json` (versioned: Claude and the MCP server read it, so
