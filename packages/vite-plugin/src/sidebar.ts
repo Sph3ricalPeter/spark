@@ -39,6 +39,10 @@ export const SIDEBAR_STYLE = `
   .side-tab .count:empty { display: none; }
   .side-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent; }
 
+`;
+
+/** The Chats list (chatsTab), in the chat column's own shadow root (shell.ts). */
+export const CHATS_STYLE = `
   .chats-empty { padding: 16px 14px; color: var(--sp-text-dim); }
   .chat-row {
     position: relative; display: block; width: 100%; height: auto; padding: 9px 12px 9px 28px; border: none; border-bottom: 1px solid var(--sp-line);

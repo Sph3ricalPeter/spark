@@ -91,8 +91,10 @@ Zustand). Release and deploy are ported from dawg and described in
   the frame or nothing is selected. Its left sidebar (`sidebar.ts`) has the
   Layers (`layers.ts`: every frame and its element tree, Figma style, in
   step with the canvas selection both ways; the client names the tree
-  through `ClientHooks.layers`), Components (Break down, below), Chats and Changes tabs (a tab strip at its top); chats are never
-  deleted: "Resolve" archives one into the Chats tab's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
+  through `ClientHooks.layers`), Components (Break down, below) and Changes tabs (a tab strip at its top). The
+  Chats list (`chatsTab`, in its own shadow root) is in the chat column instead, behind its
+  Chats button (`ShellApi.chatList`/`chatsOpen`, remembered as `chats-open`); chats are never
+  deleted: "Resolve" archives one into the list's Resolved view (`resolved` in chats.json), where it can be read and reopened; the change list and
   Implement changes live in Changes, out of the inspector's way. `frame.ts` is its side in the app and
   `mode.ts` decides which page is which;
   `menu.ts` is the right-click menus (Figma style, drawn by the board so

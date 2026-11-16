@@ -50,6 +50,8 @@ export type ClientHooks = {
   deselect(): void;
   /** This frame became the selected one: draw the inspector again (it shows the frame's properties, frameProps). */
   refresh?(): void;
+  /** The chats changed, or the chat column switched between the list and a conversation (chatsOpen). */
+  chatsChanged?(): void;
   /** Another frame took the hover: drop the hover box here. */
   unhover?(): void;
   /** The frame's title was clicked in edit mode: select the frame itself (to Ask Claude about all of it). */
@@ -112,6 +114,13 @@ export type ShellApi = {
    * panels: only the selected frame's gets it, null for the others.
    */
   frameProps?(win: Window): HTMLElement | null;
+  /** The list of every chat (sidebar.ts chatsTab, in its own shadow root), for the selected frame's chat column. */
+  chatList?(): HTMLElement;
+  /** The chat column shows that list rather than the selection's conversation; board-wide, remembered. */
+  chatsOpen?(): boolean;
+  setChatsOpen?(open: boolean): void;
+  /** How many chats are open (the column's Chats button shows it). */
+  chatCount?(): number;
   /** Ctrl+wheel or a pinch over the app, at a point in the app's own coordinates. */
   wheelZoom(x: number, y: number, deltaY: number): void;
   /** Ctrl +, Ctrl -, Ctrl 0 pressed inside the app. */

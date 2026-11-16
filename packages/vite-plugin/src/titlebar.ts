@@ -212,7 +212,7 @@ function updateButton(): HTMLElement {
     btn.classList.add("busy");
     void emit("spark://update-install");
   });
-  if (tauri) {
+  if (typeof tauri?.transformCallback === "function") {
     const handler = tauri.transformCallback((e) => answer((e as { payload: BoardUpdate }).payload));
     tauri
       .invoke("plugin:event|listen", { event: "spark://update-state", target: { kind: "Any" }, handler })

@@ -490,6 +490,13 @@ const COLUMN_STYLE = `
     .ask.column .ask-main { flex: none; margin: 0 10px 10px; height: 38px; }
     .ask.column .chat-empty { margin: auto 0; padding: 0 8px; text-align: center; color: var(--sp-text-dim); }
     .ask.column .chat-empty b { color: var(--sp-text); font-weight: 600; }
+    /* The Chats button: the column switches to the list of every chat and back. */
+    .ask-top .chats-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+    .ask-top .chats-btn .n { color: var(--sp-text-dim); font: var(--sp-fs-xs) var(--sp-mono); }
+    .ask-top .chats-btn.on { background: var(--sp-line-strong); color: var(--sp-text-strong); }
+    .ask-list { display: none; }
+    .ask.column.listing .ask-list { display: block; flex: 1; min-height: 0; }
+    .ask.column.listing .ask-thread, .ask.column.listing .ask-main, .ask.column.listing .ask-top .new-chat { display: none; }
 `;
 
 const STYLE = `${THEME}
@@ -879,9 +886,19 @@ const askMore = h("span", { class: "ask-more" });
 /** The conversation with Claude about the selected element (renderChat fills it). */
 const askThread = h("div", { class: "ask-thread" });
 const askTitle = h("span", { class: "grow" }, "Claude");
-const newChatBtn = h("button", { type: "button", title: "Start over with a new Claude session; this chat stays in Chats", click: () => resetChat() }, "New chat");
-const askTop = h("div", { class: "ask-top" }, askTitle, newChatBtn);
-const askBox = h("div", { class: "ask" }, askTop, askThread, h("div", { class: "ask-main" }, askTag, askMore, askInput, makeBtn, sendBtn));
+const newChatBtn = h("button", { type: "button", class: "new-chat", title: "Start over with a new Claude session; this chat stays in Chats", click: () => resetChat() }, "New chat");
+/** On the board: every chat with Claude, the column's other view (the board's list, mounted here by syncChatsMode). */
+const chatsCount = h("span", { class: "n" });
+const chatsBtn = h(
+  "button",
+  { type: "button", class: "chats-btn", title: "Every chat with Claude: switch to another, read or resolve one", click: () => shell?.setChatsOpen?.(!shell.chatsOpen?.()) },
+  lucide("message-circle", 13),
+  "Chats",
+  chatsCount,
+);
+const askList = h("div", { class: "ask-list" });
+const askTop = h("div", { class: "ask-top" }, askTitle, ...(shell ? [chatsBtn] : []), newChatBtn);
+const askBox = h("div", { class: "ask" }, askTop, askList, askThread, h("div", { class: "ask-main" }, askTag, askMore, askInput, makeBtn, sendBtn));
 askBox.addEventListener("click", () => closePopover());
 /** Pins on the elements that have a chat with Claude (refreshPins/placePins). */
 const pinLayer = h("div", { class: "pins" });
@@ -2093,6 +2110,25 @@ type ChatMessage = { role: "user" | "claude"; text: string; ok?: boolean; at: nu
 /** One chat with Claude about an element (chats.ts on the dev server). */
 type Chat = { id: string; key: string; label: string; sessionId: string | null; model?: string; messages: ChatMessage[]; created: number; updated: number; closed?: boolean };
 
+/** The chat column shows every chat (the board's list) instead of the selection's conversation. */
+let listing = false;
+
+/** Follow the board: the list or the conversation, and the Chats button's count. */
+function syncChatsMode() {
+  if (!shell) return;
+  listing = !!shell.chatsOpen?.();
+  askBox.classList.toggle("listing", listing);
+  chatsBtn.classList.toggle("on", listing);
+  const n = shell.chatCount?.() ?? 0;
+  chatsCount.textContent = n ? String(n) : "";
+  // One list for the board: only the selected frame's column holds it.
+  if (listing && shell.isActive(window)) {
+    const list = shell.chatList?.();
+    if (list && list.parentNode !== askList) askList.replaceChildren(list);
+  }
+  renderChat();
+}
+
 /** "claude-sonnet-5-5" (or with a date) as people say it: "Sonnet 5.5". */
 function modelName(id: string): string {
   const m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[.*\])?$/i);
@@ -2113,7 +2149,7 @@ function renderChat() {
   const msgs = chat?.messages ?? [];
   askBox.classList.toggle("has-chat", msgs.length > 0 || answering);
   const model = (answering && runModel) || chat?.model;
-  askTitle.replaceChildren("Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : []));
+  askTitle.replaceChildren(...(listing ? ["All chats"] : ["Claude", ...(model ? [h("span", { class: "model" }, modelName(model))] : [])]));
   askTitle.title = [model, chat?.sessionId && `session ${chat.sessionId}`].filter(Boolean).join(" · ");
   newChatBtn.toggleAttribute("disabled", answering);
   // Claude writes Markdown; the person's own words stay as typed.
@@ -2881,6 +2917,8 @@ document.addEventListener("pointerdown", swallow, true);
 document.addEventListener("mousedown", swallow, true);
 /** A click picks: Shift+click adds to the selection (or takes out); a plain click starts over. */
 function pick(e: Event) {
+  // A click on the canvas is about that element: the chat column goes back from the list to its conversation.
+  if (listing && shell?.isActive(window)) shell.setChatsOpen?.(false);
   if ((e as MouseEvent).shiftKey) toggleSelect(pickable(e.target));
   else select(pickable(e.target));
 }
@@ -3458,7 +3496,11 @@ if (shell) {
     setOpen,
     setPicking,
     deselect: () => select(null),
-    refresh: () => render(),
+    refresh: () => {
+      render();
+      syncChatsMode();
+    },
+    chatsChanged: syncChatsMode,
     unhover: () => hovered && hover(null),
     // The frame's title on the board was clicked in edit mode: the frame itself is the selection.
     selectFrame: () => select(document.documentElement),

@@ -11,13 +11,14 @@
 //   panel-open client.ts: the inspector is docked open
 //   sections   client.ts: which inspector sections are unfolded
 //   sidebar    sidebar.ts: the left sidebar is open, and on which tab
-//   panel-widths grip.ts: the widths the sidebar and the inspector were
-//              dragged to, `{ sidebar?: px, panel?: px }`
+//   panel-widths grip.ts: the widths the sidebar, the inspector and the chat were
+//              dragged to, `{ sidebar?: px, panel?: px, chat?: px }`
+//   chats-open shell.ts: the chat column shows the list of chats, not a conversation
 //   layers     layers.ts: the Layers tree's unfolded rows and folded frames
 // A new key is added to this list and to LEGACY if it had a localStorage one.
 // Values are JSON; the file is read by people too, so shapes only grow.
 
-export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "panel-widths" | "layers";
+export type StateKey = "board" | "panel-open" | "sections" | "sidebar" | "panel-widths" | "layers" | "chats-open";
 
 const ENDPOINT = "/@spark/state";
 

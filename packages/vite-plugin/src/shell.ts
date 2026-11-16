@@ -36,7 +36,7 @@ import { drag } from "./drag.ts";
 import { layersTab, LAYERS_STYLE } from "./layers.ts";
 import type { ClientHooks, ShellApi } from "./mode.ts";
 import { blockNativeMenu, openMenu, type MenuEntry } from "./menu.ts";
-import { chatsTab, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
+import { chatsTab, CHATS_STYLE, sidebar, SIDEBAR_STYLE, SIDEBAR_W } from "./sidebar.ts";
 import { componentsTab, COMPONENTS_STYLE, type BreakdownTarget, type PlanComponent } from "./components-tab.ts";
 import { edgeGrip, GRIP_STYLE, MIN_CANVAS } from "./grip.ts";
 import caseFiles from "/@spark/cases";
@@ -1240,6 +1240,10 @@ const api: ShellApi = {
   },
   // The panels are always open on the board.
   setDocked() {},
+  chatList: () => chatsHost,
+  chatsOpen: () => chatsOpen,
+  setChatsOpen,
+  chatCount: () => chatList.openCount(),
   samples(win, names, current) {
     const f = frameOf(win);
     if (f?.kind !== "app") return;
@@ -1493,6 +1497,8 @@ function openChat(chat: ChatRef): boolean {
     if (!hooks?.findChat?.(chat.key)) continue;
     selectFrame(f);
     if (!edit) switchMode(true);
+    // The column goes from the list to the conversation, so its prompt can take focus.
+    setChatsOpen(false);
     const box = hooks.openChat?.(chat.key);
     if (box) bringIntoView(f, box);
     return true;
@@ -1654,8 +1660,38 @@ import.meta.hot?.on("spark:components-building", (d: { area?: string | null }) =
   showBusy();
 });
 import.meta.hot?.send("spark:components-get", {});
+// Chats: the list lives in the chat column on the right (the selected frame's
+// client mounts it, chatList), behind its Chats button; a host of its own, so
+// it takes its styles along.
 const chatList = chatsTab({ open: openChat, send: (event, data) => import.meta.hot?.send(event, data) });
-side.addTab("Chats", chatList.el, "message-circle", "Chats with Claude, on every element");
+const chatsHost = document.createElement("spark-chats");
+chatsHost.style.cssText = "display: block; height: 100%;";
+{
+  const r = chatsHost.attachShadow({ mode: "open" });
+  r.append(
+    h(
+      "style",
+      {},
+      `${THEME}
+      :host { all: initial; display: block; height: 100%; }
+      * { box-sizing: border-box; }
+      button { font: inherit; color: inherit; cursor: pointer; }
+      .side-body {
+        height: 100%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--sp-line-strong) transparent;
+        color: var(--sp-text); font: var(--sp-fs-md)/1.45 var(--sp-font);
+      }
+      ${CHATS_STYLE}`,
+    ),
+    h("div", { class: "side-body" }, chatList.el),
+  );
+}
+let chatsOpen = getState<boolean>("chats-open") === true;
+function setChatsOpen(v: boolean) {
+  if (v === chatsOpen) return;
+  chatsOpen = v;
+  setState("chats-open", v);
+  for (const hooks of clients.values()) hooks.chatsChanged?.();
+}
 // Changes: the active frame's change list and Implement changes (each client mounts its own; showPanels picks).
 const changesTab = h("div", { class: "changes-side" });
 side.addTab("Changes", changesTab, "git-compare", "Pending changes, and Implement changes");
@@ -1663,7 +1699,7 @@ let chatData: ChatRef[] = [];
 let runningChat: string | null = null;
 const showChats = () => {
   chatList.update(chatData as Parameters<typeof chatList.update>[0], runningChat);
-  side.setCount("Chats", chatList.openCount());
+  for (const hooks of clients.values()) hooks.chatsChanged?.();
   showBusy();
 };
 import.meta.hot?.on("spark:chats", (d: { chats: ChatRef[]; running?: string | null }) => {
@@ -1683,8 +1719,8 @@ import.meta.hot?.on("spark:run", (e: { type: string; chat?: string }) => {
   else return;
   showChats();
   // A task (the Components view's "Write them with Claude", an Ask with nothing selected) has no element
-  // to show its chat on: the Chats tab opens on it, so every run is in sight as it goes.
-  if (e.type === "start" && e.chat && chatData.find((c) => c.id === e.chat)?.kind === "task" && chatList.reveal(e.chat)) side.showTab("Chats");
+  // to show its chat on: the chat column's list opens on it, so every run is in sight as it goes.
+  if (e.type === "start" && e.chat && chatData.find((c) => c.id === e.chat)?.kind === "task" && chatList.reveal(e.chat)) setChatsOpen(true);
 });
 import.meta.hot?.send("spark:chats-get", {});
 // Claude was busy with another chat: "Write sample data" can be pressed again.
